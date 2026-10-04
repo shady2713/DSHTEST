@@ -1,0 +1,20 @@
+# Independent workspace for dsh-plugin-web-test.
+#
+# Deliberately not a member of the DSH monorepo workspace: the plugin is built
+# and installed against published @deepseek-ai packages, so the distributable
+# never resolves a source checkout, a tsconfig path alias, or a workspace
+# protocol range.
+packages:
+  - packages/*
+
+# The Host plugin manager runs pnpm inside a profile directory, where DSH
+# supplies React and Cordis itself. Matching that layout keeps the installed
+# profile and this workspace consistent.
+nodeLinker: hoisted
+autoInstallPeers: false
+allowBuilds:
+  '@deepseek-ai/dsh-subprocess-local': set this to true or false
+  '@google/genai': set this to true or false
+  koffi: set this to true or false
+  node-pty: set this to true or false
+  protobufjs: set this to true or false

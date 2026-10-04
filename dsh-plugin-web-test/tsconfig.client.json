@@ -1,0 +1,7 @@
+{
+  "extends": "./tsconfig.base.client.json",
+  "files": [],
+  "references": [
+    { "path": "./packages/web-test/tsconfig.client.json" }
+  ]
+}

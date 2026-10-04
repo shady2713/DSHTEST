@@ -1,0 +1,16 @@
+{
+  "name": "dsh-plugin-web-test-workspace",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Independent development workspace for the installable DSH Web testing plugin. Depends only on published @deepseek-ai packages, never on the DSH monorepo checkout.",
+  "type": "module",
+  "packageManager": "pnpm@11.7.0",
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
+  "scripts": {
+    "build": "pnpm -r --filter \"./packages/**\" run build",
+    "typecheck": "pnpm -r run typecheck",
+    "test": "pnpm -r run test"
+  }
+}

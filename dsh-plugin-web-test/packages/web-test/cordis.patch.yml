@@ -1,0 +1,78 @@
+# Bundle patch: mount the Web testing plugin's Host half.
+#
+# Installed through the DSH plugin manager, this file is the plugin's only
+# composition surface. It adds three rows and touches nothing the host already
+# owns: the Host's own storage hub and domain facility stay in place, and the
+# new backend is routed only to this plugin's own domain.
+- insert:
+    # Plugin-owned SQLite backend. The database lives under the plugin's own
+    # data root, so business records and evidence never mix with Host storage.
+    # `dshHomePath` is exposed to Loader config expressions by app-boot, which
+    # keeps the path independent of where the profile lives.
+    - id: web-test-storage-sqlite
+      name: '@deepseek-ai/dsh-storage-sqlite'
+      config:
+        path: !!js "dshHomePath('plugins', 'dsh-plugin-web-test', 'web-test.sqlite')"
+
+    # Single writer over the plugin's Storage Domain. Every business method in
+    # the UI, the tools, and the tasks goes through this service.
+    - id: web-test-store
+      name: 'dsh-plugin-web-test/store-service'
+
+    # Bundle root and typed Remote surface the Client calls as
+    # `ctx.remote.webTest.*`. It also opens the domain and contributes the
+    # `web-test` agent preset.
+    - id: web-test
+      name: 'dsh-plugin-web-test'
+
+    # Browser-use facility the official Playwright MCP provider peers on. The
+    # provider cannot start without this row, and the unmodified CLI does not
+    # ship it, so the plugin declares it as its own install dependency.
+    - id: web-test-browser-use
+      name: '@deepseek-ai/dsh-browser-use'
+
+    # Opt-in Agent preset for test sessions. Declared as a loader row rather
+    # than registered from code, so each entry below is a real composition
+    # entry with its own lifecycle instead of a definition no loader starts.
+    #
+    # The browser row is deliberately inside the preset: a provider mounted at
+    # host level would expose browser tools to every session, which the
+    # per-session opt-in rules forbid. Its consequence is lifecycle ownership —
+    # the browser belongs to the session that used the preset, not to this
+    # bundle, so disabling `web-test` stops new dispatches and drains the
+    # plugin's own storage but cannot reap a live session's browser. The host
+    # exposes no session-close endpoint; the browser is reaped with the host.
+    - id: web-test-preset
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: web-test
+        name: Web testing
+        description: Analyze, confirm, execute, and report Web test cases in a real browser.
+        order: 100
+        plugins:
+          - id: web-test-persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              prefix: >-
+                You are a Web test agent. Work in this order: analyze the test
+                case, present the plan and wait for the operator to confirm it,
+                then execute the confirmed steps in a real browser, assert the
+                expected results, and collect screenshots as evidence. Report
+                what actually happened; never claim a step you did not perform.
+              suffix: Your working directory is {{cwd}}.
+          - id: web-test-browser
+            name: '@deepseek-ai/dsh-experimental-browser-use-playwright-mcp'
+            config:
+              mode: launch
+              headless: false
+              # Drive the machine's own Chrome. The provider's bundled browser
+              # build is not installed with the unmodified CLI, and the first
+              # release targets a standalone Chrome or Edge anyway.
+              executablePath: /usr/bin/google-chrome
+          - id: web-test-agent
+            name: 'dsh-plugin-web-test/agent'
+          # Present on purpose: the plugin's execution guard must refuse this
+          # tool even though the composition provides it, so the restriction is
+          # enforced on the execution path rather than by the tool's absence.
+          - id: web-test-probe-shell
+            name: '@deepseek-ai/dsh-tool-bash'
