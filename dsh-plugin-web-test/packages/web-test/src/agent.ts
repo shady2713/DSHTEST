@@ -55,8 +55,14 @@ export const BROWSER_TOOL_PREFIX = 'mcp__playwright-mcp__'
 export const TEST_INSTRUCTIONS = [
   'You are running a Web test session inside DSH.',
   'Call web_test_start_run once before executing cases, and web_test_finish_run once after every case is recorded,'
-    + ' so the run is never left open. An operation whose outcome you could not observe is reported as unresolved'
-    + ' rather than retried.',
+    + ' so the run is never left open.',
+  'Before any step that changes business data, call web_test_begin_operation and act at once. After the change,'
+    + ' observe the result independently and call web_test_settle_operation. If the connection drops or you cannot'
+    + ' observe the outcome, call web_test_operation_unknown instead: that operation must never be submitted again,'
+    + ' and a new tool-call id does not authorize a repeat.',
+  'When a business action only takes effect later, call web_test_wait with the moment it becomes observable, then'
+    + ' web_test_resume_wait after that moment. Do not re-run a case to "make sure" it worked.',
+  'Call web_test_assume_role before acting as a second account, and only with a role the operator declared.',
   'After a confirmed case finishes, call web_test_report_case once with that case\'s steps, assertions, and'
     + ' screenshot paths. A case with no recorded result is missing from the report, and a recorded outcome of'
     + ' blocked is a question for the operator rather than a failure. Report only cases you actually executed.',
@@ -67,22 +73,44 @@ export const TEST_INSTRUCTIONS = [
 ].join(' ')
 
 /**
+ * Tools that stay reachable while a run is held.
+ *
+ * A hold must not make a run unbookkeepable: the model has to be able to report
+ * what happened, record that a dispatch was lost, and end a wait. Each of these
+ * records or retires state instead of dispatching a new test action, so allowing
+ * them cannot drive the browser.
+ */
+export const HELD_RUN_ALLOWED_TOOLS: readonly string[] = [
+  `${TOOL_PREFIX}status`,
+  `${TOOL_PREFIX}operation_unknown`,
+  `${TOOL_PREFIX}settle_operation`,
+  `${TOOL_PREFIX}resume_wait`,
+]
+
+/**
  * Decide whether one tool call may run in a test session.
  *
  * @param execution - the call about to enter a tool body.
+ * @param store - the run owner, consulted for the session's held run.
+ * @param sessionId - identity of the session asking, empty when it has none.
  * @returns a denial reason, or `undefined` to leave the call allowed.
  */
 export function guardReason(
   execution: Readonly<{ name: string }>,
-  store?: { heldRun: () => { runKey: string, status: 'paused' } | undefined },
+  store?: { holdForSession: (sessionId: string) => { runKey: string, status: string } | undefined },
+  sessionId = '',
 ): string | undefined {
-  // A run the operator paused or cancelled stops dispatching here, in the
-  // execution path, so a model that ignores the pause still cannot drive the
-  // browser. The status tool stays reachable so the model can report why.
-  const held = store?.heldRun()
-  if (held !== undefined && !execution.name.startsWith(`${TOOL_PREFIX}status`)) {
-    return `web-test: run ${held.runKey} is ${held.status} by operator request and refuses new test actions; `
-      + 'resume it with web_test_resume_run before acting'
+  // A run the operator paused, or that a restart interrupted, stops dispatching
+  // here, in the execution path, so a model that ignores the pause still cannot
+  // drive the browser. The refusal is scoped to the session that owns the run, so
+  // one session's hold never stops another session's test work.
+  const held = store?.holdForSession(sessionId)
+  if (held !== undefined && !HELD_RUN_ALLOWED_TOOLS.includes(execution.name)) {
+    return `web-test: run ${held.runKey} is ${held.status} and refuses new test actions. `
+      + (held.status === 'resuming'
+        ? 'The DSH host restarted during that run; report what you know through web_test_status and ask the'
+          + ' operator to continue it.'
+        : 'Ask the operator to continue it; do not act for it in the meantime.')
   }
   if (execution.name.startsWith(TOOL_PREFIX)) return undefined
   if (execution.name.startsWith(BROWSER_TOOL_PREFIX)) return undefined
@@ -97,6 +125,10 @@ export const statusResultSchema = z.object({
   version: z.string(),
   projectCount: z.number().int().nonnegative(),
   runCount: z.number().int().nonnegative(),
+  /** Runs a restart interrupted; each needs a deliberate operator continuation. */
+  interruptedRuns: z.array(z.string()),
+  /** Operations whose outcome a restart or a lost connection left unobserved. */
+  unknownOperations: z.array(z.string()),
 })
 
 /** Validated result of the status tool. */
@@ -187,6 +219,44 @@ const recordedResultSchema = z.object({
   evidence: z.array(z.string()).optional(),
 })
 
+/** The begin-operation tool's arguments. */
+const beginOperationInputSchema = z.object({
+  runKey: z.string().min(1),
+  operationKey: z.string().min(1),
+  intent: z.string().min(1),
+  requestDigest: z.string().min(1),
+  role: z.string().default(''),
+})
+
+/** The settle-operation tool's arguments. */
+const settleOperationInputSchema = z.object({
+  runKey: z.string().min(1),
+  operationKey: z.string().min(1),
+  outcome: z.enum(['observed-success', 'observed-absent']),
+})
+
+/** The operation-unknown tool's arguments. */
+const operationUnknownInputSchema = z.object({
+  runKey: z.string().min(1),
+  operationKey: z.string().min(1),
+  reason: z.string().min(1),
+})
+
+/** The wait tool's arguments; the deadline is a moment the model names. */
+const waitInputSchema = z.object({
+  runKey: z.string().min(1),
+  untilIso: z.string().min(1),
+  reason: z.string().min(1),
+})
+
+/** What every operation tool returns, so the model sees the recorded state. */
+const operationResultSchema = z.object({
+  runKey: z.string(),
+  operationKey: z.string(),
+  dispatch: z.string(),
+  note: z.string(),
+})
+
 export function apply(ctx: Context): void {
   const tools: ToolsService = ctx.tools
   const store = ctx.webTestStore
@@ -231,7 +301,7 @@ export function apply(ctx: Context): void {
         }]
       },
     },
-    async execute(args) {
+    async execute(args, exec) {
       if (!store.accepting) {
         throw new Error(`web-test: the plugin is ${store.state} and refuses new test actions`)
       }
@@ -250,6 +320,9 @@ export function apply(ctx: Context): void {
         phase: 'execution',
         status: 'running',
         unresolvedOperations: {},
+        // The owning session is what scopes an operator's hold: pausing this run
+        // stops the session that started it and leaves other sessions working.
+        ownerSessionId: exec.agent?.id ?? '',
       })
       await store.putRun(record)
       return { runKey: record.key, status: record.status, evidenceRoot: dir }
@@ -422,6 +495,9 @@ export function apply(ctx: Context): void {
         throw new Error(`web-test: the plugin is ${store.state} and refuses new test actions`)
       }
       const parsed = caseResultInputSchema.parse(args)
+      // A result describes steps the run actually performed, so a run that is
+      // paused, waiting, cancelled or interrupted by a restart takes no new ones.
+      store.requireExecutable(parsed.runKey)
       // Evidence is the plugin's record of what the browser actually produced,
       // so every reported path must resolve to a real file inside the run's
       // evidence directory. A relative path, a missing file, or a file written
@@ -450,6 +526,309 @@ export function apply(ctx: Context): void {
     },
   }), 'web-test: report case tool')
 
+  /** Shared guard so every control tool refuses the same way while draining. */
+  const refusing = (): void => {
+    if (!store.accepting) throw new Error(`web-test: the plugin is ${store.state} and refuses new test actions`)
+  }
+
+  ctx.effect(() => tools.register({
+    name: `${TOOL_PREFIX}begin_operation`,
+    description:
+      'Record that you are about to perform one business-changing action, then perform it immediately. Call this'
+      + ' before the action, never after. The record is durable, so if the connection drops or the host restarts'
+      + ' while the action may already have happened, the plugin knows the outcome is unknown and refuses to let'
+      + ' you submit it again. Use a new operationKey only for genuinely new work, never to retry this one.',
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['runKey', 'operationKey', 'intent', 'requestDigest'],
+      properties: {
+        runKey: { type: 'string', description: 'The run that performs the change.' },
+        operationKey: { type: 'string', description: 'Short id for this operation, stable across the run.' },
+        intent: { type: 'string', description: 'The business change in one line, for the report.' },
+        requestDigest: {
+          type: 'string',
+          description: 'Digest of the request you are about to send, so a repeat is recognisable as the same change.',
+        },
+        role: { type: 'string', description: 'Declared role performing it; empty when the run acts without one.' },
+      },
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['runKey', 'operationKey', 'dispatch', 'note'],
+        properties: {
+          runKey: { type: 'string' },
+          operationKey: { type: 'string' },
+          dispatch: { type: 'string' },
+          note: { type: 'string' },
+        },
+      },
+      render(_args, value) {
+        const result = operationResultSchema.parse(value)
+        return [{
+          type: 'text',
+          text: `Operation ${result.operationKey} of run ${result.runKey} is ${result.dispatch}. ${result.note}`,
+        }]
+      },
+    },
+    async execute(args) {
+      refusing()
+      const input = beginOperationInputSchema.parse(args)
+      const record = await store.beginOperation(
+        input.runKey, input.operationKey, input.intent, input.requestDigest, input.role,
+      )
+      return {
+        runKey: record.runKey,
+        operationKey: record.operationKey,
+        dispatch: record.dispatch.kind,
+        note: 'Perform the change now, observe the result independently, then call web_test_settle_operation.',
+      }
+    },
+  }), 'web-test: begin operation tool')
+
+  ctx.effect(() => tools.register({
+    name: `${TOOL_PREFIX}settle_operation`,
+    description:
+      'Record what a business-changing operation actually did, from an observation made after it. Read the page again'
+      + ' or check the resulting record rather than assuming the click worked. This settles the operation once; a'
+      + ' second settlement is refused so the first observation is not overwritten.',
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['runKey', 'operationKey', 'outcome'],
+      properties: {
+        runKey: { type: 'string' },
+        operationKey: { type: 'string' },
+        outcome: {
+          type: 'string',
+          enum: ['observed-success', 'observed-absent'],
+          description: 'observed-success when the business system now shows the change; observed-absent when the'
+            + ' change verifiably did not happen.',
+        },
+      },
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['runKey', 'operationKey', 'dispatch', 'note'],
+        properties: {
+          runKey: { type: 'string' },
+          operationKey: { type: 'string' },
+          dispatch: { type: 'string' },
+          note: { type: 'string' },
+        },
+      },
+      render(_args, value) {
+        const result = operationResultSchema.parse(value)
+        return [{ type: 'text', text: `Operation ${result.operationKey} is ${result.dispatch}. ${result.note}` }]
+      },
+    },
+    async execute(args) {
+      refusing()
+      const input = settleOperationInputSchema.parse(args)
+      const record = await store.settleOperation(input.runKey, input.operationKey, input.outcome)
+      // `settleOperation` only ever returns a settled operation, so the outcome
+      // is present; reading it through the discriminant keeps that explicit.
+      const settled = record.dispatch
+      return {
+        runKey: record.runKey,
+        operationKey: record.operationKey,
+        dispatch: settled.kind,
+        note: settled.kind === 'settled'
+          ? `Recorded as ${settled.outcome}; it will appear in the report and cannot be settled again.`
+          : 'The operation was not settled.',
+      }
+    },
+  }), 'web-test: settle operation tool')
+
+  ctx.effect(() => tools.register({
+    name: `${TOOL_PREFIX}operation_unknown`,
+    description:
+      'Record that a business-changing operation may or may not have taken effect, because the connection dropped or'
+      + ' the result could not be observed. The operation stays unresolved and is never submitted again; it reaches'
+      + ' the report and the operator as a question. Use this instead of retrying.',
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['runKey', 'operationKey', 'reason'],
+      properties: {
+        runKey: { type: 'string' },
+        operationKey: { type: 'string' },
+        reason: { type: 'string', description: 'What was lost, so the operator can check the business system.' },
+      },
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['runKey', 'operationKey', 'dispatch', 'note'],
+        properties: {
+          runKey: { type: 'string' },
+          operationKey: { type: 'string' },
+          dispatch: { type: 'string' },
+          note: { type: 'string' },
+        },
+      },
+      render(_args, value) {
+        const result = operationResultSchema.parse(value)
+        return [{ type: 'text', text: `Operation ${result.operationKey} is ${result.dispatch}. ${result.note}` }]
+      },
+    },
+    async execute(args) {
+      refusing()
+      const input = operationUnknownInputSchema.parse(args)
+      const record = await store.markOperationUnknown(input.runKey, input.operationKey, input.reason)
+      return {
+        runKey: record.runKey,
+        operationKey: record.operationKey,
+        dispatch: record.dispatch.kind,
+        note: 'Do not submit this operation again. Report what you know and leave the decision to the operator.',
+      }
+    },
+  }), 'web-test: operation unknown tool')
+
+  ctx.effect(() => tools.register({
+    name: `${TOOL_PREFIX}assume_role`,
+    description:
+      'Act as one of the roles the operator declared for this environment, for the rest of the run. The plugin'
+      + ' refuses a role the environment never declared, and refuses a role change while a business-changing'
+      + ' operation is unresolved.',
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['runKey', 'role'],
+      properties: {
+        runKey: { type: 'string' },
+        role: { type: 'string', description: 'Declared role name, or an empty string to act without a role.' },
+      },
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['runKey', 'operationKey', 'dispatch', 'note'],
+        properties: {
+          runKey: { type: 'string' },
+          operationKey: { type: 'string' },
+          dispatch: { type: 'string' },
+          note: { type: 'string' },
+        },
+      },
+      render(_args, value) {
+        const result = operationResultSchema.parse(value)
+        return [{ type: 'text', text: result.note }]
+      },
+    },
+    async execute(args) {
+      refusing()
+      const parsed = z.object({ runKey: z.string().min(1), role: z.string() }).parse(args)
+      const run = await store.assumeRole(parsed.runKey, parsed.role)
+      return {
+        runKey: run.key,
+        operationKey: '',
+        dispatch: run.activeRole === '' ? 'no-role' : run.activeRole,
+        note: run.activeRole === ''
+          ? `Run ${run.key} now acts without a declared role.`
+          : `Run ${run.key} now acts as ${run.activeRole}; every operation and case result records it.`,
+      }
+    },
+  }), 'web-test: assume role tool')
+
+  ctx.effect(() => tools.register({
+    name: `${TOOL_PREFIX}wait`,
+    description:
+      'Park this run until a moment when a business effect becomes observable, such as a job that finishes or a'
+      + ' settlement window. The deadline is stored, so the wait survives the host closing, and the run refuses new'
+      + ' test actions until web_test_resume_wait ends it.',
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['runKey', 'untilIso', 'reason'],
+      properties: {
+        runKey: { type: 'string' },
+        untilIso: { type: 'string', description: 'ISO 8601 moment in the future, for example 2026-10-04T20:15:00Z.' },
+        reason: { type: 'string', description: 'What the run is waiting for, for the report and the operator.' },
+      },
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['runKey', 'operationKey', 'dispatch', 'note'],
+        properties: {
+          runKey: { type: 'string' },
+          operationKey: { type: 'string' },
+          dispatch: { type: 'string' },
+          note: { type: 'string' },
+        },
+      },
+      render(_args, value) {
+        const result = operationResultSchema.parse(value)
+        return [{ type: 'text', text: result.note }]
+      },
+    },
+    async execute(args) {
+      refusing()
+      const input = waitInputSchema.parse(args)
+      const untilMs = Date.parse(input.untilIso)
+      if (Number.isNaN(untilMs)) {
+        throw new Error(`web-test: ${JSON.stringify(input.untilIso)} is not an ISO 8601 moment`)
+      }
+      const run = await store.waitUntil(input.runKey, untilMs, input.reason)
+      return {
+        runKey: run.key,
+        operationKey: '',
+        dispatch: run.status,
+        note: `Run ${run.key} waits until ${new Date(run.waitingUntilMs).toISOString()} for: ${run.waitingReason}.`
+          + ' It refuses new test actions meanwhile, and the deadline survives a host restart.',
+      }
+    },
+  }), 'web-test: wait tool')
+
+  ctx.effect(() => tools.register({
+    name: `${TOOL_PREFIX}resume_wait`,
+    description:
+      'End a business-time wait once the stored deadline has passed, so the run may act again. Calling it before the'
+      + ' deadline is refused with the remaining time instead of waiting.',
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['runKey'],
+      properties: { runKey: { type: 'string' } },
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['runKey', 'operationKey', 'dispatch', 'note'],
+        properties: {
+          runKey: { type: 'string' },
+          operationKey: { type: 'string' },
+          dispatch: { type: 'string' },
+          note: { type: 'string' },
+        },
+      },
+      render(_args, value) {
+        const result = operationResultSchema.parse(value)
+        return [{ type: 'text', text: result.note }]
+      },
+    },
+    async execute(args) {
+      refusing()
+      const input = z.object({ runKey: z.string().min(1) }).parse(args)
+      const run = await store.resumeWait(input.runKey)
+      return {
+        runKey: run.key,
+        operationKey: '',
+        dispatch: run.status,
+        note: `Run ${run.key} is running again. Check the page before repeating anything.`,
+      }
+    },
+  }), 'web-test: resume wait tool')
+
   ctx.effect(() => tools.register({
       name: `${TOOL_PREFIX}status`,
       description:
@@ -477,10 +856,18 @@ export function apply(ctx: Context): void {
           const note = result.state === 'draining'
             ? 'The plugin is draining and refuses new test actions.'
             : 'The plugin is active.'
+          const interrupted = result.interruptedRuns.length === 0
+            ? ''
+            : ` A previous host run was interrupted; these runs need the operator to continue them:`
+              + ` ${result.interruptedRuns.join(', ')}.`
+          const unknown = result.unknownOperations.length === 0
+            ? ''
+            : ` These operations have an unobserved outcome and must not be submitted again:`
+              + ` ${result.unknownOperations.join(', ')}.`
           return [{
             type: 'text',
             text: `Web testing plugin ${result.version} (${result.state}). ${note} `
-              + `Projects: ${result.projectCount}. Runs: ${result.runCount}. `
+              + `Projects: ${result.projectCount}. Runs: ${result.runCount}.${interrupted}${unknown} `
               + `Report the absolute paths the screenshot tool gave you; this plugin copies them under`
               + ` ${result.evidenceRoot}. Never write screenshots there yourself.`,
           }]
@@ -501,19 +888,24 @@ export function apply(ctx: Context): void {
           version: status.version,
           projectCount: status.recordCounts.project,
           runCount: status.recordCounts.run,
+          interruptedRuns: [...status.reconciliation.blockedRuns],
+          unknownOperations: status.reconciliation.unknownOperations.map(
+            operation => `${operation.runKey}/${operation.operationKey}`,
+          ),
         }
       },
   }), 'web-test: status tool')
 
   // The guard runs in the tool pipeline before any tool body. It refuses every
-  // tool outside the test allowlist, and refuses everything except the read-only
-  // status tool once the plugin starts draining.
+  // tool outside the test allowlist, refuses everything except the read-only
+  // status tool once the plugin starts draining, and scopes an operator's hold to
+  // the session that owns the held run.
   ctx.effect(
     () => tools.guard(execution => {
       if (!store.accepting && execution.name !== `${TOOL_PREFIX}status`) {
         return `web-test: the plugin is ${store.state} and refuses new test actions`
       }
-      return guardReason(execution, store)
+      return guardReason(execution, store, execution.agent?.id ?? '')
     }),
     'web-test: execution guard',
   )

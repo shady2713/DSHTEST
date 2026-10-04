@@ -43,7 +43,14 @@ function isExternal(specifier: string): boolean {
   return specifier.startsWith('@deepseek-ai/') || isBuiltin(specifier) || PLATFORM_MODULES.includes(specifier as never)
 }
 
-/** Node half: tsc emits JavaScript under `lib/types`; tsdown bundles from there. */
+/**
+ * Node half: tsc emits JavaScript under `lib/types`; tsdown bundles from there.
+ *
+ * The clean list names only this bundle's own outputs. `clean: true` would take
+ * `lib` with it, including the `lib/types` tree tsc just emitted, and
+ * `clean: false` lets a content-hashed chunk from an earlier build survive into
+ * the published tarball, so the package ships two copies of every shared chunk.
+ */
 const nodeLib: UserConfig = {
   name: ID,
   entry: {
@@ -56,7 +63,7 @@ const nodeLib: UserConfig = {
   platform: 'node',
   target: 'es2024',
   dts: false,
-  clean: false,
+  clean: ['lib/shared', 'lib/index.js', 'lib/agent.js', 'lib/store-service.js'],
   deps: {
     neverBundle: isExternal,
     alwaysBundle: specifier => !isBuiltin(specifier) && !isExternal(specifier),
@@ -81,7 +88,7 @@ const clientLib: UserConfig = {
   platform: 'browser',
   target: 'es2024',
   dts: false,
-  clean: false,
+  clean: ['lib/client.js'],
   external: [...PLATFORM_MODULES, ...CLIENT_EXTERNALS],
   // zod backs the generated Remote codecs and has no module-table row, so it
   // travels inside this bundle rather than as a bare specifier.

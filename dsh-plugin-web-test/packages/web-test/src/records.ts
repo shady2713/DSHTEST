@@ -11,7 +11,18 @@
 
 import { z } from 'zod'
 
-/** Durable format version written on every record. */
+/**
+ * Durable format version written on every record.
+ *
+ * The version stays at `3` while record fields are added, because a
+ * `single`-layout unit refuses every stamp but its own and the backend offers no
+ * way to write a higher stamp over a lower one: bumping the number would strand
+ * every database an earlier build wrote instead of migrating it. Fields added
+ * after v3 therefore carry a documented default, so an older build reading a
+ * newer record ignores the extra fields and a newer build reading an older
+ * record fills the defaults. A stamp this schema does not know still refuses to
+ * open, which is the guarantee the version exists for.
+ */
 export const SCHEMA_VERSION = 3
 
 /** Fields shared by every Web testing record. */
@@ -167,4 +178,57 @@ export const runRecordSchema = z.object({
     'blocked',
   ]),
   unresolvedOperations: z.record(z.string(), operationDispatchSchema),
+  /**
+   * Test session that owns this run.
+   *
+   * An operator's hold stops the owning session and no other, so two runs
+   * started by two sessions do not block each other. Empty means no session has
+   * claimed the run, and a hold on such a run stops every session, because the
+   * plugin cannot tell whose work it would be interrupting.
+   */
+  ownerSessionId: z.string().default(''),
+  /** Role the run currently acts as; empty when it acts without a role. */
+  activeRole: z.string().default(''),
+  /** Deadline of a business-time wait, `0` when the run is not waiting. */
+  waitingUntilMs: z.number().int().nonnegative().default(0),
+  /**
+   * Why the run is not executing: the reason it asked to wait for business
+   * time, or why a restart left it needing operator continuation.
+   */
+  waitingReason: z.string().default(''),
 })
+
+/**
+ * One business-changing operation inside a run.
+ *
+ * The record exists so a run's business effect is durable before the action that
+ * causes it: a transport loss or a crash after a possible dispatch leaves the
+ * operation in {@link operationDispatchSchema} `dispatching` or `unknown`, and
+ * {@link WebTestStore.beginOperation} refuses to dispatch that intent again.
+ * Replanning or issuing a new tool-call id does not authorize a repeat.
+ */
+export const operationRecordSchema = z.object({
+  ...baseFields,
+  kind: z.literal('operation'),
+  key: z.string().min(1),
+  runKey: z.string().min(1),
+  /** Short id the run uses to name this operation. */
+  operationKey: z.string().min(1),
+  /** The business change this operation attempts, for the report. */
+  intent: z.string().min(1),
+  /** Declared role that performs it; empty when the run acts without a role. */
+  role: z.string().default(''),
+  /** Digest of the request, so the same intent is recognisable on a repeat. */
+  requestDigest: z.string().min(1),
+  dispatch: operationDispatchSchema,
+})
+
+/**
+ * Why a run currently refuses new test actions, keyed by what produced it.
+ *
+ * A hold is scoped to the run's owning session, so one session's hold never
+ * stops another session's run. `resuming` is the state a run a host restart
+ * interrupted lands in: it is neither executing nor the operator's choice, so it
+ * waits for an explicit continuation.
+ */
+export const runHoldStatusSchema = z.enum(['paused', 'awaiting-business-time', 'awaiting-user', 'resuming'])

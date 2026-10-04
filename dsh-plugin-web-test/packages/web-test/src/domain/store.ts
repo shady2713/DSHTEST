@@ -50,6 +50,8 @@ export const TABLE_RUNS = 'runs'
 export const TABLE_POLICIES = 'policies'
 /** Structured per-case results produced by a test run. */
 export const TABLE_CASE_RESULTS = 'case_results'
+/** Business-changing operations, durable before the action that causes them. */
+export const TABLE_OPERATIONS = 'operations'
 
 /**
  * Absolute path of the plugin-owned data root.
@@ -118,5 +120,12 @@ export const WEB_TEST_UNIT: KvUnitDescriptor = {
   version: SCHEMA_VERSION,
   layout: 'single',
   hasGlobal: false,
-  tables: [TABLE_PROJECTS, TABLE_ENVIRONMENT_REVISIONS, TABLE_RUNS, TABLE_POLICIES, TABLE_CASE_RESULTS],
+  tables: [
+    TABLE_PROJECTS,
+    TABLE_ENVIRONMENT_REVISIONS,
+    TABLE_RUNS,
+    TABLE_POLICIES,
+    TABLE_CASE_RESULTS,
+    TABLE_OPERATIONS,
+  ],
 }

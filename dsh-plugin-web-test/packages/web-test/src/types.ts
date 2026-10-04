@@ -17,9 +17,11 @@ import type { z } from 'zod'
 import type {
   caseResultRecordSchema,
   environmentRevisionRecordSchema,
+  operationRecordSchema,
   policyRecordSchema,
   operationDispatchSchema,
   projectRecordSchema,
+  runHoldStatusSchema,
   runRecordSchema,
 } from './records.ts'
 
@@ -31,6 +33,8 @@ export type EnvironmentRevisionRecord = z.infer<typeof environmentRevisionRecord
 export type RunRecord = z.infer<typeof runRecordSchema>
 /** Dispatch state of one business-changing operation. */
 export type OperationDispatch = z.infer<typeof operationDispatchSchema>
+/** One business-changing operation, durable before the action that causes it. */
+export type OperationRecord = z.infer<typeof operationRecordSchema>
 
 /** Every durable record kind this plugin stores. */
 export type PolicyRecord = z.infer<typeof policyRecordSchema>
@@ -45,6 +49,19 @@ export type WebTestRecord =
   | PolicyRecord
   | RunRecord
   | CaseResultRecord
+  | OperationRecord
+
+/**
+ * Control actions an operator may apply to a run.
+ *
+ * `resume` and `continue` differ because the states they release differ:
+ * `resume` lifts a pause or a restart interruption, `continue` answers a
+ * question the run raised with the operator.
+ */
+export type RunControlAction = 'pause' | 'resume' | 'cancel' | 'await-user' | 'continue'
+
+/** Why a run is not executing right now, and so refuses new test actions. */
+export type RunHoldStatus = z.infer<typeof runHoldStatusSchema>
 
 /** Discriminant of a durable record kind. */
 export type WebTestRecordKind = WebTestRecord['kind']
@@ -90,4 +107,17 @@ export interface PluginStatus {
   readonly recordCounts: Readonly<Record<WebTestRecordKind, number>>;
   /** Host runtime version this plugin was loaded by. */
   readonly dshVersion: string;
+  /**
+   * What the last open found interrupted by a restart.
+   *
+   * Empty on a clean start. A non-empty report is the operator's work queue: each
+   * run needs a deliberate continuation and each unknown operation needs a
+   * decision, because a restart never authorizes repeating one.
+   */
+  readonly reconciliation: {
+    /** Runs a restart interrupted, now waiting for an explicit continuation. */
+    readonly blockedRuns: readonly string[];
+    /** Operations whose dispatch state could not be observed. */
+    readonly unknownOperations: readonly { runKey: string, operationKey: string, reason: string }[]
+  };
 }

@@ -25,14 +25,17 @@ import {
   SCHEMA_VERSION,
   caseResultRecordSchema,
   environmentRevisionRecordSchema,
+  operationRecordSchema,
   policyRecordSchema,
   projectRecordSchema,
+  runHoldStatusSchema,
   runRecordSchema,
 } from './records.ts'
 import {
   BACKEND_NAME,
   TABLE_CASE_RESULTS,
   TABLE_ENVIRONMENT_REVISIONS,
+  TABLE_OPERATIONS,
   TABLE_POLICIES,
   TABLE_PROJECTS,
   TABLE_RUNS,
@@ -44,11 +47,14 @@ import {
 import type {
   CaseResultRecord,
   EnvironmentRevisionRecord,
+  OperationRecord,
   PluginLifecycleState,
+  RunHoldStatus,
   RunRecord,
   PluginStatus,
   PolicyRecord,
   ProjectRecord,
+  RunControlAction,
 } from './types.ts'
 
 /** Plugin version, matching this package's manifest. */
@@ -73,7 +79,39 @@ const TABLE_SCHEMAS = [
   { table: TABLE_RUNS, schema: runRecordSchema },
   { table: TABLE_POLICIES, schema: policyRecordSchema },
   { table: TABLE_CASE_RESULTS, schema: caseResultRecordSchema },
+  { table: TABLE_OPERATIONS, schema: operationRecordSchema },
 ] as const
+
+/** Statuses a run can never leave, so a hold or a wait cannot apply to them. */
+const TERMINAL_STATUSES: readonly RunRecord['status'][] = ['completed', 'cancelled', 'blocked']
+
+/** Statuses that mean the run is not executing and needs an operator to act. */
+const HELD_STATUSES: readonly RunHoldStatus[] = runHoldStatusSchema.options
+
+/**
+ * Statuses a host restart leaves exactly as they are.
+ *
+ * A pause is the operator's decision, a business-time wait owns a stored
+ * deadline that has to outlive the process, and an answer is waiting on a person.
+ * None of them is something a restart may convert into a continuation prompt.
+ */
+const PRESERVED_ACROSS_RESTART: readonly RunRecord['status'][] = [
+  'paused',
+  'awaiting-business-time',
+  'awaiting-user',
+  'resuming',
+]
+
+/** Dispatch states from which an operation may not be dispatched again. */
+const UNRESOLVED_DISPATCHES: readonly OperationRecord['dispatch']['kind'][] = ['dispatching', 'dispatched', 'unknown']
+
+/** What one restart found that needs an operator's decision. */
+export interface ReconciliationReport {
+  /** Runs a restart interrupted; each needs explicit continuation. */
+  readonly blockedRuns: readonly string[]
+  /** Operations whose dispatch state could not be observed before the restart. */
+  readonly unknownOperations: readonly { runKey: string, operationKey: string, reason: string }[]
+}
 
 /**
  * Single-writer service over the plugin's own storage unit.
@@ -95,6 +133,8 @@ export class WebTestStore extends Service {
   records: Tables = {}
   /** Tail of the write chain; every mutation appends to it. */
   writes: Promise<void> = Promise.resolve()
+  /** What the last open found interrupted; empty on a clean first start. */
+  reconciliation: ReconciliationReport = { blockedRuns: [], unknownOperations: [] }
 
   /**
    * @param ctx - Owning Context carrying the storage hub.
@@ -127,6 +167,7 @@ export class WebTestStore extends Service {
     this.state = 'active'
     this.draining = undefined
     this.openError = undefined
+    this.reconciliation = { blockedRuns: [], unknownOperations: [] }
   }
 
   /**
@@ -154,6 +195,7 @@ export class WebTestStore extends Service {
       const unit = await backend.kv.open(WEB_TEST_UNIT)
       this.records = await this.readRecords(unit)
       this.unit = unit
+      this.reconciliation = await this.reconcileInterruptedWork()
       this.openError = undefined
     } catch (error) {
       this.openError = error instanceof Error ? error.message : String(error)
@@ -269,57 +311,160 @@ export class WebTestStore extends Service {
   /**
    * Apply an operator's control action to a running test.
    *
-   * The held set is what the execution path reads, so a paused or cancelled
-   * run stops dispatching immediately rather than at the next model turn.
+   * The held set is what the execution path reads, so a run the operator paused
+   * or left waiting stops dispatching immediately rather than at the next model
+   * turn, and only in the session that owns it.
    * @param runKey - Run to control.
    * @param action - What the operator asked for.
    * @returns the run record after the action.
    * @throws when no run carries that key, or the action contradicts its status.
    */
-  async controlRun(runKey: string, action: 'pause' | 'resume' | 'cancel'): Promise<RunRecord> {
-    const run = this.getRun(runKey)
-    if (run === undefined) throw new Error(`web-test: no run ${JSON.stringify(runKey)}`)
+  async controlRun(runKey: string, action: RunControlAction): Promise<RunRecord> {
+    const run = this.requireRun(runKey)
     const next = WebTestStore.nextStatus(run, action)
     if (next === undefined) {
       throw new Error(`web-test: run ${JSON.stringify(runKey)} is ${run.status} and cannot ${action}`)
     }
-    const record = { ...run, status: next, updatedAtMs: Date.now() }
-    // Only a paused run is held. A cancelled run is finished: holding it would
-    // block every later run in the host, and a cancelled run can never be
-    // resumed, so nothing would ever clear that hold.
-    if (next === 'paused') this.heldRuns.set(runKey, next)
-    else this.heldRuns.delete(runKey)
+    const record = {
+      ...run,
+      status: next,
+      // Resuming or answering releases whatever the run was waiting for; only a
+      // business-time wait keeps a deadline, and `resumeWait` clears that one.
+      waitingUntilMs: next === 'running' ? run.waitingUntilMs : 0,
+      waitingReason: next === 'running' ? run.waitingReason : '',
+      updatedAtMs: Date.now(),
+    }
+    this.applyHold(record)
+    return this.putRun(record)
+  }
+
+  /**
+   * Park a run until a business deadline, persisting the deadline itself.
+   *
+   * The deadline is durable rather than an in-memory timer, so a wait for a
+   * business event survives the host closing and the run reports when it may
+   * continue the next time the host runs.
+   * @param runKey - Run to park.
+   * @param untilMs - Earliest moment the run may act again.
+   * @param reason - What the run is waiting for, for the report and operator.
+   * @returns the run record after the wait was recorded.
+   * @throws when the run is not running, or the deadline is not in the future.
+   */
+  async waitUntil(runKey: string, untilMs: number, reason: string): Promise<RunRecord> {
+    const run = this.requireRun(runKey)
+    if (run.status !== 'running') {
+      throw new Error(`web-test: run ${JSON.stringify(runKey)} is ${run.status}; only a running run can wait for`
+        + ' business time')
+    }
+    if (untilMs <= Date.now()) {
+      throw new Error(`web-test: ${new Date(untilMs).toISOString()} is not in the future; a wait for business time`
+        + ' needs a deadline the run has not reached yet')
+    }
+    const record = { ...run, status: 'awaiting-business-time' as const, waitingUntilMs: untilMs, waitingReason: reason, updatedAtMs: Date.now() }
+    this.applyHold(record)
+    return this.putRun(record)
+  }
+
+  /**
+   * Release a business-time wait once its deadline has passed.
+   * @param runKey - Run to release.
+   * @returns the run record after the wait ended.
+   * @throws when the run is not waiting, or its deadline has not arrived.
+   */
+  async resumeWait(runKey: string): Promise<RunRecord> {
+    const run = this.requireRun(runKey)
+    if (run.status !== 'awaiting-business-time') {
+      throw new Error(`web-test: run ${JSON.stringify(runKey)} is ${run.status} and is not waiting for business time`)
+    }
+    const remainingMs = run.waitingUntilMs - Date.now()
+    if (remainingMs > 0) {
+      throw new Error(`web-test: run ${JSON.stringify(runKey)} waits until`
+        + ` ${new Date(run.waitingUntilMs).toISOString()}, ${Math.ceil(remainingMs / 1000)}s from now. Check the page`
+        + ' instead of waiting; do not repeat a case that already ran.')
+    }
+    const record = {
+      ...run,
+      status: 'running' as const,
+      waitingUntilMs: 0,
+      waitingReason: '',
+      updatedAtMs: Date.now(),
+    }
+    this.applyHold(record)
     return this.putRun(record)
   }
 
   /**
    * The status an action produces, or undefined when the action is not allowed.
+   *
+   * A terminal status is terminal: a cancelled run stays cancelled because its
+   * browser and evidence are gone, so re-enabling it would promise work that can
+   * no longer be evidenced. Resuming returns a run straight to `running`, because
+   * a pause leaves the session's browser alive and has nothing left to settle.
    * @param run - The run being controlled.
    * @param action - What the operator asked for.
    * @returns the resulting status, or undefined when the transition is invalid.
    */
-  private static nextStatus(run: RunRecord, action: 'pause' | 'resume' | 'cancel'): RunRecord['status'] | undefined {
-    if (action === 'cancel') return run.status === 'cancelled' ? undefined : 'cancelled'
+  private static nextStatus(run: RunRecord, action: RunControlAction): RunRecord['status'] | undefined {
+    if (TERMINAL_STATUSES.includes(run.status)) return undefined
+    if (action === 'cancel') return 'cancelled'
+    if (action === 'await-user') return run.status === 'running' ? 'awaiting-user' : undefined
     if (action === 'pause') return run.status === 'paused' ? undefined : 'paused'
-    // Resuming returns the run straight to `running`. A pause leaves the
-    // session's browser alive, so there is no re-establishment phase to
-    // represent and the run has nothing left to settle before acting again. A
-    // cancelled run stays cancelled, because its browser and evidence are gone.
-    if (run.status !== 'paused') return undefined
+    if (action === 'continue') return run.status === 'awaiting-user' ? 'running' : undefined
+    if (run.status !== 'paused' && run.status !== 'resuming') return undefined
     return 'running'
   }
 
   /**
-   * The first run currently stopped by an operator, if any.
-   *
-   * The execution path consults this before dispatching any test action, so a
-   * held run is enforced where the action happens rather than by asking the
-   * model to behave.
-   * @returns the held run and its status, or undefined when none is held.
+   * Read one run or refuse by name, so every control path names the same cause.
+   * @param runKey - Run to read.
+   * @returns the stored run.
+   * @throws when no run carries that key.
    */
-  heldRun(): { runKey: string, status: 'paused' } | undefined {
-    for (const [runKey, status] of this.heldRuns) return { runKey, status }
+  private requireRun(runKey: string): RunRecord {
+    const run = this.getRun(runKey)
+    if (run === undefined) throw new Error(`web-test: no run ${JSON.stringify(runKey)}`)
+    return run
+  }
+
+  /**
+   * Keep the held set in step with a run's status.
+   *
+   * Only a status that means "not executing right now" holds. A cancelled run is
+   * finished and never holds, because holding it would stop every later run in
+   * the host and nothing would ever clear that hold.
+   * @param record - The run record about to be stored.
+   */
+  private applyHold(record: RunRecord): void {
+    if ((HELD_STATUSES as readonly string[]).includes(record.status)) {
+      this.heldRuns.set(record.key, record.status as RunHoldStatus)
+    } else {
+      this.heldRuns.delete(record.key)
+    }
+  }
+
+  /**
+   * The held run that stops one session, if any.
+   *
+   * A hold is scoped to the run's owning session so a paused run does not stop an
+   * unrelated session's work. A held run with no recorded owner stops every
+   * session, because the plugin cannot tell whose work interrupting it would end.
+   * @param sessionId - Session asking, or empty when the caller has none.
+   * @returns the held run and the reason it is held.
+   */
+  holdForSession(sessionId: string): { runKey: string, status: RunHoldStatus } | undefined {
+    for (const [runKey, status] of this.heldRuns) {
+      const owner = this.getRun(runKey)?.ownerSessionId ?? ''
+      if (owner === '' || owner === sessionId) return { runKey, status }
+    }
     return undefined
+  }
+
+  /**
+   * Every run an operator currently holds, for the Client's run list.
+   * @returns the held runs and their reasons.
+   */
+  heldRunList(): { runKey: string, status: RunHoldStatus }[] {
+    return [...this.heldRuns].map(([runKey, status]) => ({ runKey, status }))
   }
 
   /**
@@ -331,8 +476,8 @@ export class WebTestStore extends Service {
     return this.write(TABLE_RUNS, run.key, run).then(() => run)
   }
 
-  /** Runs an operator has paused, so the execution path can refuse them. */
-  private readonly heldRuns = new Map<string, 'paused'>()
+  /** Runs an operator held, so the execution path can refuse them by session. */
+  private readonly heldRuns = new Map<string, RunHoldStatus>()
 
   /** When each run's evidence directory was prepared, so stale files can be refused. */
   private readonly runStartedAt = new Map<string, number>()
@@ -374,6 +519,266 @@ export class WebTestStore extends Service {
    */
   putCaseResult(result: CaseResultRecord): Promise<CaseResultRecord> {
     return this.write(TABLE_CASE_RESULTS, result.key, result).then(() => result)
+  }
+
+  /**
+   * Record the intent to perform one business-changing operation, durably, before
+   * the action that causes it.
+   *
+   * The record is written in `dispatching` on purpose: a transport loss or a
+   * crash after this point may or may not have reached the business system, and
+   * the honest state of that operation is `unknown`, not "not done". An operation
+   * already in an unresolved state is refused, so replanning or renaming an
+   * intent cannot become a second submission of the same change.
+   * @param runKey - Run that will perform the operation.
+   * @param operationKey - Short id the run names this operation by.
+   * @param intent - The business change, for the report.
+   * @param requestDigest - Digest of the request, so a repeat is recognisable.
+   * @param role - Role performing it; must be declared by the run's environment.
+   * @returns the stored operation record.
+   * @throws when the run is not executing, the role is undeclared, or the
+   * operation's outcome is already unresolved.
+   */
+  async beginOperation(
+    runKey: string,
+    operationKey: string,
+    intent: string,
+    requestDigest: string,
+    role: string,
+  ): Promise<OperationRecord> {
+    const run = this.requireRun(runKey)
+    if (run.status !== 'running') {
+      throw new Error(`web-test: run ${JSON.stringify(runKey)} is ${run.status}; only a running run may change business`
+        + ' data')
+    }
+    const effectiveRole = this.requireDeclaredRole(run, role)
+    const existing = this.getOperation(runKey, operationKey)
+    if (existing !== undefined && UNRESOLVED_DISPATCHES.includes(existing.dispatch.kind)) {
+      throw new Error(`web-test: operation ${JSON.stringify(operationKey)} of run ${JSON.stringify(runKey)} is`
+        + ` ${existing.dispatch.kind}; its outcome is unresolved, so it must not be submitted again. Settle it or`
+        + ' reconcile it with the operator, and use a new operation for genuinely new work.')
+    }
+    const record = operationRecordSchema.parse({
+      schemaVersion: SCHEMA_VERSION,
+      kind: 'operation',
+      key: `${runKey}/${operationKey}`,
+      label: intent,
+      updatedAtMs: Date.now(),
+      runKey,
+      operationKey,
+      intent,
+      role: effectiveRole,
+      requestDigest,
+      dispatch: { kind: 'dispatching' },
+    })
+    return this.putOperation(record)
+  }
+
+  /**
+   * Settle one operation from an observation independent of the dispatch.
+   * @param runKey - Run that performed the operation.
+   * @param operationKey - Operation to settle.
+   * @param outcome - What the observation established.
+   * @returns the stored operation record.
+   * @throws when the operation does not exist or was never dispatched, because
+   * an outcome for an undispatched operation would invent a business effect.
+   */
+  async settleOperation(
+    runKey: string,
+    operationKey: string,
+    outcome: 'observed-success' | 'observed-absent',
+  ): Promise<OperationRecord> {
+    const existing = this.getOperation(runKey, operationKey)
+    if (existing === undefined) {
+      throw new Error(`web-test: run ${JSON.stringify(runKey)} has no operation ${JSON.stringify(operationKey)}`)
+    }
+    if (existing.dispatch.kind === 'not-dispatched') {
+      throw new Error(`web-test: operation ${JSON.stringify(operationKey)} was never dispatched, so it has no`
+        + ' outcome to record')
+    }
+    if (existing.dispatch.kind === 'settled') {
+      throw new Error(`web-test: operation ${JSON.stringify(operationKey)} is already settled as`
+        + ` ${existing.dispatch.outcome}; a second settlement would overwrite the first observation`)
+    }
+    return this.putOperation({ ...existing, dispatch: { kind: 'settled', outcome }, updatedAtMs: Date.now() })
+  }
+
+  /**
+   * Record that an operation's outcome could not be observed.
+   *
+   * This is the live equivalent of what a restart finds: the operation may or
+   * may not have reached the business system, so it stays unresolved until an
+   * operator settles it, and it is never dispatched again.
+   * @param runKey - Run that attempted the operation.
+   * @param operationKey - Operation whose outcome is unknown.
+   * @param reason - What was observed to be lost.
+   * @returns the stored operation record.
+   * @throws when the operation does not exist or is already settled.
+   */
+  async markOperationUnknown(runKey: string, operationKey: string, reason: string): Promise<OperationRecord> {
+    const existing = this.getOperation(runKey, operationKey)
+    if (existing === undefined) {
+      throw new Error(`web-test: run ${JSON.stringify(runKey)} has no operation ${JSON.stringify(operationKey)}`)
+    }
+    if (existing.dispatch.kind === 'settled') {
+      throw new Error(`web-test: operation ${JSON.stringify(operationKey)} is already settled as`
+        + ` ${existing.dispatch.outcome}; an observed outcome is not replaced by a loss report`)
+    }
+    if (existing.dispatch.kind === 'unknown') return existing
+    return this.putOperation({ ...existing, dispatch: { kind: 'unknown', reason }, updatedAtMs: Date.now() })
+  }
+
+  /**
+   * Store one operation's record, replacing any record with the same key.
+   * @param operation - Validated operation record.
+   * @returns the stored operation.
+   */
+  putOperation(operation: OperationRecord): Promise<OperationRecord> {
+    return this.write(TABLE_OPERATIONS, operation.key, operation).then(() => operation)
+  }
+
+  /**
+   * Read one operation of one run.
+   * @param runKey - Run that owns the operation.
+   * @param operationKey - Operation to read.
+   * @returns the stored operation, or undefined when the run has no such operation.
+   */
+  getOperation(runKey: string, operationKey: string): OperationRecord | undefined {
+    const stored = this.records[TABLE_OPERATIONS] as Record<string, OperationRecord> | undefined
+    return stored?.[`${runKey}/${operationKey}`]
+  }
+
+  /**
+   * Every operation of one run, in key order.
+   * @param runKey - Run whose operations to read.
+   * @returns the stored operation records.
+   */
+  listOperations(runKey?: string): OperationRecord[] {
+    const all = this.sorted(TABLE_OPERATIONS) as OperationRecord[]
+    return runKey === undefined ? all : all.filter(operation => operation.runKey === runKey)
+  }
+
+  /**
+   * The operations of one run whose outcome is not yet established.
+   * @param runKey - Run whose operations to read.
+   * @returns the unresolved operation records.
+   */
+  unresolvedOperations(runKey: string): OperationRecord[] {
+    return this.listOperations(runKey).filter(operation => operation.dispatch.kind !== 'settled')
+  }
+
+  /**
+   * Choose the role a run acts as, refusing a role the environment never declared.
+   *
+   * Role isolation starts from the declaration: a case may only act as a role the
+   * operator listed, and a role may not change while a business-changing operation
+   * is unresolved, because the run could not say which account produced that
+   * effect.
+   * @param runKey - Run changing role.
+   * @param role - Role to act as; empty clears the current role.
+   * @returns the run record after the change.
+   * @throws when the run is not running, the role is undeclared, or an operation
+   * is still unresolved.
+   */
+  async assumeRole(runKey: string, role: string): Promise<RunRecord> {
+    const run = this.requireRun(runKey)
+    if (run.status !== 'running') {
+      throw new Error(`web-test: run ${JSON.stringify(runKey)} is ${run.status}; only a running run can change role`)
+    }
+    const unresolved = this.unresolvedOperations(runKey)
+    if (unresolved.length > 0) {
+      throw new Error(`web-test: run ${JSON.stringify(runKey)} still has ${unresolved.length} unresolved`
+        + ` operation(s) (${unresolved.map(operation => operation.operationKey).join(', ')}); settle them before`
+        + ' changing role, because the effect they may have had belongs to the current account')
+    }
+    const declared = this.requireDeclaredRole(run, role)
+    return this.putRun({ ...run, activeRole: declared, updatedAtMs: Date.now() })
+  }
+
+  /**
+   * Resolve a role name against the run's environment declaration.
+   * @param run - Run the role would act for.
+   * @param role - Role name, empty to clear it.
+   * @returns the role name, empty when the run acts without one.
+   * @throws when the environment never declared that role.
+   */
+  private requireDeclaredRole(run: RunRecord, role: string): string {
+    if (role === '') return ''
+    const stored = this.records[TABLE_ENVIRONMENT_REVISIONS] as Record<string, EnvironmentRevisionRecord> | undefined
+    const environment = stored?.[run.environmentRevisionKey]
+    if (environment === undefined) {
+      throw new Error(`web-test: run ${JSON.stringify(run.key)} names environment`
+        + ` ${JSON.stringify(run.environmentRevisionKey)}, which is not stored, so no role can be authorised`)
+    }
+    if (!environment.roles.some(declared => declared.name === role)) {
+      throw new Error(`web-test: environment ${JSON.stringify(environment.key)} declares`
+        + ` [${environment.roles.map(declared => declared.name).join(', ')}]; role ${JSON.stringify(role)} was not`
+        + ' declared, so the run may not act as it')
+    }
+    return role
+  }
+
+  /**
+   * Settle what a restart interrupted, instead of resuming it blindly.
+   *
+   * An operation that was in flight when the process stopped has an unobserved
+   * outcome, so it becomes `unknown` and is never dispatched again. A run that
+   * was still executing becomes `resuming`: it is neither executing nor a state
+   * the operator chose, so it waits for an explicit continuation and refuses new
+   * test actions meanwhile.
+   *
+   * A run that was already waiting keeps waiting. A wait for business time owns
+   * a stored deadline that outlives the process, and a wait for an answer is
+   * waiting on a person, so neither is something a restart decides. A
+   * user-paused or cancelled run likewise keeps the state the operator chose.
+   * @returns what the restart found that needs a decision.
+   */
+  private async reconcileInterruptedWork(): Promise<ReconciliationReport> {
+    const unknownOperations: { runKey: string, operationKey: string, reason: string }[] = []
+    for (const operation of this.sorted(TABLE_OPERATIONS) as OperationRecord[]) {
+      if (operation.dispatch.kind !== 'dispatching' && operation.dispatch.kind !== 'dispatched') continue
+      const reason = 'the DSH process restarted while this operation was in flight, so its outcome was never'
+        + ' observed; it must be reconciled with the operator, not repeated'
+      await this.markOperationUnknown(operation.runKey, operation.operationKey, reason)
+      unknownOperations.push({ runKey: operation.runKey, operationKey: operation.operationKey, reason })
+    }
+    const blockedRuns: string[] = []
+    for (const run of this.sorted(TABLE_RUNS) as RunRecord[]) {
+      // `resuming` is already this state: a previous open parked it and nobody
+      // continued it, so re-parking it would only overwrite its reason.
+      if (TERMINAL_STATUSES.includes(run.status) || PRESERVED_ACROSS_RESTART.includes(run.status)) continue
+      const record: RunRecord = {
+        ...run,
+        status: 'resuming',
+        waitingUntilMs: 0,
+        waitingReason: 'the DSH process restarted while this run was executing; check the environment, the login,'
+          + ' and every unresolved operation, then continue it deliberately with controlRun(run, "resume")',
+        updatedAtMs: Date.now(),
+      }
+      this.applyHold(record)
+      await this.putRun(record)
+      blockedRuns.push(run.key)
+    }
+    return { blockedRuns, unknownOperations }
+  }
+
+  /**
+   * Refuse recording into a run that is not executing.
+   *
+   * A result may only describe steps the run actually performed while it was
+   * running, so a paused, waiting, cancelled or restart-interrupted run does not
+   * accept new results; it must be continued first.
+   * @param runKey - Run to check.
+   * @returns the run, which is executing.
+   * @throws when the run is missing or is not running.
+   */
+  requireExecutable(runKey: string): RunRecord {
+    const run = this.requireRun(runKey)
+    if (run.status !== 'running') {
+      throw new Error(`web-test: run ${JSON.stringify(runKey)} is ${run.status}; only a running run may record new`
+        + ' results. Continue it deliberately before reporting more work.')
+    }
+    return run
   }
 
   /**
@@ -430,6 +835,7 @@ export class WebTestStore extends Service {
       run: size(TABLE_RUNS),
       policy: size(TABLE_POLICIES),
       'case-result': size(TABLE_CASE_RESULTS),
+      operation: size(TABLE_OPERATIONS),
     }
   }
 
@@ -469,6 +875,7 @@ export class WebTestStore extends Service {
       schemaVersion: SCHEMA_VERSION,
       recordCounts: this.recordCounts(),
       dshVersion: COMPATIBLE_DSH_VERSION,
+      reconciliation: this.reconciliation,
     }
   }
 }

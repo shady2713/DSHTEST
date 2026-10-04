@@ -18,9 +18,18 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { Storage } from '@deepseek-ai/dsh-storage'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import { PRESET_ID, name as AGENT_ROW } from './agent.ts'
-import { buildReport } from './report.ts'
+import { buildReportBundle } from './report.ts'
+import type { ReportBundle } from './report.ts'
 import { environmentRevisionRecordSchema, policyRecordSchema, projectRecordSchema } from './records.ts'
-import type { CaseResultRecord, EnvironmentRevisionRecord, PolicyRecord, ProjectRecord, RunRecord } from './types.ts'
+import type {
+  CaseResultRecord,
+  EnvironmentRevisionRecord,
+  OperationRecord,
+  PolicyRecord,
+  ProjectRecord,
+  RunControlAction,
+  RunRecord,
+} from './types.ts'
 
 /** Loader row of the plugin's agent half, mounted inside the test preset. */
 export { AGENT_ROW }
@@ -155,11 +164,12 @@ export class WebTestService extends TypertRemoteService {
   }
 
   /**
-   * Pause, resume, or cancel one run.
+   * Pause, resume, cancel, or park one run, or answer the question it raised.
    *
    * This is the operator's side of the control surface: it changes the run's
-   * status and the execution path's held set, so a paused or cancelled run
-   * stops dispatching without waiting for the model's next turn.
+   * status and the execution path's held set, so a run the operator stopped
+   * refuses dispatching without waiting for the model's next turn, and only in
+   * the session that owns it.
    * @param runKey - Run to control.
    * @param action - What the operator asked for.
    * @returns the run record after the action.
@@ -167,9 +177,98 @@ export class WebTestService extends TypertRemoteService {
    * contradicts the run's current status.
    */
   @Remote
-  async controlRun(runKey: string, action: 'pause' | 'resume' | 'cancel'): Promise<RunRecord> {
+  async controlRun(runKey: string, action: RunControlAction): Promise<RunRecord> {
     this.acceptingGuard()
     return this.ctx.webTestStore.controlRun(runKey, action)
+  }
+
+  /**
+   * Park a run until a business deadline, persisting the deadline itself.
+   *
+   * The deadline is durable, so a wait for a business event outlives the host
+   * closing and the run reports when it may continue the next time it starts.
+   * @param runKey - Run to park.
+   * @param untilIso - ISO 8601 moment the run may act again at.
+   * @param reason - What the run is waiting for.
+   * @returns the run record after the wait was recorded.
+   * @throws when the plugin is draining, the run is not running, or the deadline
+   * is not in the future.
+   */
+  @Remote
+  async waitRun(runKey: string, untilIso: string, reason: string): Promise<RunRecord> {
+    this.acceptingGuard()
+    const untilMs = Date.parse(untilIso)
+    if (Number.isNaN(untilMs)) {
+      throw new Error(`web-test: ${JSON.stringify(untilIso)} is not an ISO 8601 moment`)
+    }
+    return this.ctx.webTestStore.waitUntil(runKey, untilMs, reason)
+  }
+
+  /**
+   * Release a business-time wait once its stored deadline has passed.
+   * @param runKey - Run to release.
+   * @returns the run record after the wait ended.
+   * @throws when the plugin is draining, the run is not waiting, or its deadline
+   * has not arrived.
+   */
+  @Remote
+  async resumeWait(runKey: string): Promise<RunRecord> {
+    this.acceptingGuard()
+    return this.ctx.webTestStore.resumeWait(runKey)
+  }
+
+  /**
+   * Choose the role a run acts as, refusing a role the environment never declared.
+   * @param runKey - Run changing role.
+   * @param role - Declared role name, empty to act without one.
+   * @returns the run record after the change.
+   * @throws when the plugin is draining, the run is not running, the role is
+   * undeclared, or an operation is still unresolved.
+   */
+  @Remote
+  async assumeRole(runKey: string, role: string): Promise<RunRecord> {
+    this.acceptingGuard()
+    return this.ctx.webTestStore.assumeRole(runKey, role)
+  }
+
+  /**
+   * Settle a business-changing operation whose outcome is now established, or
+   * record that it could not be observed.
+   *
+   * An operation that was in flight when the host stopped is already `unknown`
+   * when this opens, so the operator resolves it here instead of the run
+   * repeating it.
+   * @param runKey - Run that attempted the operation.
+   * @param operationKey - Operation to resolve.
+   * @param resolution - Either the observed outcome, or the reason it is unknown.
+   * @returns the operation record after the resolution.
+   * @throws when the plugin is draining, the operation does not exist, or the
+   * transition is not allowed.
+   */
+  @Remote
+  async resolveOperation(
+    runKey: string,
+    operationKey: string,
+    resolution: { outcome: 'observed-success' | 'observed-absent' } | { unknownReason: string },
+  ): Promise<OperationRecord> {
+    this.acceptingGuard()
+    const store = this.ctx.webTestStore
+    if ('outcome' in resolution) {
+      return store.settleOperation(runKey, operationKey, resolution.outcome)
+    }
+    return store.markOperationUnknown(runKey, operationKey, resolution.unknownReason)
+  }
+
+  /**
+   * Read one run's business-changing operations.
+   * @param runKey - Run whose operations to read; omit for every run.
+   * @returns the stored operation records in key order.
+   * @throws when the plugin is draining.
+   */
+  @Remote
+  listOperations(runKey?: string): OperationRecord[] {
+    this.acceptingGuard()
+    return this.ctx.webTestStore.listOperations(runKey)
   }
 
   /**
@@ -198,15 +297,26 @@ export class WebTestService extends TypertRemoteService {
   }
 
   /**
-   * Build one run's report from its recorded case results.
+   * Build one run's report from its recorded case results and operations.
+   *
+   * All three forms come from one derivation, so the HTML a browser opens, the
+   * Markdown a person reviews and the JSON a tool reads cannot disagree about
+   * what the run did.
    * @param runKey - Run to report on.
-   * @returns the report in Markdown.
+   * @returns the report in Markdown, HTML and JSON, plus the verdict.
    * @throws when the plugin is draining.
    */
   @Remote
-  buildReport(runKey: string): { markdown: string } {
+  buildReport(runKey: string): ReportBundle {
     this.acceptingGuard()
-    return { markdown: buildReport(runKey, this.ctx.webTestStore.listCaseResults(runKey)) }
+    const store = this.ctx.webTestStore
+    const run = store.getRun(runKey)
+    return buildReportBundle({
+      runKey,
+      results: store.listCaseResults(runKey),
+      ...(run === undefined ? {} : { run }),
+      operations: store.listOperations(runKey),
+    })
   }
 
   /**

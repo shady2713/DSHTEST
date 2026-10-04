@@ -93,11 +93,56 @@
 - [ ] `0.1.1` 覆盖安装到已装 `0.1.0` 的 profile
 - [ ] `node_modules` 版本为 `0.1.1`，宿主启动零失败
 - [ ] 升级前的数据仍可读，数据格式未变（v3，无需迁移）
+- [ ] 存储带 99 戳时存储拒绝打开并指出版本不匹配，而不是读成空
+- [ ] 读回一条早于新增字段的记录：归属、角色、等待字段取到文档化默认值
+
+## 12. 业务操作与重启对账
+
+前置：会话 A 已 `web_test_start_run`；本组全部使用同一个 `runKey`。
+
+- [ ] `web_test_begin_operation` 后 `webTest/listOperations` 显示 `dispatching`
+- [ ] 未结算前再次 `begin_operation` 同键 → 被拒绝，报文含「结果未决，不得再次提交」
+- [ ] `web_test_settle_operation` 成功；再次结算同键 → 被拒绝
+- [ ] 断连场景：`begin_operation` 后不结算，直接结束宿主进程
+- [ ] 重启后 `webTest/status` 的 `reconciliation.unknownOperations` 含该操作
+- [ ] 该操作 `dispatch` 为 `unknown`，且继续 `begin_operation` 同键仍被拒绝
+- [ ] 被中断的运行状态为 `resuming`，`webTest/listOperations` 与 `getRun` 一致
+- [ ] `resuming` 运行上 `begin_operation` 与 `report_case` 均被拒绝
+- [ ] `webTest/controlRun(run, "resume")` 后运行回到 `running`；未结算操作仍不可重提
+
+## 13. 按会话隔离的 hold
+
+前置：会话 A 与会话 B 各自 `web_test_start_run` 一个运行。
+
+- [ ] 对 A 的运行 `webTest/controlRun(runA, "pause")`
+- [ ] A 会话内的浏览器调用被拒绝，报文含「paused」
+- [ ] **B 会话内的浏览器调用仍正常**（此前实现会在此处失败）
+- [ ] A 会话内 `web_test_status`、`web_test_settle_operation`、
+      `web_test_operation_unknown`、`web_test_resume_wait` 仍可用
+- [ ] 取消文案不再要求调用不存在的 `web_test_resume_run`
+
+## 14. 角色与业务时间等待
+
+- [ ] 环境未声明的角色 → `web_test_assume_role` 被拒绝并列出已声明角色
+- [ ] 操作未决时切换角色 → 被拒绝并指出未决操作
+- [ ] `web_test_wait` 设为未来时刻 → 运行状态 `awaiting-business-time`
+- [ ] 等待期间浏览器调用被拒绝
+- [ ] 截止时间前 `web_test_resume_wait` 被拒绝并给出剩余秒数
+- [ ] 截止时间后 `web_test_resume_wait` 成功，运行回到 `running`
+- [ ] 等待中重启宿主 → 运行仍为 `awaiting-business-time` 且截止时间未丢失
+
+## 15. 报告三格式
+
+- [ ] `webTest/buildReport` 返回 `markdown`、`html`、`json` 与 `verdict`
+- [ ] 三者对同一运行的用例数与结论一致
+- [ ] 存在待确认问题时 `verdict` 为 `undetermined`，而非 `passed`
+- [ ] 未结算操作连同原因出现在三种格式中
+- [ ] 用例文案中的 `<script>` 在 `html` 中被转义
 
 ## 执行记录
 
 | 项 | 执行人 | 日期 | 结果 | 备注 |
 |---|---|---|---|---|
-| 1–11 |  |  |  |  |
+| 1–15 |  |  |  |  |
 
 未填写的行视为**未验证**。

@@ -16,7 +16,44 @@ DSH 的 Web 测试插件：在真实 Chrome 或 Edge 中执行已确认的用例
 - 通过 DSH 官方 Playwright MCP 提供方驱动真实浏览器；
 - 存储位于插件自有数据根下的 SQLite，单写者有序写入，版本戳精确匹配，遇到未知数据模式拒绝打开。
 
-用例生成、确认、断言与报告生成属于后续阶段；逐条需求的状态见[需求对应表][mapping]。
+### 会改变业务数据的操作
+
+改变业务数据的步骤不只是一次浏览器点击。测试 Agent 在动作**之前**持久记录意图，在动作**之后**独立观察结果，然后结算该操作：
+
+| 工具 | 模型何时调用 | 插件强制什么 |
+|---|---|---|
+| `web_test_begin_operation` | 紧接变更之前 | 记录先以 `dispatching` 落盘。结果未决的同键重复会被拒绝，因此改个名字或换个工具调用 id 无法变成第二次提交。 |
+| `web_test_settle_operation` | 观察到结果之后 | 只结算一次；二次结算被拒绝，首次观察得以留存。 |
+| `web_test_operation_unknown` | 断连或无法观察结果时 | 操作保持 `unknown`，作为问题进入报告与操作者界面，且永不再派发。 |
+
+跨重启同理：DSH 进程停止时在途的操作转为 `unknown`，当时正在执行的运行停在 `resuming` 等待显式继续。重启绝不自行恢复工作，因为它无法核对环境、登录，也无法确认变更是否落地。
+
+### 角色与业务时间等待
+
+- `web_test_assume_role` 以操作者为该环境声明的某个角色行事。未声明的角色被拒绝；操作未决时切换角色也被拒绝，因为可能已经存在的变更属于当时的账号。
+- `web_test_wait` 把运行停放到某个 ISO 8601 截止时间，并把该截止时间持久化在运行上，因此等待业务事件的等待能跨越宿主关闭。`web_test_resume_wait` 结束等待，在截止时间之前调用会被拒绝并给出剩余时间。
+
+### 操作者控制与 hold
+
+`webTest/controlRun` 是操作者一侧：`pause`、`resume`、`cancel`、`await-user`、`continue`。hold 只停住拥有该运行的会话，不会停住其他会话，因此一个会话的暂停不会中断另一个会话的工作。没有记录归属的运行会停住所有会话，因为插件无法判断它会中断谁的工作。运行被 hold 期间，记录或了结状态所需的工具——`web_test_status`、`web_test_settle_operation`、`web_test_operation_unknown`、`web_test_resume_wait`——保持可用；一切会驱动浏览器的调用都被拒绝。
+
+### 报告
+
+`webTest/buildReport` 由同一份已记录结果派生出 HTML、Markdown 与 JSON，三者不会互相矛盾。只有当每条已记录用例都通过且没有任何未决事项时，结论才是 `passed`；只要存在待确认问题，或阻塞、未完成、跳过的用例，结论就是 `undetermined`。未决操作连同原因一并列出。HTML 导出会转义用例自身的措辞，因为它们来自模型阅读任意被测页面。
+
+用例生成与确认仍属后续阶段；逐条需求的状态见[需求对应表][mapping]，并注意该表已撤回此前“S0–S6 全部完成”的结论。
+
+## 开发
+
+```sh
+pnpm install          # 在 dsh-plugin-web-test/ 下
+pnpm run typecheck    # 两个编译面
+pnpm run build        # typecheck → 打包 → Typert 生成
+pnpm run test         # 单元测试
+pnpm --filter dsh-plugin-web-test pack --pack-destination ../../dist
+```
+
+`pnpm run build` 必须按此顺序：`tsc` 在 `lib/types` 下产出 JavaScript，tsdown 从那里打包，Typert 脚本重写 `src/client/remote.ts` 与 `lib/typert.*` 产物。`tsdown.config.ts` 的清理列表只包含各 bundle 自身的产物，因此 `lib/types` 与 Typert 产物得以保留，而早期构建的内容哈希 chunk 不会残留。
 
 ## 安装
 
@@ -34,8 +71,9 @@ dsh plugin --profile <profile> add dsh-plugin-web-test
 
 ## Windows 验收状态
 
-**Windows 上的验收全部未验证。** 现有证据只覆盖 Ubuntu 24.04 / Node 24.15.0 / pnpm 11.7.0、
-宿主 DSH 0.2.0-rc.2。逐条可执行的验收单见
+**Windows 上的宿主验收全部未验证。** 现有宿主证据只覆盖 Ubuntu 24.04 / Node 24.15.0 / pnpm 11.7.0、
+宿主 DSH 0.2.0-rc.2。此后在 Windows 上运行的是本包自身的依赖安装、`tsc`、打包、Typert 生成与单元测试——
+那属于构建证据，不是宿主验收。逐条可执行的验收单见
 [WINDOWS-ACCEPTANCE.zh.md](WINDOWS-ACCEPTANCE.zh.md)，其中每一条在未由 Windows 执行者实际跑过之前
 都不得记为通过。
 
