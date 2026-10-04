@@ -52,6 +52,8 @@ export const TABLE_POLICIES = 'policies'
 export const TABLE_CASE_RESULTS = 'case_results'
 /** Business-changing operations, durable before the action that causes them. */
 export const TABLE_OPERATIONS = 'operations'
+/** Cases as analysis proposed them and the operator ruled on them. */
+export const TABLE_CASE_PLANS = 'case_plans'
 
 /**
  * Absolute path of the plugin-owned data root.
@@ -127,5 +129,6 @@ export const WEB_TEST_UNIT: KvUnitDescriptor = {
     TABLE_POLICIES,
     TABLE_CASE_RESULTS,
     TABLE_OPERATIONS,
+    TABLE_CASE_PLANS,
   ],
 }

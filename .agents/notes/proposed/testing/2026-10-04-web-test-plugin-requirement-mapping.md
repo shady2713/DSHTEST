@@ -144,6 +144,18 @@ Further conclusions from the earlier rounds that remain valid are kept in the gi
 | Restart reconciliation destroyed a persistent wait | Clearing `waitingUntilMs` on every interrupted run would have made R51's durable deadline meaningless across exactly the restart it exists for. Caught by a test written for the rule. | A run that was already waiting keeps waiting; a pause and an open question are likewise not the restart's to convert. |
 | `report_case` accepted results for a run that was not executing | A paused, cancelled or interrupted run could take new results describing steps it never performed. | Results require an executing run. |
 
+### Priority 1: confirmed cases
+
+Proposed cases previously had **no data model**: `caseKey` and a step's `intent` were free text the model supplied, so a run could report a case nobody had approved. This is now modelled and measured on a real host:
+
+- A `case-plan` record and a `case_plans` table, carrying `status: proposed | confirmed | rejected`, `steps[]` (`index` / `intent` / `expectation`), and `confirmedAtMs`.
+- The model proposes through `web_test_propose_cases`; step numbers must be dense from 1, and a repeated `caseKey` is refused.
+- The operator rules through `webTest/ruleOnCase(runKey, caseKey, confirm|reject, note)`; ruling twice is refused.
+- **Enforced in the execution path**: `web_test_report_case` refuses a case that is not confirmed or was rejected, and refuses a result whose steps do not match the confirmed ones, so a skipped step has to be recorded as blocked or skipped.
+- The report gains a case-coverage section and `json.coverage` states each case's status and whether it produced a result. **A confirmed case with no result makes `verdict` `undetermined`**, and the human-readable conclusion line now agrees with the machine-readable verdict.
+
+Measured on the Ubuntu host (run-c1): proposal then `proposed`; reporting a result while unconfirmed was refused and produced 0 results (the model independently declined to fabricate one); after confirmation the case ran for real, giving 1 result whose 2 steps matched the confirmed plan and a real screenshot in the evidence directory; the report read `verdict: passed` with the case marked confirmed and reported. Gap check (run-c2): two cases confirmed, neither executed, gave `verdict: undetermined` with both listed as a confirmed case with no result.
+
 ## 7. Windows acceptance: not exercised
 
 This round ran the build and the unit tests on Windows, which is new but is not host acceptance. The following remain unverified and must not be counted as passed:

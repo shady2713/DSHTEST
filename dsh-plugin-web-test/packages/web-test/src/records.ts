@@ -102,6 +102,48 @@ export const policyRecordSchema = z.object({
   failureSimulation: z.enum(['excluded', 'included']),
 })
 
+/**
+ * One step of a proposed or confirmed case.
+ *
+ * A step is written during analysis and confirmed by the operator before any
+ * browser action, so what the run executed can later be compared against what
+ * was agreed rather than against whatever the model chose to do.
+ */
+export const plannedStepSchema = z.object({
+  /** Position in the case, one-based and dense. */
+  index: z.number().int().positive(),
+  /** What this step does, stated as the user would describe it. */
+  intent: z.string().min(1),
+  /** What the step expects to see, independent of how the page is built. */
+  expectation: z.string().default(''),
+})
+
+/**
+ * One case as analysis proposed it and the operator ruled on it.
+ *
+ * The record exists so a run cannot execute a case nobody approved: the tool
+ * that reports a result refuses a case whose status is not `confirmed`, and the
+ * report states which proposed cases were never ruled on.
+ */
+export const casePlanRecordSchema = z.object({
+  ...baseFields,
+  kind: z.literal('case-plan'),
+  /** `<runKey>/<caseKey>`, so one run's cases never collide with another's. */
+  key: z.string().min(1),
+  runKey: z.string().min(1),
+  projectKey: z.string().min(1),
+  environmentRevisionKey: z.string().min(1),
+  /** Case identifier the results and operations refer to. */
+  caseKey: z.string().min(1),
+  title: z.string().min(1),
+  status: z.enum(['proposed', 'confirmed', 'rejected']),
+  steps: z.array(plannedStepSchema),
+  /** Why the case is in scope, or the reason it was rejected. */
+  notes: z.string().default(''),
+  /** When the operator ruled on it; `0` while the case is only proposed. */
+  confirmedAtMs: z.number().int().nonnegative().default(0),
+})
+
 /** One step of a confirmed case, as the model actually performed it. */
 export const stepResultSchema = z.object({
   /** Position in the confirmed case, one-based. */

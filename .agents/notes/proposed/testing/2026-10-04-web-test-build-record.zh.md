@@ -61,7 +61,24 @@ npm pack --pack-destination ../../dist
 
 `pnpm run build` 以相同顺序执行这三步。上面的 `node` 调用等价，本机采用它们是因为 `pnpm run` 会重新解析依赖，而此环境的 registry 镜像不稳定。
 
-## 3. 检查了什么、没检查什么
+## 3. 后续更正：Windows 桌面版实际满足版本要求
+
+本记录 §3 末尾写明"产出本记录的机器上安装的 `dsh` 为 `0.1.5-rc.1`，因此无法执行安装件验收"。
+**该事实保留**：产出本记录时，这台机器上确实只有 0.1.5-rc.1 的命令行安装，宿主运行验收当时没有执行。
+
+其后由 Windows 端实际核实，**现有原版桌面应用满足版本要求**：
+
+| 项 | 实测值 |
+|---|---|
+| 桌面应用 | 0.2.0-rc.2 |
+| 桌面运行时 | 0.2.0-rc.2 |
+| 内置 `@deepseek-ai/dsh` 依赖 | 0.2.0-rc.2 |
+| 安装路径 | `C:\Users\64576\AppData\Local\Programs\DeepSeek Harness\DeepSeek Harness.exe` |
+
+因此本插件的 peer 声明 `@deepseek-ai/dsh` `0.2.0-rc.2` **不应下调**，也**不需要**另行安装 DSH。
+§3 的四项优先检查仍然是"当时未执行"，而非失败；它们改为在上述桌面应用上验收。
+
+## 4. 检查了什么、没检查什么
 
 在 Windows（Node 24.13.0、pnpm 11.7.0）上针对提交 `6c0f6682e535` 执行：
 
@@ -105,7 +122,7 @@ npm pack --pack-destination ../../dist
 | whitespace | 手工执行，通过 |
 | vendor manifest guard | **无法执行**：此环境 Git bash 的 PATH 中没有 `grep`。本次提交未触及 `vendor/`，因此该守卫的对象未变，但守卫本身未验证。 |
 
-## 4. 带入验收的已知缺口
+## 5. 带入验收的已知缺口
 
 在此记录，以免执行者误判为回归：
 

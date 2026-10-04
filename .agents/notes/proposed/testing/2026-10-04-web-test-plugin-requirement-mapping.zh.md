@@ -144,6 +144,18 @@
 | 重启对账摧毁了持久等待 | 在每个被中断运行上清空 `waitingUntilMs`，会让 R51 的持久截止时间恰好在其存在意义的那次重启中失效。由为该规则编写的测试捕获。 | 已在等待的运行继续等待；暂停与待答问题同样不由重启来改写。 |
 | `report_case` 接受非执行中运行的结果 | 被暂停、已取消或被中断的运行可以记录它从未执行过的步骤的结果。 | 记录结果要求运行处于执行中。 |
 
+### 优先项 1：已确认用例
+
+分析产出的用例此前**没有数据模型**：`caseKey` 与步骤 `intent` 都是模型自填的自由文本，因此可以上报一条从未被确认的用例。现已补齐并在真实宿主上实测：
+
+- 记录 `case-plan`（用例计划）与表 `case_plans`，含 `status: proposed | confirmed | rejected`、`steps[]`（`index` / `intent` / `expectation`）、`confirmedAtMs`。
+- 工具 `web_test_propose_cases` 由模型提案；`steps` 序号必须从 1 密集递增，重复 `caseKey` 被拒。
+- 操作者经 Remote `webTest/ruleOnCase(runKey, caseKey, confirm|reject, note)` 裁定；重复裁定被拒。
+- **执行层强制**：`web_test_report_case` 拒绝未确认或已否决的用例，并拒绝步骤集与已确认步骤不完全一致的结果，漏掉的步骤必须以 blocked 或 skipped 明示。
+- 报告新增「用例覆盖」段；`json.coverage` 逐条给出状态与是否有结果。**已确认但无结果的用例使 `verdict` 变为 `undetermined`**，人读结论行与机器可读结论保持一致。
+
+Ubuntu 真实宿主实测（run-c1）：提案 → `proposed`；未确认时上报结果被拒、结果数 0（模型同时自行拒绝伪造）；确认后真实执行 → 1 条结果、2 步与确认计划一致、真实截图入证据目录；报告 `verdict: passed`，覆盖段为「已确认且有结果」。缺口验证（run-c2）：两个用例均已确认、均无结果 → `verdict: undetermined`，覆盖段两条均为「已确认但无结果（缺口）」。
+
 ## 7. Windows 验收：未实测
 
 本轮在 Windows 上运行了构建与单元测试，这是新情况，但不属于宿主验收。以下仍未验证，不得计为通过：

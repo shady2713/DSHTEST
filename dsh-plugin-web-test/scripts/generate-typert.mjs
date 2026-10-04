@@ -96,6 +96,27 @@ const caseResultRecord = z.object({
   updatedAtMs: z.number().int().nonnegative(),
 })
 
+const casePlanRecord = z.object({
+  schemaVersion: z.literal(3),
+  kind: z.literal('case-plan'),
+  key: z.string().min(1),
+  runKey: z.string().min(1),
+  projectKey: z.string().min(1),
+  environmentRevisionKey: z.string().min(1),
+  caseKey: z.string().min(1),
+  title: z.string().min(1),
+  status: z.enum(['proposed', 'confirmed', 'rejected']),
+  steps: z.array(z.object({
+    index: z.number().int().positive(),
+    intent: z.string().min(1),
+    expectation: z.string(),
+  })),
+  notes: z.string(),
+  confirmedAtMs: z.number().int().nonnegative(),
+  label: z.string(),
+  updatedAtMs: z.number().int().nonnegative(),
+})
+
 const runRecord = z.object({
   schemaVersion: z.literal(3),
   kind: z.literal('run'),
@@ -160,6 +181,23 @@ const invocations = [
       { name: 'projectKey', wire: 'projectKey', symbol: 'string', create: '() => z.string().min(1)' },
     ],
     result: { symbol: 'EnvironmentRevisionRecord[]', create: '() => z.array(environmentRevisionRecord)' },
+  },
+  {
+    method: 'listCases',
+    parameters: [
+      { name: 'runKey', wire: 'runKey', symbol: 'string', create: '() => z.string().min(1)' },
+    ],
+    result: { symbol: 'CasePlanRecord[]', create: '() => z.array(casePlanRecord)' },
+  },
+  {
+    method: 'ruleOnCase',
+    parameters: [
+      { name: 'runKey', wire: 'runKey', symbol: 'string', create: '() => z.string().min(1)' },
+      { name: 'caseKey', wire: 'caseKey', symbol: 'string', create: '() => z.string().min(1)' },
+      { name: 'decision', wire: 'decision', symbol: "'confirm' | 'reject'", create: "() => z.union([z.literal('confirm'), z.literal('reject')])" },
+      { name: 'note', wire: 'note', symbol: 'string', create: '() => z.string()' },
+    ],
+    result: { symbol: 'CasePlanRecord', create: '() => casePlanRecord' },
   },
   {
     method: 'controlRun',
@@ -329,6 +367,7 @@ type RemoteEnvironmentRevision = z.infer<typeof environmentRevisionRecord>
 type RemotePolicy = z.infer<typeof policyRecord>
 type RemoteCaseResult = z.infer<typeof caseResultRecord>
 type RemoteRun = z.infer<typeof runRecord>
+type RemoteCasePlan = z.infer<typeof casePlanRecord>
 
 declare module '@deepseek-ai/dsh-typert-protocol' {
   interface TypertRemoteNamespace${NAMESPACE_TYPED} {
@@ -341,6 +380,8 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
     listCaseResults: (runKey: string) => Promise<{ ok: true, value: RemoteCaseResult[] } | { ok: false, error: { code: string, message: string } }>
     buildReport: (runKey: string) => Promise<{ ok: true, value: { markdown: string } } | { ok: false, error: { code: string, message: string } }>
     listRuns: () => Promise<{ ok: true, value: RemoteRun[] } | { ok: false, error: { code: string, message: string } }>
+    listCases: (runKey: string) => Promise<{ ok: true, value: RemoteCasePlan[] } | { ok: false, error: { code: string, message: string } }>
+    ruleOnCase: (runKey: string, caseKey: string, decision: 'confirm' | 'reject', note: string) => Promise<{ ok: true, value: RemoteCasePlan } | { ok: false, error: { code: string, message: string } }>
     controlRun: (runKey: string, action: 'pause' | 'resume' | 'cancel') => Promise<{ ok: true, value: RemoteRun } | { ok: false, error: { code: string, message: string } }>
     getRun: (runKey: string) => Promise<{ ok: true, value: RemoteRun } | { ok: false, error: { code: string, message: string } }>
   }

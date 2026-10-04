@@ -22,6 +22,7 @@ import { buildReportBundle } from './report.ts'
 import type { ReportBundle } from './report.ts'
 import { environmentRevisionRecordSchema, policyRecordSchema, projectRecordSchema } from './records.ts'
 import type {
+  CasePlanRecord,
   CaseResultRecord,
   EnvironmentRevisionRecord,
   OperationRecord,
@@ -176,6 +177,46 @@ export class WebTestService extends TypertRemoteService {
    * @throws when the plugin is draining, no run carries that key, or the action
    * contradicts the run's current status.
    */
+  /**
+   * Read every proposed case of one run, with the operator's ruling.
+   *
+   * This is the operator's view of what analysis proposed and what is therefore
+   * executable, which is the pair the report needs in order to state coverage.
+   * @param runKey - Run whose cases to read.
+   * @returns the case plans in key order.
+   * @throws when the plugin is draining.
+   */
+  @Remote
+  listCases(runKey: string): CasePlanRecord[] {
+    this.acceptingGuard()
+    return this.ctx.webTestStore.listCasePlans(runKey)
+  }
+
+  /**
+   * Approve or reject one proposed case.
+   *
+   * Approving is what makes a case executable: the tool that reports a result
+   * refuses anything the operator has not approved, and refuses a result that
+   * does not cover every approved step.
+   * @param runKey - Run the case belongs to.
+   * @param caseKey - Case to rule on.
+   * @param decision - Whether the operator approved the case.
+   * @param note - Why the operator decided this way.
+   * @returns the plan after the ruling.
+   * @throws when the plugin is draining, the run proposed no such case, or the
+   * case was already ruled on.
+   */
+  @Remote
+  async ruleOnCase(
+    runKey: string,
+    caseKey: string,
+    decision: 'confirm' | 'reject',
+    note: string,
+  ): Promise<CasePlanRecord> {
+    this.acceptingGuard()
+    return this.ctx.webTestStore.ruleOnCase(runKey, caseKey, decision, note)
+  }
+
   @Remote
   async controlRun(runKey: string, action: RunControlAction): Promise<RunRecord> {
     this.acceptingGuard()
@@ -316,6 +357,7 @@ export class WebTestService extends TypertRemoteService {
       results: store.listCaseResults(runKey),
       ...(run === undefined ? {} : { run }),
       operations: store.listOperations(runKey),
+      plans: store.listCasePlans(runKey),
     })
   }
 

@@ -65,6 +65,34 @@ export function run(
   }
 }
 
+/** A case as analysis proposed it, before any operator ruling. */
+export function casePlan(
+  runKey = 'run-1',
+  caseKey = 'home-title',
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    schemaVersion: 3,
+    kind: 'case-plan',
+    key: `${runKey}/${caseKey}`,
+    runKey,
+    projectKey: 'shop',
+    environmentRevisionKey: 'shop-test',
+    caseKey,
+    title: '首页标题',
+    status: 'proposed',
+    steps: [
+      { index: 1, intent: '打开首页', expectation: '页面加载完成' },
+      { index: 2, intent: '读取标题', expectation: '标题非空' },
+    ],
+    notes: '',
+    confirmedAtMs: 0,
+    label: '首页标题',
+    updatedAtMs: 1,
+    ...overrides,
+  }
+}
+
 /** Collect records into the seed shape the harness accepts. */
 export function seedOf(tables: SeedTables): Record<string, Record<string, unknown>> {
   return tables

@@ -81,6 +81,27 @@ const caseResultRecord = z.object({
   updatedAtMs: z.number().int().nonnegative(),
 })
 
+const casePlanRecord = z.object({
+  schemaVersion: z.literal(3),
+  kind: z.literal('case-plan'),
+  key: z.string().min(1),
+  runKey: z.string().min(1),
+  projectKey: z.string().min(1),
+  environmentRevisionKey: z.string().min(1),
+  caseKey: z.string().min(1),
+  title: z.string().min(1),
+  status: z.enum(['proposed', 'confirmed', 'rejected']),
+  steps: z.array(z.object({
+    index: z.number().int().positive(),
+    intent: z.string().min(1),
+    expectation: z.string(),
+  })),
+  notes: z.string(),
+  confirmedAtMs: z.number().int().nonnegative(),
+  label: z.string(),
+  updatedAtMs: z.number().int().nonnegative(),
+})
+
 const runRecord = z.object({
   schemaVersion: z.literal(3),
   kind: z.literal('run'),
@@ -118,6 +139,7 @@ type RemoteEnvironmentRevision = z.infer<typeof environmentRevisionRecord>
 type RemotePolicy = z.infer<typeof policyRecord>
 type RemoteCaseResult = z.infer<typeof caseResultRecord>
 type RemoteRun = z.infer<typeof runRecord>
+type RemoteCasePlan = z.infer<typeof casePlanRecord>
 
 declare module '@deepseek-ai/dsh-typert-protocol' {
   interface TypertRemoteNamespace77656254657374 {
@@ -130,6 +152,8 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
     listCaseResults: (runKey: string) => Promise<{ ok: true, value: RemoteCaseResult[] } | { ok: false, error: { code: string, message: string } }>
     buildReport: (runKey: string) => Promise<{ ok: true, value: { markdown: string } } | { ok: false, error: { code: string, message: string } }>
     listRuns: () => Promise<{ ok: true, value: RemoteRun[] } | { ok: false, error: { code: string, message: string } }>
+    listCases: (runKey: string) => Promise<{ ok: true, value: RemoteCasePlan[] } | { ok: false, error: { code: string, message: string } }>
+    ruleOnCase: (runKey: string, caseKey: string, decision: 'confirm' | 'reject', note: string) => Promise<{ ok: true, value: RemoteCasePlan } | { ok: false, error: { code: string, message: string } }>
     controlRun: (runKey: string, action: 'pause' | 'resume' | 'cancel') => Promise<{ ok: true, value: RemoteRun } | { ok: false, error: { code: string, message: string } }>
     getRun: (runKey: string) => Promise<{ ok: true, value: RemoteRun } | { ok: false, error: { code: string, message: string } }>
   }
@@ -241,6 +265,84 @@ export const TYPERT_REMOTE: TypertRemoteContribution = {
         mode: 'strict',
         typeSymbol: "dsh-plugin-web-test/types#EnvironmentRevisionRecord[]",
         create: () => z.array(environmentRevisionRecord),
+      },
+    },
+    {
+      id: "dsh-plugin-web-test#webTest/listCases",
+      service: "webTest",
+      namespace: "webTest",
+      method: "listCases",
+      invocation: { kind: 'direct' },
+      parameters: [
+        {
+          name: "runKey",
+          wire: "runKey",
+          source: 'json',
+          codec: {
+            mode: 'strict',
+            typeSymbol: "dsh-plugin-web-test/types#string",
+            create: () => z.string().min(1),
+          },
+        },
+      ],
+      result: {
+        mode: 'strict',
+        typeSymbol: "dsh-plugin-web-test/types#CasePlanRecord[]",
+        create: () => z.array(casePlanRecord),
+      },
+    },
+    {
+      id: "dsh-plugin-web-test#webTest/ruleOnCase",
+      service: "webTest",
+      namespace: "webTest",
+      method: "ruleOnCase",
+      invocation: { kind: 'direct' },
+      parameters: [
+        {
+          name: "runKey",
+          wire: "runKey",
+          source: 'json',
+          codec: {
+            mode: 'strict',
+            typeSymbol: "dsh-plugin-web-test/types#string",
+            create: () => z.string().min(1),
+          },
+        },
+        {
+          name: "caseKey",
+          wire: "caseKey",
+          source: 'json',
+          codec: {
+            mode: 'strict',
+            typeSymbol: "dsh-plugin-web-test/types#string",
+            create: () => z.string().min(1),
+          },
+        },
+        {
+          name: "decision",
+          wire: "decision",
+          source: 'json',
+          codec: {
+            mode: 'strict',
+            typeSymbol: "dsh-plugin-web-test/types#'confirm' | 'reject'",
+            create: () => z.union([z.literal('confirm'), z.literal('reject')]),
+          },
+        },
+        {
+          name: "note",
+          wire: "note",
+          source: 'json',
+          codec: {
+            mode: 'strict',
+            typeSymbol: "dsh-plugin-web-test/types#string",
+            create: () => z.string(),
+          },
+        },
+      ],
+      result: {
+        mode: 'strict',
+        typeSymbol: "dsh-plugin-web-test/types#CasePlanRecord",
+        create: () => casePlanRecord,
       },
     },
     {

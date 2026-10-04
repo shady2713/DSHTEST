@@ -23,6 +23,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { KvUnit, Storage } from '@deepseek-ai/dsh-storage'
 import {
   SCHEMA_VERSION,
+  casePlanRecordSchema,
   caseResultRecordSchema,
   environmentRevisionRecordSchema,
   operationRecordSchema,
@@ -35,6 +36,7 @@ import {
   BACKEND_NAME,
   TABLE_CASE_RESULTS,
   TABLE_ENVIRONMENT_REVISIONS,
+  TABLE_CASE_PLANS,
   TABLE_OPERATIONS,
   TABLE_POLICIES,
   TABLE_PROJECTS,
@@ -47,6 +49,7 @@ import {
 import type {
   CaseResultRecord,
   EnvironmentRevisionRecord,
+  CasePlanRecord,
   OperationRecord,
   PluginLifecycleState,
   RunHoldStatus,
@@ -80,6 +83,7 @@ const TABLE_SCHEMAS = [
   { table: TABLE_POLICIES, schema: policyRecordSchema },
   { table: TABLE_CASE_RESULTS, schema: caseResultRecordSchema },
   { table: TABLE_OPERATIONS, schema: operationRecordSchema },
+  { table: TABLE_CASE_PLANS, schema: casePlanRecordSchema },
 ] as const
 
 /** Statuses a run can never leave, so a hold or a wait cannot apply to them. */
@@ -517,6 +521,63 @@ export class WebTestStore extends Service {
    * @param result - Validated case result, keyed by its own `key`.
    * @returns the stored result.
    */
+  /**
+   * Store one proposed case, or the operator's ruling on it.
+   * @param plan - Validated case plan, keyed by `<runKey>/<caseKey>`.
+   * @returns the stored plan.
+   */
+  putCasePlan(plan: CasePlanRecord): Promise<CasePlanRecord> {
+    return this.write(TABLE_CASE_PLANS, plan.key, plan).then(() => plan)
+  }
+
+  /**
+   * Read one case plan.
+   * @param runKey - Run the case belongs to.
+   * @param caseKey - Case to read.
+   * @returns the stored plan, or undefined when the run proposed no such case.
+   */
+  getCasePlan(runKey: string, caseKey: string): CasePlanRecord | undefined {
+    const stored = this.records[TABLE_CASE_PLANS] as Record<string, CasePlanRecord> | undefined
+    return stored?.[`${runKey}/${caseKey}`]
+  }
+
+  /**
+   * Apply the operator's ruling on one proposed case.
+   *
+   * Ruling is an operator action rather than a model action, so it changes the
+   * stored status and nothing else; a case the operator rejected can never be
+   * executed, and a case left `proposed` is not executable either.
+   * @param runKey - Run the case belongs to.
+   * @param caseKey - Case to rule on.
+   * @param decision - Whether the operator approved the case.
+   * @param note - Why the operator decided this way.
+   * @returns the plan after the ruling.
+   * @throws when the run proposed no such case, or it was already ruled on.
+   */
+  async ruleOnCase(
+    runKey: string,
+    caseKey: string,
+    decision: 'confirm' | 'reject',
+    note: string,
+  ): Promise<CasePlanRecord> {
+    const existing = this.getCasePlan(runKey, caseKey)
+    if (existing === undefined) {
+      throw new Error(`web-test: run ${JSON.stringify(runKey)} proposed no case ${JSON.stringify(caseKey)}`)
+    }
+    if (existing.status !== 'proposed') {
+      throw new Error(`web-test: case ${JSON.stringify(caseKey)} is already ${existing.status} and cannot be`
+        + ` ${decision === 'confirm' ? 'confirmed' : 'rejected'} again`)
+    }
+    const record: CasePlanRecord = {
+      ...existing,
+      status: decision === 'confirm' ? 'confirmed' : 'rejected',
+      notes: note === '' ? existing.notes : note,
+      confirmedAtMs: Date.now(),
+      updatedAtMs: Date.now(),
+    }
+    return this.putCasePlan(record)
+  }
+
   putCaseResult(result: CaseResultRecord): Promise<CaseResultRecord> {
     return this.write(TABLE_CASE_RESULTS, result.key, result).then(() => result)
   }
@@ -786,6 +847,16 @@ export class WebTestStore extends Service {
    * @param runKey - Run whose case results to read.
    * @returns the stored case results.
    */
+  /**
+   * Every proposed case of one run, in key order.
+   * @param runKey - Run whose cases to read.
+   * @returns the stored case plans.
+   */
+  listCasePlans(runKey: string): CasePlanRecord[] {
+    return (this.sorted(TABLE_CASE_PLANS) as CasePlanRecord[])
+      .filter(plan => plan.runKey === runKey)
+  }
+
   listCaseResults(runKey: string): CaseResultRecord[] {
     return (this.sorted(TABLE_CASE_RESULTS) as CaseResultRecord[])
       .filter(result => result.runKey === runKey)
@@ -836,6 +907,7 @@ export class WebTestStore extends Service {
       policy: size(TABLE_POLICIES),
       'case-result': size(TABLE_CASE_RESULTS),
       operation: size(TABLE_OPERATIONS),
+      'case-plan': size(TABLE_CASE_PLANS),
     }
   }
 

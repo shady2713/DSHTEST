@@ -15,6 +15,7 @@
 
 import type { z } from 'zod'
 import type {
+  casePlanRecordSchema,
   caseResultRecordSchema,
   environmentRevisionRecordSchema,
   operationRecordSchema,
@@ -40,6 +41,8 @@ export type OperationRecord = z.infer<typeof operationRecordSchema>
 export type PolicyRecord = z.infer<typeof policyRecordSchema>
 
 export type CaseResultRecord = z.infer<typeof caseResultRecordSchema>
+export type CasePlanRecord = z.infer<typeof casePlanRecordSchema>
+export type PlannedStep = CasePlanRecord['steps'][number]
 export type StepResult = CaseResultRecord['steps'][number]
 export type AssertionResult = CaseResultRecord['assertions'][number]
 
@@ -48,6 +51,7 @@ export type WebTestRecord =
   | EnvironmentRevisionRecord
   | PolicyRecord
   | RunRecord
+  | CasePlanRecord
   | CaseResultRecord
   | OperationRecord
 

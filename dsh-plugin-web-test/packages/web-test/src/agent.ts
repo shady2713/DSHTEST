@@ -19,7 +19,15 @@ import { copyFileSync, statSync } from 'node:fs'
 import type { Context } from '@deepseek-ai/cordis'
 import ToolsService from '@deepseek-ai/dsh-tools'
 import { z } from 'zod'
-import { SCHEMA_VERSION, caseResultRecordSchema, operationDispatchSchema, runRecordSchema } from './records.ts'
+import {
+  SCHEMA_VERSION,
+  casePlanRecordSchema,
+  caseResultRecordSchema,
+  operationDispatchSchema,
+  runRecordSchema,
+} from './records.ts'
+import type { WebTestStore } from './store-service.ts'
+import type { CasePlanRecord } from './types.ts'
 
 /** Loader row id for this composition inside the preset. */
 export const name = 'web-test-agent'
@@ -176,6 +184,79 @@ function takeEvidence(reported: string[], dir: string, since: number | undefined
     return copied
   })
 }
+
+/**
+ * Refuse a result for a case the operator never approved.
+ *
+ * The check runs before anything is written, so a run cannot report a case it
+ * invented, and the reported steps are matched against the confirmed plan so a
+ * result cannot quietly cover fewer steps than the operator agreed to.
+ * @param store - The plugin's store.
+ * @param runKey - Run the result belongs to.
+ * @param caseKey - Case the result claims to cover.
+ * @returns the confirmed plan, so callers can reuse it.
+ * @throws when the case was never proposed, is not confirmed, or its reported
+ * steps do not line up with the confirmed plan.
+ */
+function requireConfirmedCase(store: WebTestStore, runKey: string, caseKey: string): CasePlanRecord {
+  const plan = store.getCasePlan(runKey, caseKey)
+  if (plan === undefined) {
+    throw new Error(`web-test: run ${JSON.stringify(runKey)} proposed no case ${JSON.stringify(caseKey)};`
+      + ' propose it with web_test_propose_cases and have the operator confirm it first')
+  }
+  if (plan.status !== 'confirmed') {
+    throw new Error(`web-test: case ${JSON.stringify(caseKey)} is ${plan.status}, not confirmed, so it cannot be`
+      + ' executed or reported')
+  }
+  return plan
+}
+
+/**
+ * Match reported step indexes against a confirmed plan.
+ *
+ * A result that skips a confirmed step would leave the operator believing the
+ * step ran. Missing steps are therefore refused here rather than reported as a
+ * shorter pass.
+ * @param plan - The confirmed case plan.
+ * @param reported - Step indexes the result carries, in the order given.
+ * @throws when the result does not cover exactly the confirmed steps.
+ */
+function requireConfirmedSteps(plan: CasePlanRecord, reported: number[]): void {
+  const expected = plan.steps.map(step => step.index)
+  if (reported.length !== expected.length
+    || expected.some((index, position) => index !== reported[position])) {
+    throw new Error(`web-test: case ${JSON.stringify(plan.caseKey)} was confirmed with steps`
+      + ` ${expected.join(', ')} but the result reports ${reported.length === 0 ? 'none' : reported.join(', ')};`
+      + ' every confirmed step needs an outcome, including a blocked or skipped one')
+  }
+}
+
+/**
+ * Refuse a proposed case whose steps are not dense and one-based.
+ *
+ * The result path matches reported steps against confirmed ones by position, so
+ * a plan with gaps or duplicates would make that comparison ambiguous.
+ * @param caseKey - Case being proposed, named in the error.
+ * @param steps - The steps as the model wrote them.
+ * @throws when a step index is missing, repeated, or out of order.
+ */
+function requireDenseSteps(
+  caseKey: string,
+  steps: readonly { index: number }[],
+): void {
+  const indexes = steps.map(step => step.index)
+  const dense = indexes.every((index, at) => index === at + 1)
+  if (!dense) {
+    throw new Error(`web-test: case ${JSON.stringify(caseKey)} has step indexes ${indexes.join(', ')}; number them`
+      + ' from 1 with no gaps and no repeats')
+  }
+}
+
+/** What proposing cases returns. */
+const proposedCasesSchema = z.object({
+  proposed: z.array(z.string()),
+  awaitingDecision: z.boolean(),
+})
 
 /** What starting a run returns. */
 const startedRunSchema = z.object({ runKey: z.string(), status: z.string(), evidenceRoot: z.string() })
@@ -399,6 +480,133 @@ export function apply(ctx: Context): void {
   }), 'web-test: finish run tool')
 
   ctx.effect(() => tools.register({
+    name: `${TOOL_PREFIX}propose_cases`,
+    description:
+      'Propose the test cases for a run, with the steps each one takes and what each step expects. Proposing is not'
+      + ' approving: the operator rules on every case, and this plugin refuses to execute or report a case that is'
+      + ' still proposed. Call this once per run, after the environment is confirmed and before touching the browser.',
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['runKey', 'projectKey', 'environmentRevisionKey', 'cases'],
+      properties: {
+        runKey: { type: 'string', description: 'Run the cases belong to.' },
+        projectKey: { type: 'string', description: 'Project under test.' },
+        environmentRevisionKey: { type: 'string', description: 'Confirmed environment declaration under test.' },
+        cases: {
+          type: 'array',
+          description: 'The cases to run, each with its steps in order.',
+          items: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['caseKey', 'title', 'steps'],
+            properties: {
+              caseKey: { type: 'string', description: 'Short identifier for the case, unique within the run.' },
+              title: { type: 'string', description: 'What the case checks, stated as a user would ask for it.' },
+              notes: { type: 'string', description: 'Why the case is in scope for this run.' },
+              steps: {
+                type: 'array',
+                description: 'The steps, numbered from 1 with no gaps.',
+                items: {
+                  type: 'object',
+                  additionalProperties: false,
+                  required: ['index', 'intent'],
+                  properties: {
+                    index: { type: 'integer', minimum: 1, description: 'Step position, dense and one-based.' },
+                    intent: { type: 'string', description: 'What the step does.' },
+                    expectation: {
+                      type: 'string',
+                      description: 'What the step expects to see, independent of how the page is built.',
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['proposed'],
+        properties: {
+          proposed: { type: 'array', items: { type: 'string' } },
+          awaitingDecision: { type: 'boolean' },
+        },
+      },
+      render(_args, value) {
+        const result = proposedCasesSchema.parse(value)
+        return [{
+          type: 'text',
+          text: `Proposed ${result.proposed.length} case(s): ${result.proposed.join(', ')}. None of them can run`
+            + ' until the operator confirms each one in the Web 测试 settings or through the plugin Remote.',
+        }]
+      },
+    },
+    async execute(args) {
+      if (!store.accepting) {
+        throw new Error(`web-test: the plugin is ${store.state} and refuses new test actions`)
+      }
+      const input = z.object({
+        runKey: z.string().min(1),
+        projectKey: z.string().min(1),
+        environmentRevisionKey: z.string().min(1),
+        cases: z.array(z.object({
+          caseKey: z.string().min(1),
+          title: z.string().min(1),
+          notes: z.string().optional(),
+          steps: z.array(z.object({
+            index: z.number().int().positive(),
+            intent: z.string().min(1),
+            expectation: z.string().optional(),
+          })).min(1),
+        })).min(1),
+      }).parse(args)
+      store.requireExecutable(input.runKey)
+      const run = store.getRun(input.runKey)
+      if (run === undefined) {
+        throw new Error(`web-test: no run ${JSON.stringify(input.runKey)}`)
+      }
+      if (run.projectKey !== input.projectKey
+        || run.environmentRevisionKey !== input.environmentRevisionKey) {
+        throw new Error(`web-test: run ${JSON.stringify(input.runKey)} is for project`
+          + ` ${JSON.stringify(run.projectKey)} against ${JSON.stringify(run.environmentRevisionKey)}`)
+      }
+      const seen = new Set<string>()
+      for (const item of input.cases) {
+        requireDenseSteps(item.caseKey, item.steps)
+        if (seen.has(item.caseKey)) {
+          throw new Error(`web-test: case ${JSON.stringify(item.caseKey)} was proposed twice in one call`)
+        }
+        seen.add(item.caseKey)
+        await store.putCasePlan(casePlanRecordSchema.parse({
+          schemaVersion: SCHEMA_VERSION,
+          kind: 'case-plan',
+          key: `${input.runKey}/${item.caseKey}`,
+          runKey: input.runKey,
+          projectKey: input.projectKey,
+          environmentRevisionKey: input.environmentRevisionKey,
+          caseKey: item.caseKey,
+          title: item.title,
+          status: 'proposed',
+          steps: item.steps.map((step, at) => ({
+            index: at + 1,
+            intent: step.intent,
+            expectation: step.expectation ?? '',
+          })),
+          notes: item.notes ?? '',
+          confirmedAtMs: 0,
+          label: item.title,
+          updatedAtMs: Date.now(),
+        }))
+      }
+      return { proposed: [...seen], awaitingDecision: true }
+    },
+  }), 'web-test: propose cases tool')
+
+  ctx.effect(() => tools.register({
     name: `${TOOL_PREFIX}report_case`,
     description:
       'Record the structured result of one confirmed test case: every step you actually performed with its outcome, '
@@ -498,12 +706,14 @@ export function apply(ctx: Context): void {
       // A result describes steps the run actually performed, so a run that is
       // paused, waiting, cancelled or interrupted by a restart takes no new ones.
       store.requireExecutable(parsed.runKey)
+      const plan = requireConfirmedCase(store, parsed.runKey, parsed.caseKey)
       // Evidence is the plugin's record of what the browser actually produced,
       // so every reported path must resolve to a real file inside the run's
       // evidence directory. A relative path, a missing file, or a file written
       // anywhere else is refused rather than recorded.
       const dir = store.ensureEvidenceDir(parsed.runKey)
       const since = store.runStartTime(parsed.runKey)
+      requireConfirmedSteps(plan, parsed.steps.map(step => step.index))
       const evidence = takeEvidence(parsed.evidencePaths ?? [], dir, since)
       const stepEvidence = parsed.steps.map(step =>
         step.evidencePath === undefined || step.evidencePath === ''

@@ -11,7 +11,7 @@
  * @module dsh-plugin-web-test/report
  */
 
-import type { CaseResultRecord, OperationRecord, RunRecord } from './types.ts'
+import type { CasePlanRecord, CaseResultRecord, OperationRecord, RunRecord } from './types.ts'
 
 /** One count in a run's outcome tally. */
 interface Tally {
@@ -32,6 +32,24 @@ export interface ReportInput {
   run?: RunRecord
   /** Its business-changing operations, so an unresolved one reaches the report. */
   operations?: OperationRecord[]
+  /** The cases analysis proposed and the operator ruled on, so coverage is visible. */
+  plans?: CasePlanRecord[]
+}
+
+/**
+ * What one proposed case contributed to coverage.
+ *
+ * A case the operator rejected is not a gap; a case nobody ruled on is, because
+ * it is neither approved nor deliberately dropped.
+ */
+export interface CaseCoverage {
+  caseKey: string
+  title: string
+  status: CasePlanRecord['status']
+  /** The confirmed steps, or an empty list when the case is not confirmed. */
+  confirmedSteps: number
+  /** True when the case produced a result. */
+  reported: boolean
 }
 
 /**
@@ -65,6 +83,8 @@ export interface ReportJson {
   /** Questions the run could not settle, which is why a verdict may be undetermined. */
   openQuestions: string[]
   cases: CaseResultRecord[]
+  /** Every proposed case and whether it produced a result, so a silent omission shows. */
+  coverage: CaseCoverage[]
   /** Operations whose outcome was never established, which the report must not hide. */
   unresolvedOperations: { operationKey: string, intent: string, dispatch: string, reason: string }[]
 }
@@ -81,14 +101,20 @@ export function buildReportBundle(input: ReportInput): ReportBundle {
   const tally = countOutcomes(input.results)
   const questions = input.results.flatMap(result => result.openQuestions)
   const operations = input.operations ?? []
+  const coverage = computeCoverage(input.plans ?? [], input.results)
   const json: ReportJson = {
     schemaVersion: REPORT_SCHEMA_VERSION,
     runKey: input.runKey,
-    verdict: verdictOf(tally, questions.length),
+    verdict: verdictOf(
+      tally,
+      questions.length,
+      coverage.filter(entry => entry.status === 'confirmed' && !entry.reported).length,
+    ),
     runStatus: input.run?.status,
     tally,
     openQuestions: questions,
     cases: input.results,
+    coverage: computeCoverage(input.plans ?? [], input.results),
     unresolvedOperations: operations
       .filter(operation => operation.dispatch.kind !== 'settled')
       .map(operation => ({
@@ -202,6 +228,29 @@ function escapeHtml(value: string): string {
  * @param results - The case results recorded for a run.
  * @returns the counts, with every outcome present.
  */
+/**
+ * Pair every proposed case with the result it produced.
+ *
+ * This is what makes a silent omission visible: a confirmed case with no result
+ * appears here, rather than the report simply not mentioning it.
+ * @param plans - The run's case plans.
+ * @param results - The run's case results.
+ * @returns one coverage entry per proposed case, in key order.
+ */
+export function computeCoverage(
+  plans: readonly CasePlanRecord[],
+  results: readonly CaseResultRecord[],
+): CaseCoverage[] {
+  const reported = new Set(results.map(result => result.caseKey))
+  return plans.map(plan => ({
+    caseKey: plan.caseKey,
+    title: plan.title,
+    status: plan.status,
+    confirmedSteps: plan.status === 'confirmed' ? plan.steps.length : 0,
+    reported: reported.has(plan.caseKey),
+  }))
+}
+
 function countOutcomes(results: CaseResultRecord[]): Tally {
   const tally: Tally = { passed: 0, failed: 0, skipped: 0, blocked: 0, incomplete: 0 }
   for (const result of results) tally[result.outcome] += 1
@@ -210,12 +259,17 @@ function countOutcomes(results: CaseResultRecord[]): Tally {
 
 /**
  * The machine-readable verdict behind the report's verdict line.
+ *
+ * A confirmed case that produced no result leaves the run undetermined even when
+ * every recorded case passed: the operator approved work that the report cannot
+ * account for, and a pass has to cover what was agreed, not only what ran.
  * @param tally - Outcome counts across the run.
  * @param questionCount - Open questions recorded across the run.
+ * @param missingConfirmed - Confirmed cases with no recorded result.
  * @returns the verdict.
  */
-function verdictOf(tally: Tally, questionCount: number): Verdict {
-  if (questionCount > 0) return 'undetermined'
+function verdictOf(tally: Tally, questionCount: number, missingConfirmed: number): Verdict {
+  if (questionCount > 0 || missingConfirmed > 0) return 'undetermined'
   if (tally.passed > 0 && tally.failed === 0 && tally.blocked === 0 && tally.incomplete === 0
     && tally.skipped === 0) {
     return 'passed'
@@ -232,8 +286,25 @@ function verdictOf(tally: Tally, questionCount: number): Verdict {
  * @param questions - Questions the run could not settle.
  * @returns the report in Markdown.
  */
+/**
+ * Wording for one case's coverage line.
+ *
+ * A confirmed case with no result is called out as a gap rather than omitted:
+ * the operator approved work the run cannot account for.
+ * @param entry - The case's coverage entry.
+ * @returns the line's leading status wording.
+ */
+function coverageLabel(entry: CaseCoverage): string {
+  if (entry.status === 'rejected') return '已否决'
+  if (entry.status === 'proposed') return '未裁定'
+  if (entry.reported) return '已确认且有结果'
+  return '已确认但无结果（缺口）'
+}
+
 function renderMarkdown(input: ReportInput, tally: Tally, questions: string[]): string {
   const results = input.results
+  const missingConfirmed = computeCoverage(input.plans ?? [], results)
+    .filter(entry => entry.status === 'confirmed' && !entry.reported).length
   const unresolved = (input.operations ?? []).filter(operation => operation.dispatch.kind !== 'settled')
   const lines: string[] = [
     `# Web 测试报告`,
@@ -242,9 +313,19 @@ function renderMarkdown(input: ReportInput, tally: Tally, questions: string[]): 
     ...(input.run === undefined ? [] : [`- 运行状态：\`${input.run.status}\``, ``]),
     `- 用例：${results.length}（通过 ${tally.passed}，失败 ${tally.failed}，`
       + `跳过 ${tally.skipped}，阻塞 ${tally.blocked}，未完成 ${tally.incomplete}）`,
-    `- 结论：${conclusion(tally, questions.length)}`,
+    `- 结论：${conclusion(tally, questions.length, missingConfirmed)}`,
     ``,
   ]
+
+  const coverage = computeCoverage(input.plans ?? [], results)
+  if (coverage.length > 0) {
+    lines.push('## 用例覆盖', ``)
+    for (const entry of coverage) {
+      const state = coverageLabel(entry)
+      lines.push(`- ${state}｜${entry.title}（\`${entry.caseKey}\`${entry.confirmedSteps === 0 ? '' : `，${entry.confirmedSteps} 步`}）`)
+    }
+    lines.push(``)
+  }
 
   if (unresolved.length > 0) {
     lines.push(`## 结果未确认的操作`, ``)
@@ -312,8 +393,9 @@ function renderMarkdown(input: ReportInput, tally: Tally, questions: string[]): 
  * @param questionCount - Open questions recorded across the run.
  * @returns the verdict line.
  */
-function conclusion(tally: Tally, questionCount: number): string {
+function conclusion(tally: Tally, questionCount: number, missingConfirmed = 0): string {
   if (questionCount > 0) return `存在 ${questionCount} 项待确认，结论未定`
+  if (missingConfirmed > 0) return `存在 ${missingConfirmed} 个已确认但无结果的用例，结论未定`
   if (tally.passed > 0 && tally.failed === 0 && tally.blocked === 0 && tally.incomplete === 0
     && tally.skipped === 0) {
     return '全部已记录用例通过'
