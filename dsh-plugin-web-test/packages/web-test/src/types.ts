@@ -118,6 +118,19 @@ export interface PluginStatus {
    * run needs a deliberate continuation and each unknown operation needs a
    * decision, because a restart never authorizes repeating one.
    */
+  /**
+   * What is waiting on the operator right now.
+   *
+   * `reconciliation` records what one open found; this is the standing backlog,
+   * so a run parked by an earlier restart is still visible after the operator
+   * has looked at the startup report once.
+   */
+  readonly needsDecision: {
+    /** Runs in a state the operator has to act on: a restart interrupted, or a question is open. */
+    readonly runs: readonly { runKey: string, status: RunRecord['status'], reason: string }[]
+    /** Operations whose outcome was never observed, which must be reconciled rather than repeated. */
+    readonly unknownOperations: readonly { runKey: string, operationKey: string, intent: string, reason: string }[]
+  }
   readonly reconciliation: {
     /** Runs a restart interrupted, now waiting for an explicit continuation. */
     readonly blockedRuns: readonly string[];

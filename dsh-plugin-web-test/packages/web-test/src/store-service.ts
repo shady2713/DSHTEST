@@ -93,6 +93,34 @@ const TERMINAL_STATUSES: readonly RunRecord['status'][] = ['completed', 'cancell
 const HELD_STATUSES: readonly RunHoldStatus[] = runHoldStatusSchema.options
 
 /**
+ * Run statuses that leave work for the operator to decide.
+ *
+ * Every held status qualifies: the run is not executing, and how it proceeds
+ * depends on a decision rather than on the clock.
+ */
+const DECISION_STATUSES: readonly RunRecord['status'][] = HELD_STATUSES
+
+/**
+ * Why a held run is waiting, stated so it cannot be misread.
+ *
+ * Each status gets its own wording because a pause the operator chose, a
+ * restart that interrupted the run, and a question the run asked are different
+ * situations; a single generic sentence would tell the operator a paused run
+ * had been interrupted by a restart, which is not what happened.
+ * @param run - The held run.
+ * @returns the reason to show the operator.
+ */
+function decisionReason(run: RunRecord): string {
+  if (run.waitingReason !== '') return run.waitingReason
+  if (run.status === 'paused') return 'the operator paused this run; continue it deliberately with controlRun'
+  if (run.status === 'resuming') {
+    return 'the plugin reopened its store (a host restart, or a disable and re-enable) while this run was executing, so it was parked rather than resumed; check the'
+      + ' environment, the login and every unresolved operation, then continue it deliberately with controlRun'
+  }
+  return 'this run is waiting on the operator'
+}
+
+/**
  * Statuses a host restart leaves exactly as they are.
  *
  * A pause is the operator's decision, a business-time wait owns a stored
@@ -619,6 +647,22 @@ export class WebTestStore extends Service {
         + ` ${existing.dispatch.kind}; its outcome is unresolved, so it must not be submitted again. Settle it or`
         + ' reconcile it with the operator, and use a new operation for genuinely new work.')
     }
+    // The operation key is chosen by the run, so it is not a repeat guard: a
+    // retry under a fresh name passes the check above. The request digest is
+    // what identifies the business change, so a digest this run already
+    // dispatched is refused whatever it is called. Without this a run could
+    // change the same business data twice while every operation record looked
+    // like separate work.
+    const sameRequest = (this.sorted(TABLE_OPERATIONS) as OperationRecord[])
+      .find(operation => operation.runKey === runKey
+        && operation.requestDigest === requestDigest
+        && operation.operationKey !== operationKey)
+    if (sameRequest !== undefined) {
+      throw new Error(`web-test: run ${JSON.stringify(runKey)} already dispatched this exact request as operation`
+        + ` ${JSON.stringify(sameRequest.operationKey)} (${sameRequest.dispatch.kind}); a request digest identifies one`
+        + ' business change, so submitting it again under a new operation key would change the data a second time.'
+        + ' Reconcile the earlier operation with the operator instead.')
+    }
     const record = operationRecordSchema.parse({
       schemaVersion: SCHEMA_VERSION,
       kind: 'operation',
@@ -798,8 +842,11 @@ export class WebTestStore extends Service {
     const unknownOperations: { runKey: string, operationKey: string, reason: string }[] = []
     for (const operation of this.sorted(TABLE_OPERATIONS) as OperationRecord[]) {
       if (operation.dispatch.kind !== 'dispatching' && operation.dispatch.kind !== 'dispatched') continue
-      const reason = 'the DSH process restarted while this operation was in flight, so its outcome was never'
-        + ' observed; it must be reconciled with the operator, not repeated'
+      // A store reopen also happens when the plugin is disabled and re-enabled
+      // in one process, so naming only a restart would tell the operator
+      // something that did not happen.
+      const reason = 'the plugin reopened its store (a host restart, or a disable and re-enable) while this operation was'
+        + ' in flight, so its outcome was never observed; it must be reconciled with the operator, not repeated'
       await this.markOperationUnknown(operation.runKey, operation.operationKey, reason)
       unknownOperations.push({ runKey: operation.runKey, operationKey: operation.operationKey, reason })
     }
@@ -812,7 +859,7 @@ export class WebTestStore extends Service {
         ...run,
         status: 'resuming',
         waitingUntilMs: 0,
-        waitingReason: 'the DSH process restarted while this run was executing; check the environment, the login,'
+        waitingReason: 'the plugin reopened its store (a host restart, or a disable and re-enable) while this run was executing; check the environment, the login,'
           + ' and every unresolved operation, then continue it deliberately with controlRun(run, "resume")',
         updatedAtMs: Date.now(),
       }
@@ -938,6 +985,30 @@ export class WebTestStore extends Service {
    * storage answers.
    * @returns the plugin status, or `undefined` before the unit opened.
    */
+  /**
+   * What is waiting on the operator right now.
+   *
+   * A run a restart parked stays in that state until somebody continues it, so
+   * the backlog outlives the startup report that first mentioned it. Operations
+   * left `unknown` are listed with the reason, because those are the ones that
+   * must not be repeated.
+   * @returns the runs and operations awaiting a decision.
+   */
+  private needsDecision(): PluginStatus['needsDecision'] {
+    const runs = (this.sorted(TABLE_RUNS) as RunRecord[])
+      .filter(run => DECISION_STATUSES.includes(run.status))
+      .map(run => ({ runKey: run.key, status: run.status, reason: decisionReason(run) }))
+    const unknownOperations = (this.sorted(TABLE_OPERATIONS) as OperationRecord[])
+      .filter(operation => operation.dispatch.kind === 'unknown')
+      .map(operation => ({
+        runKey: operation.runKey,
+        operationKey: operation.operationKey,
+        intent: operation.intent,
+        reason: operation.dispatch.kind === 'unknown' ? operation.dispatch.reason : '',
+      }))
+    return { runs, unknownOperations }
+  }
+
   status(): PluginStatus | undefined {
     if (this.unit === undefined) return undefined
     return {
@@ -947,6 +1018,7 @@ export class WebTestStore extends Service {
       schemaVersion: SCHEMA_VERSION,
       recordCounts: this.recordCounts(),
       dshVersion: COMPATIBLE_DSH_VERSION,
+      needsDecision: this.needsDecision(),
       reconciliation: this.reconciliation,
     }
   }

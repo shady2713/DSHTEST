@@ -78,6 +78,23 @@ npm pack --pack-destination ../../dist
 因此本插件的 peer 声明 `@deepseek-ai/dsh` `0.2.0-rc.2` **不应下调**，也**不需要**另行安装 DSH。
 §3 的四项优先检查仍然是"当时未执行"，而非失败；它们改为在上述桌面应用上验收。
 
+### 后续：Ubuntu 宿主执行控制与恢复验证（优先项 3）
+
+在 Ubuntu 原版 DSH 0.2.0-rc.2 上以真实模型回合实测，非直接调用领域方法：
+
+| 场景 | 结果 |
+|---|---|
+| 暂停后浏览器动作 | 被拒：`run run-a1 is paused and refuses new test actions`；同时 `web_test_status` 仍可用 |
+| 恢复后浏览器动作 | 放行，Playwright 正常导航 |
+| 取消运行 A 后运行 B | B 在**新会话**正常启动并驱动浏览器 |
+| 普通会话 | 运行 B 期间普通会话执行 bash 正常，不受影响 |
+| 派发后在途操作遇宿主重启 | `dispatching` → `unknown`，原因写明"结果从未被观测"；运行被停为 `resuming`；**未自动重试** |
+| 换调用 ID 用同一 requestDigest | 修复前被放行（缺陷）；修复后被拒并指明先前操作 |
+| 宿主保持运行时禁用插件 | 旧 Agent 的派发被拒：`the plugin is draining and refuses new test actions`；Remote 返回 `definition-unavailable`；数据目录与 5 个运行的证据完整保留 |
+| 完整禁用（含浏览器行） | **浏览器进程未释放**，禁用后仍有 26 个 chrome 进程存活 |
+
+**未达成**：插件不拥有浏览器进程，浏览器由 `dsh-browser-use` 持有，禁用本插件不会回收它。这属于宿主行为，Ubuntu 侧不修改宿主，也**不声称**已回收。
+
 ## 4. 检查了什么、没检查什么
 
 在 Windows（Node 24.13.0、pnpm 11.7.0）上针对提交 `6c0f6682e535` 执行：

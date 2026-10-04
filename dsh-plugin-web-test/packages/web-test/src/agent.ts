@@ -139,6 +139,34 @@ export const statusResultSchema = z.object({
   unknownOperations: z.array(z.string()),
 })
 
+/**
+ * The status tool's declared output schema.
+ *
+ * Exported so a test can hold it against the schema the tool body fulfils.
+ */
+export const statusToolOutputSchema: Record<string, unknown> = {
+  type: 'object',
+  additionalProperties: false,
+  required: [
+    'state',
+    'version',
+    'projectCount',
+    'runCount',
+    'evidenceRoot',
+    'interruptedRuns',
+    'unknownOperations',
+  ],
+  properties: {
+    state: { type: 'string', enum: ['active', 'draining'] },
+    evidenceRoot: { type: 'string' },
+    version: { type: 'string' },
+    projectCount: { type: 'integer' },
+    runCount: { type: 'integer' },
+    interruptedRuns: { type: 'array', items: { type: 'string' } },
+    unknownOperations: { type: 'array', items: { type: 'string' } },
+  },
+}
+
 /** Validated result of the status tool. */
 export type WebTestStatusResult = z.infer<typeof statusResultSchema>
 
@@ -1047,39 +1075,21 @@ export function apply(ctx: Context): void {
         + 'run.',
       parameters: { type: 'object', properties: {}, additionalProperties: false },
       output: {
-        schema: {
-          type: 'object',
-          additionalProperties: false,
-          required: ['state', 'version', 'projectCount', 'runCount', 'evidenceRoot'],
-          properties: {
-            state: { type: 'string', enum: ['active', 'draining'] },
-            evidenceRoot: { type: 'string' },
-            version: { type: 'string' },
-            projectCount: { type: 'integer' },
-            runCount: { type: 'integer' },
-          },
-        },
+        schema: statusToolOutputSchema,
         render(_args, value) {
           // `render` receives the pipeline's JSON value, so it narrows with the
           // same schema the tool body fulfils instead of indexing blindly.
           const result = statusResultSchema.parse(value)
-          const note = result.state === 'draining'
-            ? 'The plugin is draining and refuses new test actions.'
-            : 'The plugin is active.'
           const interrupted = result.interruptedRuns.length === 0
             ? ''
-            : ` A previous host run was interrupted; these runs need the operator to continue them:`
-              + ` ${result.interruptedRuns.join(', ')}.`
+            : ` A previous host run was interrupted; these runs need the operator to continue them: ${result.interruptedRuns.join(', ')}.`
           const unknown = result.unknownOperations.length === 0
             ? ''
-            : ` These operations have an unobserved outcome and must not be submitted again:`
-              + ` ${result.unknownOperations.join(', ')}.`
+            : ` These operations have an unobserved outcome and must not be repeated: ${result.unknownOperations.join(', ')}.`
           return [{
             type: 'text',
-            text: `Web testing plugin ${result.version} (${result.state}). ${note} `
-              + `Projects: ${result.projectCount}. Runs: ${result.runCount}.${interrupted}${unknown} `
-              + `Report the absolute paths the screenshot tool gave you; this plugin copies them under`
-              + ` ${result.evidenceRoot}. Never write screenshots there yourself.`,
+            text: `Web testing plugin ${result.version} (${result.state}). `
+              + `Projects: ${result.projectCount}. Runs: ${result.runCount}.${interrupted}${unknown}`,
           }]
         },
       },
