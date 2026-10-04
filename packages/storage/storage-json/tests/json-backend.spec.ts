@@ -6,6 +6,11 @@ import { Context } from '@deepseek-ai/cordis'
 import Storage, { storageBackendServiceKey } from '@deepseek-ai/dsh-storage'
 import { runKvBackendContract } from '../../storage/tests/contract.ts'
 import { Config, JsonStorageBackend, apply } from '../src/index.ts'
+import { resolveWritePolicy } from '../src/atomic.ts'
+import type { AtomicWritePolicy } from '../src/atomic.ts'
+
+/** The shipped publish cadence; no case here contends, so it never waits. */
+const POLICY: AtomicWritePolicy = resolveWritePolicy([20, 40, 80, 160])
 
 const roots: string[] = []
 
@@ -22,8 +27,8 @@ afterAll(async () => {
 runKvBackendContract('json', async () => {
   const root = await freshRoot()
   return {
-    backend: new JsonStorageBackend(root),
-    reopen: async () => new JsonStorageBackend(root),
+    backend: new JsonStorageBackend(root, POLICY),
+    reopen: async () => new JsonStorageBackend(root, POLICY),
   }
 })
 
@@ -32,7 +37,7 @@ describe('json backend specifics', () => {
 
   it('publishes a human-readable pretty-printed file', async () => {
     const root = await freshRoot()
-    const backend = new JsonStorageBackend(root)
+    const backend = new JsonStorageBackend(root, POLICY)
     const unit = await backend.kv.open(descriptor)
     await unit.putRecord('t', 'k', { hello: 'world' })
     const text = await readFile(join(root, 'shape.json'), 'utf8')
@@ -46,7 +51,7 @@ describe('json backend specifics', () => {
 
   it('defers materialization until the first write', async () => {
     const root = await freshRoot()
-    const backend = new JsonStorageBackend(root)
+    const backend = new JsonStorageBackend(root, POLICY)
     await backend.kv.open(descriptor)
     await expect(readFile(join(root, 'shape.json'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
     await backend.close()
@@ -55,7 +60,7 @@ describe('json backend specifics', () => {
   it('rejects a malformed medium', async () => {
     const root = await freshRoot()
     await writeFile(join(root, 'shape.json'), 'not json at all', 'utf8')
-    const backend = new JsonStorageBackend(root)
+    const backend = new JsonStorageBackend(root, POLICY)
     await expect(backend.kv.open(descriptor)).rejects.toMatchObject({ code: 'malformed-medium' })
     await backend.close()
   })
@@ -67,14 +72,14 @@ describe('json backend specifics', () => {
       JSON.stringify({ unit: { name: 'other', version: 1 }, global: null, tables: {} }),
       'utf8',
     )
-    const backend = new JsonStorageBackend(root)
+    const backend = new JsonStorageBackend(root, POLICY)
     await expect(backend.kv.open(descriptor)).rejects.toMatchObject({ code: 'malformed-medium' })
     await backend.close()
   })
 
   it('rejects double-open of one unit as a plain caller error', async () => {
     const root = await freshRoot()
-    const backend = new JsonStorageBackend(root)
+    const backend = new JsonStorageBackend(root, POLICY)
     await backend.kv.open(descriptor)
     await expect(backend.kv.open(descriptor)).rejects.toThrow(/already open/)
     await backend.close()
@@ -82,7 +87,7 @@ describe('json backend specifics', () => {
 
   it('rolls back memory when a publish fails', async () => {
     const root = await freshRoot()
-    const backend = new JsonStorageBackend(root)
+    const backend = new JsonStorageBackend(root, POLICY)
     const unit = await backend.kv.open(descriptor)
     await unit.putRecord('t', 'k', { v: 'committed' })
     await unit.setGlobal({ g: 'committed' })
@@ -109,7 +114,7 @@ describe('json backend specifics', () => {
 
   it('rejects undeclared table and global access as caller errors', async () => {
     const root = await freshRoot()
-    const backend = new JsonStorageBackend(root)
+    const backend = new JsonStorageBackend(root, POLICY)
     const unit = await backend.kv.open({ name: 'shape', version: 1, tables: ['t'], hasGlobal: false })
     await expect(unit.putRecord('undeclared', 'k', {})).rejects.toThrow(/does not declare table/)
     await expect(unit.setGlobal({})).rejects.toThrow(/does not declare a global slot/)
@@ -118,7 +123,7 @@ describe('json backend specifics', () => {
 
   it('rejects invalid unit and table names', async () => {
     const root = await freshRoot()
-    const backend = new JsonStorageBackend(root)
+    const backend = new JsonStorageBackend(root, POLICY)
     await expect(backend.kv.open({ ...descriptor, name: 'Bad-Name' })).rejects.toMatchObject({
       name: 'StorageError',
       code: 'malformed-medium',
@@ -138,7 +143,7 @@ describe('json backend specifics', () => {
       JSON.stringify({ unit: { name: 'contract_unit', version: 3 }, global: null, tables: { alpha: { k: 1 } } }),
       'utf8',
     )
-    const backend = new JsonStorageBackend(root)
+    const backend = new JsonStorageBackend(root, POLICY)
     const unit = await backend.kv.open({ name: 'contract_unit', version: 3, tables: ['alpha', 'beta'], hasGlobal: true })
     const snapshot = await unit.loadAll()
     expect(snapshot.tables['alpha']).toEqual({ k: 1 })
@@ -151,7 +156,7 @@ describe('json backend specifics', () => {
     const { mkdir } = await import('node:fs/promises')
     // A directory where the unit file should be: readFile fails with EISDIR.
     await mkdir(join(root, 'shape.json'))
-    const backend = new JsonStorageBackend(root)
+    const backend = new JsonStorageBackend(root, POLICY)
     await expect(backend.kv.open(descriptor)).rejects.toMatchObject({ code: 'EISDIR' })
     await backend.close()
   })
@@ -163,7 +168,7 @@ describe('json backend specifics', () => {
       JSON.stringify({ unit: { name: 'shape', version: 1 }, global: null, tables: { t: ['not', 'an', 'object'] } }),
       'utf8',
     )
-    const backend = new JsonStorageBackend(root)
+    const backend = new JsonStorageBackend(root, POLICY)
     await expect(backend.kv.open(descriptor)).rejects.toMatchObject({ code: 'malformed-medium' })
 
     await writeFile(
@@ -194,7 +199,7 @@ describe('json backend specifics', () => {
       JSON.stringify({ unit: { name: 'shape', version: 1 }, global: null, tables: [{ t: { k: { hello: 'world' } } }] }),
       'utf8',
     )
-    const backend = new JsonStorageBackend(root)
+    const backend = new JsonStorageBackend(root, POLICY)
     await expect(backend.kv.open(descriptor)).rejects.toMatchObject({ code: 'malformed-medium' })
     await expect(backend.kv.open(descriptor)).rejects.toThrow(/unit 'shape': tables is not an object/)
     await backend.close()
@@ -207,7 +212,7 @@ describe('json backend specifics', () => {
       `${JSON.stringify({ unit: { name: 'shape', version: 1 }, global: { g: 1 }, tables: { t: { k: { hello: 'world' } } } }, null, 2)}\n`,
       'utf8',
     )
-    const backend = new JsonStorageBackend(root)
+    const backend = new JsonStorageBackend(root, POLICY)
     const unit = await backend.kv.open(descriptor)
     expect(await unit.loadAll()).toEqual({ tables: { t: { k: { hello: 'world' } } }, global: { g: 1 } })
     await backend.close()
@@ -230,7 +235,7 @@ describe('json backend specifics', () => {
 
   it('close drains in-flight writes and blocks in-flight opens', async () => {
     const root = await freshRoot()
-    const backend = new JsonStorageBackend(root)
+    const backend = new JsonStorageBackend(root, POLICY)
     const unit = await backend.kv.open(descriptor)
     const bigWrite = unit.putRecord('t', 'big', { blob: 'x'.repeat(4 * 1024 * 1024) })
     await unit.close()
@@ -240,7 +245,7 @@ describe('json backend specifics', () => {
     }
     expect(onDisk.tables['t']?.['big']).toBeDefined()
 
-    const backend2 = new JsonStorageBackend(root)
+    const backend2 = new JsonStorageBackend(root, POLICY)
     const opening = backend2.kv.open(descriptor)
     const closing = backend2.close()
     await expect(opening.then(u => u.putRecord('t', 'x', {}))).rejects.toMatchObject({ code: 'closed' })
@@ -254,7 +259,7 @@ describe('per-record layout', () => {
 
   it('stores one version-stamped document per record and defers materialization', async () => {
     const root = await freshRoot()
-    const backend = new JsonStorageBackend(root)
+    const backend = new JsonStorageBackend(root, POLICY)
     const unit = await backend.kv.open(descriptor)
     // Missing directory = empty unit; nothing materialized on the medium yet.
     expect(await unit.loadAll()).toEqual({ tables: { t: {} }, global: null })
@@ -272,7 +277,7 @@ describe('per-record layout', () => {
 
   it('overwrites and deletes one document at a time and persists across reopen', async () => {
     const root = await freshRoot()
-    const backend = new JsonStorageBackend(root)
+    const backend = new JsonStorageBackend(root, POLICY)
     const unit = await backend.kv.open(descriptor)
     await unit.putRecord('t', 'k', { v: 1 })
     await unit.putRecord('t', 'k', { v: 2 }) // overwrite the same document
@@ -287,7 +292,7 @@ describe('per-record layout', () => {
 
   it('rejects unsafe keys and undeclared tables, and enforces the closed guard', async () => {
     const root = await freshRoot()
-    const backend = new JsonStorageBackend(root)
+    const backend = new JsonStorageBackend(root, POLICY)
     const unit = await backend.kv.open(descriptor)
     await expect(unit.putRecord('t', 'a/b', {})).rejects.toThrow(/not path-safe/)
     await expect(unit.deleteRecord('t', '..')).rejects.toThrow(/not path-safe/)
@@ -302,7 +307,7 @@ describe('per-record layout', () => {
 
   it('discards foreign documents (stale version, malformed, non-object, unsafe key) on open', async () => {
     const root = await freshRoot()
-    const backend = new JsonStorageBackend(root)
+    const backend = new JsonStorageBackend(root, POLICY)
     const unit = await backend.kv.open(descriptor)
     await unit.putRecord('t', 'good', { v: 1 })
     await unit.close()
@@ -322,7 +327,7 @@ describe('per-record layout', () => {
 
   it('propagates non-ENOENT read failures and refuses a global slot that is not declared', async () => {
     const root = await freshRoot()
-    const backend = new JsonStorageBackend(root)
+    const backend = new JsonStorageBackend(root, POLICY)
     // A file where the unit directory should be: the lazy loadAll readdir
     // fails with ENOTDIR (opening itself touches nothing on the medium).
     await writeFile(join(root, 'recs'), 'not a directory', 'utf8')
@@ -337,7 +342,7 @@ describe('per-record layout', () => {
 
   it('close drains in-flight writes and an unreadable record document reads as absent', async () => {
     const root = await freshRoot()
-    const backend = new JsonStorageBackend(root)
+    const backend = new JsonStorageBackend(root, POLICY)
     const unit = await backend.kv.open(descriptor)
     const big = unit.putRecord('t', 'big', { blob: 'x'.repeat(4 * 1024 * 1024) })
     await unit.close()
@@ -353,9 +358,75 @@ describe('per-record layout', () => {
     // A directory where the record document should be: readFile fails with
     // EISDIR on every platform (permission bits are unenforceable on win32).
     await mkdir(join(root, 'recs', 't', 'locked.json'), { recursive: true })
-    const backend = new JsonStorageBackend(root)
+    const backend = new JsonStorageBackend(root, POLICY)
     const unit = await backend.kv.open(descriptor)
     expect(await unit.loadAll()).toEqual({ tables: { t: {} }, global: null })
+    await backend.close()
+  })
+
+  it('loads every document of a large table', async () => {
+    const root = await freshRoot()
+    // 10,000 is the measured size at which an unbounded read burst outran the
+    // process handle budget and 1,811 documents read as absent. The documents are
+    // written directly so the test exercises loading, not the write path.
+    const total = 10_000
+    const tableDir = join(root, 'recs', 't')
+    await mkdir(tableDir, { recursive: true })
+    for (let index = 0; index < total; index += 1) {
+      const document = JSON.stringify({ version: descriptor.version, record: { v: index } }, null, 2)
+      await writeFile(join(tableDir, `k${index}.json`), `${document}\n`, 'utf8')
+    }
+    const backend = new JsonStorageBackend(root, POLICY)
+    const unit = await backend.kv.open(descriptor)
+    const loaded = (await unit.loadAll()).tables.t ?? {}
+    expect(Object.keys(loaded)).toHaveLength(total)
+    expect(loaded['k0']).toEqual({ v: 0 })
+    expect(loaded[`k${total - 1}`]).toEqual({ v: total - 1 })
+    await unit.close()
+    await backend.close()
+  // Materializing 10,000 documents and reading them back exceeds the default
+  // per-test timeout; the load itself is bounded and finishes in well under this.
+  }, 60_000)
+
+  it('loads every document of a wide unit', async () => {
+    const root = await freshRoot()
+    // 128 tables of 64 documents is the shape where per-table batching alone
+    // still fails: the table directories are read concurrently, so the unit's
+    // in-flight reads were the table count times the batch size, and this shape
+    // loaded nothing at all.
+    const tables = Array.from({ length: 128 }, (_, index) => `t${index}`)
+    const wide = { name: 'wide', version: 1, layout: 'per-record' as const, tables, hasGlobal: false }
+    const perTable = 64
+    for (const table of tables) {
+      const tableDir = join(root, 'wide', table)
+      await mkdir(tableDir, { recursive: true })
+      for (let index = 0; index < perTable; index += 1) {
+        const document = JSON.stringify({ version: wide.version, record: { v: index } }, null, 2)
+        await writeFile(join(tableDir, `k${index}.json`), `${document}\n`, 'utf8')
+      }
+    }
+    const backend = new JsonStorageBackend(root, POLICY)
+    const unit = await backend.kv.open(wide)
+    const loaded = (await unit.loadAll()).tables
+    expect(Object.keys(loaded)).toHaveLength(tables.length)
+    for (const table of tables) {
+      expect(Object.keys(loaded[table] ?? {})).toHaveLength(perTable)
+    }
+    expect(loaded['t127']?.['k63']).toEqual({ v: 63 })
+    await unit.close()
+    await backend.close()
+  // Materializing 8,192 documents and reading them back exceeds the default
+  // per-test timeout; the load itself is bounded and finishes in well under this.
+  }, 120_000)
+
+  it('keeps valid records when a sibling document is foreign', async () => {
+    const root = await freshRoot()
+    await mkdir(join(root, 'recs', 't', 'broken.json'), { recursive: true })
+    const backend = new JsonStorageBackend(root, POLICY)
+    const unit = await backend.kv.open(descriptor)
+    await unit.putRecord('t', 'good', { v: 1 })
+    // One foreign document must cost only its own record, not the whole table.
+    expect(await unit.loadAll()).toEqual({ tables: { t: { good: { v: 1 } } }, global: null })
     await backend.close()
   })
 
@@ -369,7 +440,7 @@ describe('per-record layout', () => {
       tables: { t: { old1: { v: 1 }, old2: { v: 2 } }, undeclared: { k: { v: 0 } } },
     })
     await writeFile(join(root, 'recs.json'), legacy, 'utf8')
-    const backend = new JsonStorageBackend(root)
+    const backend = new JsonStorageBackend(root, POLICY)
     const unit = await backend.kv.open(descriptor)
     expect(await unit.loadAll()).toEqual({ tables: { t: { old1: { v: 1 }, old2: { v: 2 } } }, global: null })
     await expect(readFile(join(root, 'recs.json'), 'utf8')).resolves.toBe(legacy)
@@ -391,7 +462,7 @@ describe('per-record layout', () => {
       tables: { t: { old: { v: 1 } } },
     })
     await writeFile(join(root, 'recs.json'), legacy, 'utf8')
-    const backend = new JsonStorageBackend(root)
+    const backend = new JsonStorageBackend(root, POLICY)
     const unit = await backend.kv.open(descriptor)
     expect(await unit.loadAll()).toEqual({ tables: { t: {} }, global: null })
     await expect(readFile(recordPath(root, 'old'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
@@ -402,7 +473,7 @@ describe('per-record layout', () => {
     // The same file bootstraps once version 3 is declared read-compatible…
     const root2 = await freshRoot()
     await writeFile(join(root2, 'recs.json'), legacy, 'utf8')
-    const backend2 = new JsonStorageBackend(root2)
+    const backend2 = new JsonStorageBackend(root2, POLICY)
     const compat = { ...descriptor, version: 4, compatibleVersions: [3] }
     const unit2 = await backend2.kv.open(compat)
     expect(await unit2.loadAll()).toEqual({ tables: { t: { old: { v: 1 } } }, global: null })
@@ -415,7 +486,7 @@ describe('per-record layout', () => {
 
   it('backupRecord moves the document aside; reads see it absent and a write recreates it', async () => {
     const root = await freshRoot()
-    const backend = new JsonStorageBackend(root)
+    const backend = new JsonStorageBackend(root, POLICY)
     const unit = await backend.kv.open(descriptor)
     await unit.putRecord('t', 'k', { v: 1 })
     const moved = await unit.backupRecord!('t', 'k')
@@ -435,7 +506,7 @@ describe('per-record layout', () => {
 
   it('reads per-record documents stamped with a declared compat version and stamps writes current', async () => {
     const root = await freshRoot()
-    const backend = new JsonStorageBackend(root)
+    const backend = new JsonStorageBackend(root, POLICY)
     const compat = { ...descriptor, compatibleVersions: [1] }
     await mkdir(join(root, 'recs', 't'), { recursive: true })
     await writeFile(recordPath(root, 'oldrec'), JSON.stringify({ version: 1, record: { v: 'old' } }), 'utf8')
@@ -459,7 +530,7 @@ describe('per-record layout', () => {
     await writeFile(join(root, 'recs.json'), legacy, 'utf8')
     await mkdir(join(root, 'recs', 't'), { recursive: true })
     await writeFile(recordPath(root, 'broken'), '{oops', 'utf8')
-    const backend = new JsonStorageBackend(root)
+    const backend = new JsonStorageBackend(root, POLICY)
     const unit = await backend.kv.open(descriptor)
     expect(await unit.loadAll()).toEqual({ tables: { t: {} }, global: null })
     await expect(readFile(recordPath(root, 'old'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
@@ -470,7 +541,7 @@ describe('per-record layout', () => {
   it('leaves a foreign, shapeless, or malformed legacy file alone', async () => {
     const root = await freshRoot()
     await writeFile(join(root, 'recs.json'), JSON.stringify({ unit: { name: 'other', version: 3 }, tables: {} }), 'utf8')
-    const backend = new JsonStorageBackend(root)
+    const backend = new JsonStorageBackend(root, POLICY)
     const unit = await backend.kv.open(descriptor)
     expect(await unit.loadAll()).toEqual({ tables: { t: {} }, global: null })
     await expect(readFile(join(root, 'recs.json'), 'utf8')).resolves.toContain('other')
@@ -479,7 +550,7 @@ describe('per-record layout', () => {
 
     const root2 = await freshRoot()
     await writeFile(join(root2, 'recs.json'), JSON.stringify({ tables: { t: { k: { v: 1 } } } }), 'utf8')
-    const backend2 = new JsonStorageBackend(root2)
+    const backend2 = new JsonStorageBackend(root2, POLICY)
     const unit2 = await backend2.kv.open(descriptor)
     expect(await unit2.loadAll()).toEqual({ tables: { t: {} }, global: null })
     await expect(readFile(join(root2, 'recs.json'), 'utf8')).resolves.toContain('tables')
@@ -488,14 +559,14 @@ describe('per-record layout', () => {
     const root3 = await freshRoot()
     // A directory where the legacy file should be: the migration read fails loudly.
     await mkdir(join(root3, 'recs.json'))
-    const backend3 = new JsonStorageBackend(root3)
+    const backend3 = new JsonStorageBackend(root3, POLICY)
     const unit3 = await backend3.kv.open(descriptor)
     await expect(unit3.loadAll()).rejects.toMatchObject({ code: 'EISDIR' })
     await backend3.close()
 
     const root4 = await freshRoot()
     await writeFile(join(root4, 'recs.json'), 'not json at all', 'utf8')
-    const backend4 = new JsonStorageBackend(root4)
+    const backend4 = new JsonStorageBackend(root4, POLICY)
     const unit4 = await backend4.kv.open(descriptor)
     expect(await unit4.loadAll()).toEqual({ tables: { t: {} }, global: null })
     await expect(readFile(join(root4, 'recs.json'), 'utf8')).resolves.toBe('not json at all')
@@ -508,7 +579,7 @@ describe('per-record layout', () => {
       JSON.stringify({ unit: { name: 'recs', version: descriptor.version }, tables: 'not an object' }),
       'utf8',
     )
-    const backend5 = new JsonStorageBackend(root5)
+    const backend5 = new JsonStorageBackend(root5, POLICY)
     const unit5 = await backend5.kv.open(descriptor)
     expect(await unit5.loadAll()).toEqual({ tables: { t: {} }, global: null })
     await expect(readFile(join(root5, 'recs.json'), 'utf8')).resolves.toContain('not an object')
@@ -519,7 +590,7 @@ describe('per-record layout', () => {
       JSON.stringify({ unit: { name: 'recs', version: descriptor.version }, tables: null }),
       'utf8',
     )
-    const backend6 = new JsonStorageBackend(root5)
+    const backend6 = new JsonStorageBackend(root5, POLICY)
     const unit6 = await backend6.kv.open(descriptor)
     expect(await unit6.loadAll()).toEqual({ tables: { t: {} }, global: null })
     await backend6.close()

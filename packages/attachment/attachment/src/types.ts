@@ -1,8 +1,37 @@
 /** Durable attachment vocabulary. @module @deepseek-ai/dsh-attachment/types */
 
-import type { AttachmentId, ImageVariantId } from './brand.ts'
+import type { AttachmentId, FileReferenceOwnerId, FileStageTicket, ImageVariantId } from './brand.ts'
 
 export type { AttachmentId } from './brand.ts'
+export type { FileReferenceOwnerId, FileStageTicket } from './brand.ts'
+
+/** Durable identity of a producer that publishes verbatim file references. */
+export interface FileReferenceOwner {
+  /** Forks use their own session owner; exports use transient read leases. */
+  kind: 'session' | 'report' | 'snapshot' | 'baseline'
+  /** Stable identity in the producer's own namespace. */
+  id: FileReferenceOwnerId
+}
+
+/** Stored file held durably until its stage ticket is explicitly released. */
+export interface StagedFileAttachment {
+  file: FileAttachmentRef
+  ticket: FileStageTicket
+}
+
+/** Transient protection acquired before readers or exporters publish output. */
+export interface FileReadLease {
+  /** Release after every reader has closed; repeated calls share completion. @returns completion after protection ends. */
+  release(): Promise<void>
+}
+
+/** Deletion admission outcome; sizes describe content, never free disk space. */
+export type FileDeletionResult =
+  | { status: 'deleted'; canonicalBytesRemoved: number }
+  | { status: 'absent' }
+  | { status: 'retained'; owners: readonly FileReferenceOwner[]; stages: number }
+  | { status: 'reading' }
+  | { status: 'unknown' }
 
 /** Raster image formats accepted by the version-one attachment path. */
 export type ImageMediaType = 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif'

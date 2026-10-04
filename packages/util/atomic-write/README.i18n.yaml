@@ -20,6 +20,9 @@
 /deepseek-ai-dsh-atomic-write/use-this-package/writing-a-file-atomically:
   en: 7b757dc3c3b27335
   zh: a097d90a2561475d
+/deepseek-ai-dsh-atomic-write/use-this-package/retrying-a-rename-with-your-own-cadence:
+  en: bf4e241b87c287cd
+  zh: e0998f827c31c152
 /deepseek-ai-dsh-atomic-write/use-this-package/coordinating-writers:
   en: 77c865c1f78d2a0c
   zh: 5a91874c352c6f18
@@ -30,11 +33,11 @@
   en: 93b537308f7c88c7
   zh: 282e0d2042aeb1be
 /deepseek-ai-dsh-atomic-write/understand-the-implementation/source-map:
-  en: 725509a8b621c668
-  zh: c11e3ffdf73af844
+  en: 7c3f362222761c73
+  zh: 4bb7d24df4e91e43
 /deepseek-ai-dsh-atomic-write/understand-the-implementation/write-path:
-  en: 2e6561c9282f0c0d
-  zh: 7f0e76f6dbdea501
+  en: 853f3ddb9b1639c4
+  zh: d15dd3d95ae9c8a4
 /deepseek-ai-dsh-atomic-write/understand-the-implementation/why-the-swap-stays-safe:
   en: 784e985c1fb3a25e
   zh: 4afda1b9bf5f29cc

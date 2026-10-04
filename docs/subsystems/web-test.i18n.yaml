@@ -1,0 +1,22 @@
+# Bilingual-pair consistency record for web-test.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write docs/subsystems/web-test.md
+/web-testing:
+  en: 6703a69c9c25e5eb
+  zh: 3c931075cf34a470
+/web-testing/summary:
+  en: 9129505077baec0a
+  zh: 93f510accc5b1c98
+/web-testing/table-of-contents:
+  en: 7e22da2794bbc382
+  zh: 8f77e58b4bb18097
+/web-testing/types:
+  en: 52237257d47d323c
+  zh: 1bde7708b74fa712
+/web-testing/cordis-api/web-test-events/web-test-project-published-parallel:
+  en: 67ce200d49f5caaa
+  zh: 67ce200d49f5caaa
+/web-testing/dev-note:
+  en: b75c8458928b72b9
+  zh: 003ba4e17b4b5269

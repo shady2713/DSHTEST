@@ -70,6 +70,10 @@ Web 记录 toolbar 提交和 typed tab 打开。导航状态机把每个受控 r
 
 Desktop 主进程批准 guest 租约，并执行挂载、导航和权限策略。preload 只暴露限定范围的 Browser 操作。共享声明通过标准 `/types` 出口配合 `import type` 引入；Host 与 Client 使用独立 tsconfig 编译。Desktop Browser tab 声明 `keepMounted`，Sidebar 因而在切 tab、切 Session、收起与浮动期间保留其 DOM。
 
+Host↔Main 私有自动化协议使用版本 3，允许对一个已拥有的目标执行观察、PNG 截图、点击、文本输入、双击、白名单原生按键、受限导航和刷新。元素操作会重新验证最近观察的引用。导航和刷新需要该观察代次；导航只能改变同 HTTP(S) 源、同 pathname 的查询参数或片段，不得包含凭据，并且必须符合 guest 所有者的导航规则。文本输入通过原生 Enter 事件传递换行，并将 CRLF 规范化为一次换行。主 frame 导航（包括同文档变化）会使观察失效。旧协议版本会被拒绝。失败结果区分 `outcome: 'not-executed'` 与 `outcome: 'unknown'`：派发后未收到可信答复或执行器失败时，页面可能已经改变。消费方必须核对页面和业务结果后再决定是否重复未知结果的动作。Host 分别保留命令请求 ID 和 IPC 信封 ID，校验预期答复内容，且不会自动重试。私有 IPC 使用 Node 的 advanced 序列化，将截图字节保留为 `Uint8Array`。Host `DesktopBrowserControl` Service Definition 提供目标列表、显式 Session 绑定与解除、已确认所有权，以及按 Session 提交命令。Desktop Host 校验实际 Session 及其浏览器存储键（`cwd:<规范路径>` 或 `session:<SessionId>`），然后等待关联的 Main 确认，才发布所有权。绑定冻结当前 HTTP(S) origin：页面操作、工具栏导航、表单、重定向和弹窗请求都不能离开它；同源业务路径仍可访问。当前文档若离开绑定 origin，所有命令（包括读取）都会被拒绝。Main 租约释放和 Host 替换撤销所有权。桌面应用提供服务及选择目标的可信 consumer；浏览器工具从不自动绑定 Session。 授权与元素重新验证通过后，原生输入只恢复、显示并聚焦 guest 所属的 Main 窗口；窗口或 guest 未获得焦点时，动作以未执行结果被拒绝。Main 在聚焦后再次验证元素，并在派发前核对所有权、文档代次与当前焦点。
+
+可信 Runtime 执行组使用显式项目、批次、活动代次与角色标识，只有真实 Runtime Service 的所属 fiber 可以取得私有执行权限，复制 token 或清除模型归属不会获得权限；其目标不能使用单 Session 绑定。Main 原子确认所有角色许可，每个命令核对精确许可；一个目标撤销时整组撤权。Main 为各角色与活动代次分配独立 Cookie、Web storage 和 Service Worker 分区；普通 Sidebar 存储仍按工作区共享。原生元素输入在所有目标之间共用一个前台队列，观察与页面业务等待可独立推进。取消关联原命令信封：派发前取消阻止输入，已派发动作保留真实或未知结果。
+
 页面刷新快捷键调用工具栏使用的同一重载操作。其 Tooltip 和 ARIA 组合随有效绑定更新。Desktop 通过所属窗口路由已批准 guest 中的有效快捷键；获焦 webview 必须仍持有该 guest 的租约。Web 保留浏览器专用组合。
 
 </details>

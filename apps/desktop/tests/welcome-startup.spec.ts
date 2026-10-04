@@ -101,7 +101,16 @@ vi.mock('electron', () => ({
 // The Windows tray relabels through Menu as well; keep the menu call counts below platform-neutral.
 vi.mock('../src/tray.ts', () => ({ DesktopTray: class { relabel() {} dispose() {} } }))
 
-vi.mock('../src/paths.ts', () => ({ resolveDesktopPaths: () => ({ profile: '/profile' }) }))
+// The shell reads its install before any Electron path is resolved and hands the
+// resolved identity to its Host, so this double answers both with the official
+// product: Electron keeps its own `userData` and the Host composes no layer.
+vi.mock('../src/paths.ts', () => ({
+  resolveDesktopPaths: () => ({ profile: '/profile' }),
+  resolveDesktopApplication: () => ({
+    applicationId: 'dsh-desktop', home: '/home', paths: { profile: '/profile' }, host: undefined,
+  }),
+  desktopHostEnvironment: () => ({}),
+}))
 vi.mock('../src/login-shell-environment.ts', async importOriginal => ({
   ...await importOriginal<typeof import('../src/login-shell-environment.ts')>(),
   readDesktopLoginShellEnvironment: async (base: NodeJS.ProcessEnv) => ({ environment: base, failures: [] }),

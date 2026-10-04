@@ -7,7 +7,10 @@
  * writers of one file through a `wx`-created `<file>.lock` sibling, so a
  * read-modify-write cycle can never resurrect a state another writer just
  * replaced; readers stay lock-free because the rename commit is atomic. A lock
- * whose recorded holder process no longer exists is taken over.
+ * whose recorded holder process no longer exists is taken over. Every
+ * replacement step runs through `renameAtomicTemp`, so a write flow that must
+ * `fsync` — which this package deliberately does not — reuses the same Windows
+ * retry with a budget of its own instead of a second copy of the loop.
  * @module @deepseek-ai/dsh-atomic-write
  */
 
@@ -16,9 +19,6 @@ import { lstat, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
 const WINDOWS_TRANSIENT_RENAME_ERRORS: ReadonlySet<string> = new Set(['EACCES', 'EBUSY', 'EPERM'])
-const WINDOWS_RENAME_RETRY_INITIAL_MS = 20
-const WINDOWS_RENAME_RETRY_MAX_MS = 200
-const WINDOWS_RENAME_RETRY_LIMIT = 8
 
 /** Whether Windows reported temporary interference with an atomic replacement. */
 function isTransientWindowsRenameError(error: unknown): boolean {
@@ -26,20 +26,57 @@ function isTransientWindowsRenameError(error: unknown): boolean {
   return WINDOWS_TRANSIENT_RENAME_ERRORS.has((error as NodeJS.ErrnoException | null)?.code ?? '')
 }
 
-/** Replace the target after bounded retries for transient Windows interference. */
-async function renameAtomicTemp(temp: string, filename: string): Promise<void> {
-  let delay = WINDOWS_RENAME_RETRY_INITIAL_MS
-  for (let retries = 0;; retries += 1) {
+/**
+ * Retry cadence for one atomic replacement. The caller states it because only
+ * the caller knows whether waiting is productive for its own write flow:
+ * {@link writeFileAtomic} commits with the fixed cadence below, while a flow
+ * that fsyncs before renaming takes its budget from configuration.
+ */
+export interface AtomicRenamePolicy {
+  /** Delay in ms before each retry. Length N buys N retries, so at most N+1 attempts; empty list = one attempt. */
+  readonly windowsRenameDelaysMs: readonly number[]
+  /** Await one entry of {@link windowsRenameDelaysMs}. */
+  readonly wait: (delayMs: number) => Promise<void>
+}
+
+/**
+ * Rename `temp` over `filename`, retrying only a refusal Windows reported as
+ * transient `EACCES`, `EBUSY`, or `EPERM`. Any other failure reaches the
+ * caller immediately, and so does the last refusal once the cadence's budget
+ * is spent. Every attempt renames the same temp file, so a retry republishes
+ * identical complete bytes. This step never writes, fsyncs, closes, or removes
+ * a file, so discarding a temp file the caller abandoned is the caller's work.
+ * @param temp - Complete temp file already holding the new content.
+ * @param filename - Final path the temp file replaces.
+ * @param policy - Retry cadence whose length is the retry budget.
+ * @returns resolution once the rename lands or its failure is final.
+ */
+export async function renameAtomicTemp(temp: string, filename: string, policy: AtomicRenamePolicy): Promise<void> {
+  for (let attempt = 0; ; attempt += 1) {
     try {
       await rename(temp, filename)
       return
     } catch (error) {
       if (!isTransientWindowsRenameError(error)) throw error
-      if (retries >= WINDOWS_RENAME_RETRY_LIMIT) throw error
+      const delay = policy.windowsRenameDelaysMs[attempt]
+      if (delay === undefined) throw error
+      await policy.wait(delay)
     }
-    await new Promise(resolve => setTimeout(resolve, delay))
-    delay = Math.min(delay * 2, WINDOWS_RENAME_RETRY_MAX_MS)
   }
+}
+
+/**
+ * The cadence {@link writeFileAtomic} commits with: eight retries whose delays
+ * double from 20 ms to the 200 ms ceiling, so a replacement survives up to
+ * 1.1 s of Windows interference. It is a robustness invariant of the rename
+ * commit that applies to every call site, not a deployment tunable.
+ */
+const WINDOWS_RENAME_DELAYS_MS: readonly number[] = [20, 40, 80, 160, 200, 200, 200, 200]
+
+/** The rename policy {@link writeFileAtomic} commits with. */
+const WRITE_FILE_RENAME_POLICY: AtomicRenamePolicy = {
+  windowsRenameDelaysMs: WINDOWS_RENAME_DELAYS_MS,
+  wait: delayMs => new Promise(resolve => setTimeout(resolve, delayMs)),
 }
 
 /**
@@ -69,9 +106,10 @@ export interface WriteFileAtomicOptions {
  * race. The rename also replaces a symlinked target itself instead of writing
  * through to its referent, and the same-directory sibling keeps the rename on
  * one filesystem. Windows replacement retries transient `EACCES`, `EBUSY`,
- * and `EPERM` failures for a bounded interval while the complete temp file
- * remains the rename source. On any remaining failure the temp file is
- * removed and the failure rethrown. Crash durability (fsync) is out of scope.
+ * and `EPERM` failures through {@link renameAtomicTemp} on the fixed cadence of
+ * eight retries, so at most nine attempts, while the complete temp file remains
+ * the rename source. On any remaining failure the temp file is removed and the
+ * failure rethrown. Crash durability (fsync) is out of scope.
  * @param filename - final path receiving the content.
  * @param content - complete next file content.
  * @param options - permission bits for the replacement inode.
@@ -86,7 +124,7 @@ export async function writeFileAtomic(filename: string, content: string, options
   const temp = `${filename}.${randomBytes(6).toString('hex')}.tmp`
   try {
     await writeFile(temp, content, { mode: options.mode, flag: 'wx' })
-    await renameAtomicTemp(temp, filename)
+    await renameAtomicTemp(temp, filename, WRITE_FILE_RENAME_POLICY)
   } catch (error) {
     await rm(temp, { force: true })
     throw error

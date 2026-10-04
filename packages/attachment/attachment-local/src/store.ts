@@ -128,8 +128,10 @@ export async function prepareImageFile(
  * A synced file alone does not survive a crash when its directory entry never
  * reached storage, so the publication directory is synced before a durable
  * reference is reported.
+ * @param path - directory whose entries were changed.
+ * @returns completion after supported directory synchronization.
  */
-async function syncDirectory(path: string): Promise<void> {
+export async function syncDirectory(path: string): Promise<void> {
   /* v8 ignore next -- Windows cannot open directory handles; NTFS metadata journaling owns entry durability there. */
   if (process.platform === 'win32') return
   /* v8 ignore start -- Windows cannot exercise directory fsync; POSIX behavior tests enforce this peer. */
@@ -240,6 +242,7 @@ export interface StreamedImmutableObject {
  * @param data - exact object bytes in order.
  * @param targetFor - derive the final absolute target from the completed digest and byte count.
  * @param signal - optional cancellation for source reads and storage writes.
+ * @param beforePublish - optional admission after hashing and before canonical publication.
  * @returns digest and exact byte count of the published object.
  */
 export async function publishImmutableObjectStream(
@@ -247,11 +250,13 @@ export async function publishImmutableObjectStream(
   data: AsyncIterable<Uint8Array>,
   targetFor: (sha256: string, bytes: number) => string,
   signal?: AbortSignal,
+  beforePublish?: (stored: StreamedImmutableObject) => Promise<void>,
 ): Promise<StreamedImmutableObject> {
   const staged = await stageImmutableObject(root, data, signal)
   let target: string
   try {
     target = targetFor(staged.sha256, staged.bytes)
+    await beforePublish?.(staged)
   } catch (error) {
     /* v8 ignore start -- The local target callback constructs a validated reference from this function's digest. */
     await removeTemporary(staged.path)

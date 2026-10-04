@@ -18,6 +18,75 @@
 
 `ChangeResult.changed` 报告磁盘修改，独立于 `application`：`applied`、`restart-required`、`overridden` 或 `failed`。可选的 `error` 包含可本地化的错误码和外部诊断。`packageResult` 记录 pnpm 退出码、有界输出、截断标志及完整诊断日志路径；当管理器终止了一个停止打印的运行，还记录 `timedOut`。被终止的运行不论信号留下什么退出状态都归类为 `timeout`，因此安装与删除都报告失败而非成功，也不会再询问下一个注册表。`pendingBuilds` 列出整个 profile 尚未决定的包；`approvedBuilds` 记录本次操作授予权限的包名；`registries` 按顺序列出一次安装问过的注册表；`failedAt` 说明最后一次失败的运行连不上的是所问的注册表，还是 git 或 tarball spec 自身拉取的主机。
 
+## 启动组合
+
+启动器在可编辑的 profile 补丁之前提供应用补丁。配置编辑器保留 home 与命令行覆盖。以下声明说明启动器输入。
+
+```ts type-equiv
+/** Application-owned package manager executable; environment applies only to package operations. */
+interface ProfilePnpmInvocation {
+  readonly command: string
+  readonly args: readonly string[]
+  readonly env: Readonly<Record<string, string>>
+}
+```
+
+```ts type-equiv
+/** Current profile facts; scheduling and mutation belong to their callers. */
+interface ProfileContext {
+  readonly name: string
+  /** Packaged applications supply their bundled runtime instead of a PATH executable. */
+  readonly packageManager?: ProfilePnpmInvocation
+  readonly dir: string
+  readonly patchPath: string
+  readonly installAnchor: string
+  readonly cwd: string
+  readonly home: string
+  /** Bundle packages used to start this process, before any persisted edits. */
+  readonly startedBundles: readonly string[]
+  /** Application composition, applied after bundles and before user patches. */
+  readonly applicationPatches: readonly PatchOptions[]
+  /** Parsed command-line overlays, applied above profile and home patches. */
+  readonly overlays: readonly PatchOptions[]
+  /** Launch-time DSH_TELEMETRY_DISABLED value; any non-empty value opts out. */
+  readonly telemetryDisabledEnv: string | undefined
+}
+```
+
+```ts type-equiv
+/** Options for {@link runProfile}. */
+interface RunProfileOptions {
+  /** This run's frozen environment snapshot, provided before any entry mounts. */
+  environment: LaunchEnvironmentSnapshot
+  /** The profile name to boot. */
+  profile: string
+  /** Loaded application profile; bypasses named profile initialization when supplied. */
+  resolvedProfile?: ResolvedProfileRuntime | undefined
+  /** Shipped template used once to initialize a missing profile. */
+  fromDefaultProfile?: string | undefined
+  /** `--patch` overlay paths, in argv order. */
+  patchFiles: readonly string[]
+  /** Application composition paths, applied after bundles and before user patches. */
+  applicationPatchFiles: readonly string[]
+  /** The invocation's inner arguments, handed to the tree through `ctx.cmdlineArgs`. */
+  args: readonly string[]
+  /** Application-owned package runtime, scoped to plugin package operations. */
+  packageManager?: ProfileContext['packageManager']
+}
+```
+
+```ts type-equiv
+/** The profile boot this Host issues: the composition layers and the profile-context name. */
+interface DesktopHostBootRequest {
+  /** Profile-context name; the web-app bundle's product rows gate on it. */
+  readonly profile: string
+  /** Command-line overlays above user patches. */
+  readonly patchFiles: readonly string[]
+  /** Application composition applied before user patches. */
+  readonly applicationPatchFiles: readonly string[]
+}
+```
+
 <!-- BEGIN GENERATED cordis-surface (gen-cordis-catalog.ts) — do not edit between markers -->
 
 <a id="cordis-surface"></a>

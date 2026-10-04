@@ -2,7 +2,7 @@ import { Context } from '@deepseek-ai/cordis'
 import AgentRegistry from '@deepseek-ai/dsh-agent'
 import { createInboxStub } from '@deepseek-ai/dsh-agent-loop-testkit'
 import type { Agent, ModelSelectionRef } from '@deepseek-ai/dsh-agent'
-import AttachmentStore, { AttachmentId } from '@deepseek-ai/dsh-attachment'
+import AttachmentStore, { AttachmentId, FileStageTicket } from '@deepseek-ai/dsh-attachment'
 import type {
   FileAttachmentRef, ImageAttachmentRef, SaveFileAttachment, SaveFileStreamAttachment,
 } from '@deepseek-ai/dsh-attachment'
@@ -13,12 +13,17 @@ import CommandRuntime from '@deepseek-ai/dsh-commands'
 import { createScope } from '@deepseek-ai/dsh-scope'
 import FileUploads from '@deepseek-ai/dsh-client-file-upload'
 import type { FileUploadReceiptId } from '@deepseek-ai/dsh-client-file-upload/types'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ApiSessionAgentController } from '../src/agent.ts'
 import { SessionCommandController } from '../src/commands.ts'
 import type { SessionRequestId } from '../src/types.ts'
 
 const SESSION = SessionId('upload-session')
+const contexts: Context[] = []
+
+afterEach(async () => {
+  await Promise.all(contexts.splice(0).map(ctx => ctx.fiber.dispose()))
+})
 
 async function uploadHarness(origin?: 'subagent'): Promise<{
   ctx: Context
@@ -29,10 +34,12 @@ async function uploadHarness(origin?: 'subagent'): Promise<{
   saveFile: ReturnType<typeof vi.fn>
   saveFileStream: ReturnType<typeof vi.fn>
   saveImages: ReturnType<typeof vi.fn>
+  releaseFileStage: ReturnType<typeof vi.fn>
   disposeAgent: () => Promise<void>
   uploadRoute: (request: Request) => Promise<Response>
 }> {
   const ctx = new Context()
+  contexts.push(ctx)
   await ctx.plugin(SessionStore)
   await ctx.plugin(AgentRegistry)
   await ctx.plugin(CommandRuntime)
@@ -69,8 +76,14 @@ async function uploadHarness(origin?: 'subagent'): Promise<{
   })
   const saveImages = vi.fn((): Promise<readonly ImageAttachmentRef[]> =>
     Promise.reject(new Error('fixture did not expect image persistence')))
+  let stages = 0
+  const releaseFileStage = vi.fn(async () => {})
   ctx.provide('attachments', Object.setPrototypeOf(
-    { saveFile, saveFileStream, saveImages },
+    {
+      saveFile, saveFileStream, saveImages, releaseFileStage,
+      stageFile: async (input: SaveFileAttachment) => ({ file: await saveFile(input), ticket: FileStageTicket(`stage-${++stages}`) }),
+      stageFileStream: async (input: SaveFileStreamAttachment) => ({ file: await saveFileStream(input), ticket: FileStageTicket(`stage-${++stages}`) }),
+    },
     AttachmentStore.prototype,
   ) as never)
   let uploadRoute: ((request: Request) => Promise<Response>) | undefined
@@ -106,6 +119,7 @@ async function uploadHarness(origin?: 'subagent'): Promise<{
     followup,
     saveFile,
     saveFileStream,
+    releaseFileStage,
     saveImages,
     disposeAgent,
     uploadRoute,
@@ -469,5 +483,95 @@ describe('Session file uploads', () => {
         code: 'gateway/internal',
         message: 'failed to store file upload: Error: disk unavailable',
       })
+  })
+})
+
+describe('upload staging retention', () => {
+  it('flushes after every synchronous Session observer has received the file message', async () => {
+    const { ctx, uploads, agent, releaseFileStage } = await uploadHarness()
+    const receipt = await uploads.upload(agent, { data: 'AAAA' }, new AbortController().signal)
+    using binding = uploads.bindPrompt(agent, [receipt.receiptId], 'observed-file')
+    binding.commit()
+    let routed = false
+    const flush = vi.fn(() => { expect(routed).toBe(true) })
+    ctx.on('session/flush', flush)
+    ctx.on('session/event', (_session, event) => { if (event.type === 'user/message') routed = true })
+    agent.session.append('user/message', createUserMessage({
+      content: [{ type: 'file', attachment: receipt.file }],
+      source: { kind: 'user', rpcId: 'observed-file' as SessionRequestId },
+    }), { surfaceOp: 'append' })
+    await vi.waitFor(() => { expect(releaseFileStage).toHaveBeenCalledOnce() })
+    expect(flush).toHaveBeenCalledOnce()
+  })
+
+  it('releases a prompt ticket only after its Session durability barrier completes', async () => {
+    const { ctx, uploads, agent, releaseFileStage } = await uploadHarness()
+    const barrier = Promise.withResolvers<undefined>()
+    const flush = vi.fn(() => barrier.promise)
+    ctx.on('session/flush', flush)
+    const receipt = await uploads.upload(agent, { data: 'AAAA' }, new AbortController().signal)
+    using binding = uploads.bindPrompt(agent, [receipt.receiptId], 'durable-prompt')
+    binding.commit()
+    uploads.retirePrompt(agent, 'durable-prompt')
+    await vi.waitFor(() => { expect(flush).toHaveBeenCalledOnce() })
+    expect(releaseFileStage).not.toHaveBeenCalled()
+    barrier.resolve(undefined)
+    await vi.waitFor(() => { expect(releaseFileStage).toHaveBeenCalledExactlyOnceWith('stage-1') })
+  })
+
+  it('keeps a bound ticket when no persistence listener confirms durability', async () => {
+    const { ctx, uploads, agent, releaseFileStage } = await uploadHarness()
+    const receipt = await uploads.upload(agent, { data: 'AAAA' }, new AbortController().signal)
+    using binding = uploads.bindPrompt(agent, [receipt.receiptId], 'unconfirmed-prompt')
+    binding.commit()
+    uploads.retirePrompt(agent, 'unconfirmed-prompt')
+    await ctx.fiber.dispose()
+    expect(releaseFileStage).not.toHaveBeenCalled()
+  })
+
+  it('releases unused stages on Session disposal and keeps bound unconfirmed stages', async () => {
+    const { ctx, uploads, agent, releaseFileStage } = await uploadHarness()
+    await uploads.upload(agent, { data: 'AAAA' }, new AbortController().signal)
+    const bound = await uploads.upload(agent, { data: 'AAAA' }, new AbortController().signal)
+    using binding = uploads.bindPrompt(agent, [bound.receiptId], 'queued-prompt')
+    binding.commit()
+    ctx.emit('session/disposed', agent.session)
+    await vi.waitFor(() => { expect(releaseFileStage).toHaveBeenCalledExactlyOnceWith('stage-1') })
+    await ctx.fiber.dispose()
+    expect(releaseFileStage).toHaveBeenCalledOnce()
+  })
+
+  it('drains an in-flight upload on teardown without publishing a late receipt', async () => {
+    const { ctx, uploads, agent, saveFile, releaseFileStage } = await uploadHarness()
+    const stored = Promise.withResolvers<FileAttachmentRef>()
+    saveFile.mockReturnValueOnce(stored.promise)
+    const upload = uploads.upload(agent, { data: 'AAAA' }, new AbortController().signal)
+    const rejected = expect(upload).rejects.toMatchObject({ code: 'session/not-found' })
+    await vi.waitFor(() => { expect(saveFile).toHaveBeenCalledOnce() })
+    let closed = false
+    const closing = ctx.fiber.dispose().then(() => { closed = true })
+    await new Promise<void>((resolve) => { setImmediate(resolve) })
+    expect(closed).toBe(false)
+    stored.resolve({ attachmentId: AttachmentId(`sha256:${'ab'.repeat(32)}`), name: 'late.bin', bytes: 3 })
+    await rejected
+    await closing
+    expect(releaseFileStage).toHaveBeenCalledExactlyOnceWith('stage-1')
+  })
+
+  it('reports a failed release from a late upload through teardown as well as the upload', async () => {
+    const { ctx, uploads, agent, saveFile, releaseFileStage } = await uploadHarness()
+    const stored = Promise.withResolvers<FileAttachmentRef>()
+    saveFile.mockReturnValueOnce(stored.promise)
+    releaseFileStage.mockRejectedValueOnce(new Error('release unavailable'))
+    const report = vi.spyOn(ctx.logger, 'error')
+    const upload = uploads.upload(agent, { data: 'AAAA' }, new AbortController().signal)
+    const rejected = expect(upload).rejects.toThrow('release unavailable')
+    await vi.waitFor(() => { expect(saveFile).toHaveBeenCalledOnce() })
+    const closing = ctx.fiber.dispose()
+    stored.resolve({ attachmentId: AttachmentId(`sha256:${'ab'.repeat(32)}`), name: 'late.bin', bytes: 3 })
+    await rejected
+    await closing
+    expect(report).toHaveBeenCalled()
+    expect(releaseFileStage).toHaveBeenCalledOnce()
   })
 })

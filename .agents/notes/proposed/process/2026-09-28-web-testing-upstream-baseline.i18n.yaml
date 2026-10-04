@@ -1,0 +1,46 @@
+# Bilingual-pair consistency record for 2026-09-28-web-testing-upstream-baseline.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/proposed/process/2026-09-28-web-testing-upstream-baseline.md
+/agent-note-upstream-baseline-and-upgrades:
+  en: 230d46938bf93e3f
+  zh: c8a798fca11d06b5
+/agent-note-upstream-baseline-and-upgrades/problem:
+  en: cd951f7d0920655d
+  zh: a157fb1d654a5b59
+/agent-note-upstream-baseline-and-upgrades/proposal:
+  en: 6e3719ce7d807ddd
+  zh: 2bbb2e9b8c59256c
+/agent-note-upstream-baseline-and-upgrades/fixed-baseline:
+  en: 8a4d716701dc7d3d
+  zh: df1a54680f5946ba
+/agent-note-upstream-baseline-and-upgrades/upstream-reuse-and-application-ownership:
+  en: 167fdca0ed9027cc
+  zh: 16edeeae7b65fb05
+/agent-note-upstream-baseline-and-upgrades/upgrade-disposition-and-remaining-integration-work:
+  en: 9824758e36172d54
+  zh: 26a3207507f1966e
+/agent-note-upstream-baseline-and-upgrades/incremental-upgrade-to-rc-2:
+  en: e0232523aa043955
+  zh: 8b4db0c5a783ba34
+/agent-note-upstream-baseline-and-upgrades/inherited-rules:
+  en: f3e03c573ae85583
+  zh: 1713aa1bbe3f8b79
+/agent-note-upstream-baseline-and-upgrades/document-languages-and-entry-points:
+  en: e021017038865402
+  zh: 470e71b18db7ee20
+/agent-note-upstream-baseline-and-upgrades/integration-cost-register:
+  en: 0aebdba39cb9de90
+  zh: 0b316f6359a89d27
+/agent-note-upstream-baseline-and-upgrades/subsequent-upgrades:
+  en: 3f8a0d78906ec159
+  zh: 104f13322326e969
+/agent-note-upstream-baseline-and-upgrades/alternatives-considered:
+  en: 73aaf771e2c46e56
+  zh: 9cc094ebd8068c2d
+/agent-note-upstream-baseline-and-upgrades/acceptance-criteria:
+  en: 56c0d1be6694e2f3
+  zh: c695d31384deec16
+/agent-note-upstream-baseline-and-upgrades/risks:
+  en: f138234ce70f09c2
+  zh: 2dfca93ac679e2cb

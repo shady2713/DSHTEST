@@ -1,0 +1,9 @@
+version: 1
+scenario: web-test-browser-image
+profile: headless
+composition: web-test-browser-image
+recording: authored
+permission: read-only
+header:
+  class: web-test-browser-image
+  pin: true

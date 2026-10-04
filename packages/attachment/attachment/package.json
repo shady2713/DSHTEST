@@ -16,6 +16,7 @@
   "exports": {
     ".": { "types": "./lib/types/index.d.ts", "default": "./lib/index.js" },
     "./types": { "types": "./lib/types/types.d.ts", "default": "./lib/types/types.js" },
+    "./file-publisher": { "types": "./lib/types/file-publisher.d.ts", "default": "./lib/types/file-publisher.js" },
     "./src/*": "./src/*",
     "./package.json": "./package.json"
   },

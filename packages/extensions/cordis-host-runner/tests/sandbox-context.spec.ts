@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { call, CONTENT_OUTPUT_CODE, dummyTool, mount, setup, text } from './helpers.ts'
+import { AGENT_A, call, CONTENT_OUTPUT_CODE, dummyTool, mount, setup, text } from './helpers.ts'
 
 /**
  * The sandbox context façade is a whitelist, not a pass-through proxy. A running
@@ -20,6 +20,165 @@ async function runTouching(harness: Awaited<ReturnType<typeof setup>>, expr: str
 }
 
 describe('sandbox context façade — escape surface is closed', () => {
+  it.each(['on', 'once'])('guards Agent handles delivered to ctx.%s listeners', async (verb) => {
+    const harness = await setup()
+    await mount(harness, `return { name: 'event-consumer', apply(ctx) {
+      ctx.${verb}('guard/event', payload => { const context = payload.agent.ctx })
+    } }`)
+    expect(() => { harness.ctx.events.emit('guard/event', { agent: { ctx: harness.ctx } }) })
+      .toThrow('returned a cordis Context')
+  })
+
+  it('guards the Fiber supplied as the effect callback receiver', async () => {
+    const harness = await setup()
+    await expect(mount(harness, `return { name: 'effect-consumer', apply(ctx) {
+      ctx.effect(function () { const context = this.ctx; return () => {} })
+    } }`)).rejects.toThrow('returned a cordis Context')
+  })
+
+  it('guards values supplied by injected-service callbacks', async () => {
+    const harness = await setup()
+    harness.ctx.provide('callbackService', { read(callback: (value: { ctx: typeof harness.ctx }) => void) {
+      callback({ ctx: harness.ctx })
+    } })
+    await expect(mount(harness, `return { name: 'callback-consumer', apply(ctx) {
+      ctx.get('callbackService').read(value => { const context = value.ctx })
+    } }`)).rejects.toThrow('returned a cordis Context')
+  })
+
+  it.each(['create', 'resume'])('refuses trusted composition callbacks in agents.%s options before invocation', async (member) => {
+    const harness = await setup()
+    let invoked = 0
+    const signal = new AbortController().signal
+    let supplied: object | undefined
+    harness.ctx.provide('agents', {
+      [member](options: { signal?: AbortSignal }) {
+        invoked++
+        expect(options.signal).toBe(Reflect.get(supplied!, 'signal'))
+        expect(options.signal?.aborted).toBe(false)
+        return { id: 'owned-agent' }
+      },
+    })
+    harness.ctx.provide('testSignal', signal)
+    harness.ctx.provide('testOptions', { capture(value: object) { supplied = value } })
+    await mount(harness, `return { name: 'ordinary-creation', apply(ctx) {
+      const options = { signal: ctx.get('testSignal') }
+      ctx.get('testOptions').capture(options)
+      ctx.get('agents').${member}(options)
+    } }`)
+    expect(invoked).toBe(1)
+    await expect(mount(harness, `return { name: 'trusted-setup', apply(ctx) {
+      ctx.get('agents').${member}({ setup(context) {} })
+    } }`)).rejects.toThrow('does not accept trusted setup callbacks')
+    expect(invoked).toBe(1)
+    await expect(mount(harness, `return { name: 'extra-argument-setup', apply(ctx) {
+      ctx.get('agents').${member}({ setup(context) {} }, {})
+    } }`)).rejects.toThrow('does not accept trusted setup callbacks')
+    expect(invoked).toBe(1)
+  })
+
+  it('fixes setup reads on trusted factory aliases even when options change between reads', async () => {
+    const harness = await setup()
+    let suppliedSetup: unknown = 'not-called'
+    harness.ctx.provide('factoryAlias', { createAgent(_owner: object, options: { setup?: unknown; label: string }) {
+      suppliedSetup = options.setup
+      return { label: options.label }
+    } })
+    await mount(harness, `return { name: 'changing-setup', apply(ctx) {
+      let reads = 0
+      const options = { label: 'public', get setup() { return reads++ === 0 ? undefined : () => {} } }
+      const value = ctx.get('factoryAlias').createAgent({}, options)
+      if (value.label !== 'public') throw new Error('ordinary options lost')
+    } }`)
+    expect(suppliedSetup).toBeUndefined()
+    await expect(mount(harness, `return { name: 'factory-setup', apply(ctx) {
+      ctx.get('factoryAlias').createAgent({}, { setup(context) {} })
+    } }`)).rejects.toThrow('does not accept trusted setup callbacks')
+  })
+
+  it('guards the calling Agent delivered to a dynamic tool body', async () => {
+    const harness = await setup()
+    await mount(harness, `return { name: 'tool-caller', inject: ['tools'], apply(ctx) {
+      harness.registerTool(ctx, harness.defineTool({
+        name: 'read_caller_context', description: 'reads caller', parameters: {}, ${CONTENT_OUTPUT_CODE}
+        execute(_args, exec) { const context = exec.agent.ctx; return [] },
+      }))
+    } }`)
+    const result = await harness.ctx.tools.execute({ signal: new AbortController().signal,
+      callId: 'guard-caller' as Parameters<typeof harness.ctx.tools.execute>[0]['callId'],
+      name: 'read_caller_context', arguments: {}, agent: { ...AGENT_A, ctx: harness.ctx } })
+    expect(result.isError).toBe(true)
+    expect(text(result)).toContain('returned a cordis Context')
+  })
+
+  it('retains event data, waterfall delegation, and effect cleanup', async () => {
+    const harness = await setup()
+    const observed: string[] = []
+    harness.ctx.provide('callbackRecorder', { append(value: string) { observed.push(value) } })
+    const id = await mount(harness, `return { name: 'callback-positive', apply(ctx) {
+      const recorder = ctx.get('callbackRecorder')
+      ctx.effect(() => () => recorder.append('disposed'))
+      ctx.on('guard/waterfall', (payload, next) => {
+        recorder.append(payload.label)
+        return next()
+      })
+    } }`)
+    harness.ctx.events.waterfall('guard/waterfall', { label: 'observed' }, () => { observed.push('delegated') })
+    await harness.runner.undefine(AGENT_A, id)
+    expect(observed).toEqual(['observed', 'delegated', 'disposed'])
+  })
+
+  it.each([
+    'Object.getOwnPropertyDescriptor(ctx.get("resolvers"), "resolve").get()()',
+    'ctx.get("resolvers").getResolver()()',
+  ])('guards runtime handles returned by a reflected or returned function: %s', async (expression) => {
+    const harness = await setup()
+    harness.ctx.provide('resolvers', {
+      resolve: async () => ({ ctx: harness.ctx }),
+      getResolver: () => async () => ({ ctx: harness.ctx }),
+    })
+    await expect(mount(harness, `return { name: 'resolver-consumer', async apply(ctx) {
+      const handle = await ${expression}
+      const context = handle.ctx
+    } }`)).rejects.toThrow('returned a cordis Context')
+  })
+
+  it('guards runtime handles resolved by an asynchronous service method', async () => {
+    const harness = await setup()
+    harness.ctx.provide('asyncHandle', { read: async () => ({ ctx: harness.ctx }) })
+    await expect(mount(harness, `return { name: 'async-runtime', async apply(ctx) {
+      const handle = await ctx.get('asyncHandle').read()
+      const context = handle.ctx
+    } }`)).rejects.toThrow('returned a cordis Context')
+  })
+
+  it.each(['source.ctx', 'getHandle().ctx', 'listHandles().map(handle => handle.ctx)', 'liveMap', 'liveSet'])(
+    'guards nested runtime values read through %s', async (expression) => {
+      const harness = await setup()
+      harness.ctx.provide('nestedRuntime', { source: { ctx: harness.ctx },
+        getHandle: () => ({ ctx: harness.ctx }), listHandles: () => [{ ctx: harness.ctx }],
+        liveMap: new Map([['owner', harness.ctx]]), liveSet: new Set([harness.ctx]) })
+      const message = await runTouching(harness, `const value = ctx.get('nestedRuntime').${expression}`)
+      expect(message).toMatch(/returned a cordis Context|does not expose live Map or Set state/)
+    })
+
+  it('withholds original-service symbols and descriptors and refuses direct service replacement', async () => {
+    const harness = await setup()
+    await mount(harness, `return { name: 'service-reflection', inject: ['systemPrompt'], apply(ctx) {
+      if (ctx.systemPrompt[Symbol.for('cordis.original')] !== undefined) throw new Error('original service leaked')
+      if (Object.getOwnPropertyDescriptor(ctx.systemPrompt, 'ctx')?.value !== undefined) throw new Error('context descriptor leaked')
+      if (Object.getPrototypeOf(ctx.systemPrompt).constructor.name !== 'Object') throw new Error('service prototype leaked')
+    } }`)
+    expect(harness.ctx.systemPrompt.name).toBe('systemPrompt')
+    const message = await runTouching(harness, 'ctx.get("systemPrompt").ctx = {}')
+    expect(message).toContain('sandbox service "systemPrompt" is read-only')
+    expect(await runTouching(harness, 'Object.getOwnPropertyDescriptor(ctx.get("systemPrompt"), "ctx").get()'))
+      .toContain('returned a cordis Context')
+    expect(await runTouching(harness, 'Object.defineProperty(ctx.get("systemPrompt"), "ctx", { value: {} })'))
+      .toContain('sandbox service "systemPrompt" is read-only')
+    expect(await runTouching(harness, 'delete ctx.get("systemPrompt").ctx'))
+      .toContain('sandbox service "systemPrompt" is read-only')
+  })
   it.each([
     ['ctx.root', 'const c = ctx.root'],
     ['ctx.parent', 'const c = ctx.parent'],

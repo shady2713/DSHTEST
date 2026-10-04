@@ -9,6 +9,29 @@
 
 ```mermaid
 flowchart LR
+  pkg_client_ui_sidebar_browser["client-ui-sidebar-browser"]
+  svc_desktopBrowserControl["ctx.desktopBrowserControl<br/>Explicit Session browser control"]
+  pkg_desktop_host["desktop-host"]
+  pkg_browser_use_web_test["browser-use-web-test"]
+  pkg_tool_fs_search["tool-fs-search"]
+  svc_fsSearch["ctx.fsSearch<br/>Read-only source discovery"]
+  pkg_web_test_policy["web-test-policy"]
+  svc_webTestClock["ctx.webTestClock<br/>Policy validity clock"]
+  svc_webTestScopeSource["ctx.webTestScopeSource<br/>Published project scope"]
+  pkg_web_test["web-test"]
+  pkg_web_test_contracts["web-test-contracts"]
+  svc_webTestContracts["ctx.webTestContracts<br/>Web testing request validation"]
+  pkg_web_test_runtime["web-test-runtime"]
+  pkg_web_test_conversation["web-test-conversation"]
+  svc_webTestRuntime["ctx.webTestRuntime<br/>Web testing durable writer"]
+  svc_webTestRecovery["ctx.webTestRecovery<br/>Read-only generation recovery"]
+  svc_webTestPrototypeOwner["ctx.webTestPrototypeOwner<br/>Bounded prototype dispatch owner"]
+  svc_webTestPolicy["ctx.webTestPolicy<br/>Web testing authorization"]
+  pkg_web_test_models["web-test-models"]
+  svc_webTestModels["ctx.webTestModels<br/>Model route configuration"]
+  pkg_web_test_presentation["web-test-presentation"]
+  svc_webTestConversation["ctx.webTestConversation<br/>Scoped conversation entry"]
+  svc_webTestCommands["ctx.webTestCommands<br/>Shared project command Remote"]
   pkg_hmr["hmr"]
   svc_hmr["ctx.hmr<br/>Serialized module and configuration reloads"]
   pkg_app_boot["app-boot"]
@@ -98,6 +121,10 @@ flowchart LR
   pkg_tool_bash["tool-bash"]
   pkg_hooks_claude_code["hooks-claude-code"]
   pkg_hooks_codex["hooks-codex"]
+  pkg_session_log_export["session-log-export"]
+  svc_sessionLogExports["ctx.sessionLogExports<br/>Authenticated Session archive downloads"]
+  pkg_connection["connection"]
+  pkg_commands["commands"]
   pkg_config_editor["config-editor"]
   svc_configEditor["ctx.configEditor<br/>Profile configuration edits"]
   pkg_settings["settings"]
@@ -161,7 +188,6 @@ flowchart LR
   svc_planMode["ctx.planMode<br/>Plan collaboration state"]
   pkg_agent_preset_registry["agent-preset-registry"]
   svc_agentPresets["ctx.agentPresets<br/>Per-session agent composition"]
-  pkg_commands["commands"]
   svc_commands["ctx.commands<br/>Human command registry"]
   pkg_session_projection["session-projection"]
   svc_sessionProjections["ctx.sessionProjections<br/>Session projection units"]
@@ -253,6 +279,7 @@ flowchart LR
   pkg_web_search_perplexity["web-search-perplexity"]
   pkg_web_search_deepseek["web-search-deepseek"]
   pkg_web_fetch_http["web-fetch-http"]
+  svc_webTest["ctx.webTest<br/>Web testing application metadata"]
   pkg_spill["spill"]
   svc_spillStore["ctx.spillStore<br/>Spill storage seam"]
   pkg_spill_local["spill-local"]
@@ -305,6 +332,7 @@ flowchart LR
   pkg_client_modules --> svc_clientModules
   pkg_client_product_analytics --> svc_productAnalytics
   pkg_client_ui_plugin_manager --> svc_pluginRegistryProbe
+  pkg_client_ui_sidebar_browser --> svc_desktopBrowserControl
   pkg_command_feedback --> svc_sessionFeedback
   pkg_commands --> svc_commands
   pkg_compaction --> svc_compaction
@@ -319,6 +347,7 @@ flowchart LR
   pkg_deepseek_account --> svc_deepseekAccount
   pkg_deepseek_account_platform --> svc_deepseekAccount
   pkg_deepseek_llm_api_extensions --> svc_deepseekLlmApiExtensions
+  pkg_desktop_host --> svc_desktopBrowserControl
   pkg_experimental_agent_team --> svc_agentTeams
   pkg_experimental_api_speech_to_text --> svc_speechController
   pkg_experimental_browser_use_chrome_devtools_mcp --> svc_browserUse
@@ -372,6 +401,7 @@ flowchart LR
   pkg_schedule --> svc_schedule
   pkg_session --> svc_sessions
   pkg_session_log_deepseek --> svc_deepseekLlmApiExtensions
+  pkg_session_log_export --> svc_sessionLogExports
   pkg_session_persistence --> svc_sessionPersistence
   pkg_session_persistence_jsonl --> svc_sessionPersistence
   pkg_session_projection --> svc_sessionProjections
@@ -412,6 +442,7 @@ flowchart LR
   pkg_terminal --> svc_terminals
   pkg_terminal_bash --> svc_terminals
   pkg_token_meter --> svc_tokenMeter
+  pkg_tool_fs_search --> svc_fsSearch
   pkg_tool_subagent --> svc_subagentModelSelection
   pkg_tools --> svc_tools
   pkg_typert_registry --> svc_typert
@@ -422,6 +453,18 @@ flowchart LR
   pkg_web_search_deepseek --> svc_web
   pkg_web_search_exa --> svc_web
   pkg_web_search_perplexity --> svc_web
+  pkg_web_test --> svc_webTest
+  pkg_web_test --> svc_webTestRecovery
+  pkg_web_test --> svc_webTestScopeSource
+  pkg_web_test_contracts --> svc_webTestContracts
+  pkg_web_test_conversation --> svc_webTestCommands
+  pkg_web_test_conversation --> svc_webTestConversation
+  pkg_web_test_models --> svc_webTestModels
+  pkg_web_test_policy --> svc_webTestClock
+  pkg_web_test_policy --> svc_webTestPolicy
+  pkg_web_test_policy --> svc_webTestScopeSource
+  pkg_web_test_runtime --> svc_webTestPrototypeOwner
+  pkg_web_test_runtime --> svc_webTestRuntime
   pkg_webhook --> svc_webhookRuntime
   pkg_workflow --> svc_workflowEngine
   pkg_workflow_ptc --> svc_workflowEngine
@@ -461,11 +504,13 @@ flowchart LR
   svc_deepseekAccount --> pkg_api_account_controller
   svc_deepseekAccount --> pkg_llm_deepseek
   svc_deepseekLlmApiExtensions --> pkg_llm_deepseek
+  svc_desktopBrowserControl --> pkg_browser_use_web_test
   svc_directoryPicker --> pkg_api_workspace_controller
   svc_dynamicCordisRunner --> pkg_tool_cordis
   svc_fileReferences --> pkg_api_session_controller
   svc_fileUploads --> pkg_api_session_controller
   svc_fs --> pkg_tool_fs
+  svc_fsSearch --> pkg_web_test_policy
   svc_hmr --> pkg_app_boot
   svc_invariants --> pkg_agent
   svc_invariants --> pkg_agent_loop
@@ -495,6 +540,8 @@ flowchart LR
   svc_sandboxPolicy --> pkg_bash_sandbox
   svc_sandboxPolicy --> pkg_fs_sandbox
   svc_sandboxPolicy --> pkg_terminal_bash
+  svc_sessionLogExports --> pkg_commands
+  svc_sessionLogExports --> pkg_connection
   svc_sessionPersistence --> pkg_agent_loop
   svc_sessionPersistence --> pkg_hooks_claude_code
   svc_sessionPersistence --> pkg_hooks_codex
@@ -569,6 +616,19 @@ flowchart LR
   svc_webServer --> pkg_client_connection
   svc_webServer --> pkg_client_hmr
   svc_webServer --> pkg_client_modules
+  svc_webTestCommands --> pkg_web_test
+  svc_webTestContracts --> pkg_web_test_conversation
+  svc_webTestContracts --> pkg_web_test_policy
+  svc_webTestContracts --> pkg_web_test_runtime
+  svc_webTestConversation --> pkg_web_test_conversation
+  svc_webTestModels --> pkg_web_test
+  svc_webTestModels --> pkg_web_test_presentation
+  svc_webTestPolicy --> pkg_web_test
+  svc_webTestPolicy --> pkg_web_test_conversation
+  svc_webTestPrototypeOwner --> pkg_web_test
+  svc_webTestRuntime --> pkg_web_test
+  svc_webTestRuntime --> pkg_web_test_conversation
+  svc_webTestScopeSource --> pkg_web_test_policy
   svc_webhookRuntime --> pkg_webhook_github
   svc_workflowEngine --> pkg_tool_ralph
   svc_workflowEngine --> pkg_tool_workflow
@@ -579,6 +639,18 @@ flowchart LR
 
 | ctx 键 | 角色 | 所属包 | 实现 | 直接消费方 | 配套插件 | 说明 |
 | --- | --- | --- | --- | --- | --- | --- |
+| `ctx.desktopBrowserControl` | `seam` | [`client-ui-sidebar-browser`](../packages/client/ui-sidebar-browser) | `desktop-host` | `browser-use-web-test` | - | 可信消费方将既有 Session 绑定至 Main 目标；面向模型的工具仅为已确认的所属关系提交有界命令。 |
+| `ctx.fsSearch` | `service` | [`tool-fs-search`](../packages/fs/tool-fs-search) | - | [`web-test-policy`](../packages/web-test/web-test-policy) | - | 结构化 glob 和 grep 请求使用固定的随包搜索提供方；策略核验一次性进程调用。 |
+| `ctx.webTestClock` | `seam` | [`web-test-policy`](../packages/web-test/web-test-policy) | [`web-test-policy`](../packages/web-test/web-test-policy) | - | - | 系统时钟提供确认过期与流程授权判定所读取的时间。 |
+| `ctx.webTestScopeSource` | `seam` | [`web-test-policy`](../packages/web-test/web-test-policy) | [`web-test`](../packages/web-test/web-test) | [`web-test-policy`](../packages/web-test/web-test-policy) | - | 应用读取已提交的 Runtime 元数据供策略判定，不另建持久工程存储。 |
+| `ctx.webTestContracts` | `service` | [`web-test-contracts`](../packages/web-test/web-test-contracts) | - | [`web-test-runtime`](../packages/web-test/web-test-runtime), [`web-test-policy`](../packages/web-test/web-test-policy), [`web-test-conversation`](../packages/web-test/web-test-conversation) | - | 配置、工程、环境和提交输入共用校验器及带品牌身份。 |
+| `ctx.webTestRuntime` | `service` | [`web-test-runtime`](../packages/web-test/web-test-runtime) | - | [`web-test`](../packages/web-test/web-test), [`web-test-conversation`](../packages/web-test/web-test-conversation) | - | 拥有数据代锁定、工程发布、Session 关联、环境事实和显式 URL 观察。 |
+| `ctx.webTestRecovery` | `service` | [`web-test`](../packages/web-test/web-test) | - | - | - | 负责仅恢复候选的激活，保留暂停、未知及归档记录，不挂载执行器。 |
+| `ctx.webTestPrototypeOwner` | `service` | [`web-test-runtime`](../packages/web-test/web-test-runtime) | - | [`web-test`](../packages/web-test/web-test) | - | 仅为实际拥有该服务的同一个可信 Context 登记有界批次，并记录准入、未知结果及撤权。 |
+| `ctx.webTestPolicy` | `service` | [`web-test-policy`](../packages/web-test/web-test-policy) | - | [`web-test`](../packages/web-test/web-test), [`web-test-conversation`](../packages/web-test/web-test-conversation) | - | 在工具及执行器入口核验声明范围与有界授权；重开事实不授予权限。 |
+| `ctx.webTestModels` | `service` | [`web-test-models`](../packages/web-test/web-test-models) | - | [`web-test`](../packages/web-test/web-test), [`web-test-presentation`](../packages/web-test/web-test-presentation) | - | 验证确切提供方和模型选择，持久保存选择并返回闭集拒绝原因。 |
+| `ctx.webTestConversation` | `service` | [`web-test-conversation`](../packages/web-test/web-test-conversation) | - | [`web-test-conversation`](../packages/web-test/web-test-conversation) | - | 将正式根会话关联至已发布工程，修订变化后撤回受治理工具的可见性。 |
+| `ctx.webTestCommands` | `service` | [`web-test-conversation`](../packages/web-test/web-test-conversation) | - | [`web-test`](../packages/web-test/web-test) | - | 卡片和会话工具共用工程登记、环境声明、只读状态及显式 URL 检查。 |
 | `ctx.hmr` | `core` | [`hmr`](../packages/boot/hmr) | - | [`app-boot`](../packages/boot/app-boot) | - | 负责模块和精确配置监听；应用修改共用其队列，自动重载等待应用文件锁。 |
 | `ctx.pluginRegistryProbe` | `core` | [`client-ui-plugin-manager`](../packages/client/ui-plugin-manager) | - | [`client-ui-plugin-manager`](../packages/client/ui-plugin-manager) | - | 在 Host 上并发比较公共安装源响应；初始安装源推荐由 Client 负责。 |
 | `ctx.pluginManager` | `core` | [`plugin-manager`](../packages/boot/plugin-manager) | - | [`plugin-manager`](../packages/boot/plugin-manager), `ui-settings-plugin-inventory` | - | 与 CLI 共享 profile 包操作，并向 Web 和 Agent 调用方分别报告持久状态与运行状态。 |
@@ -611,6 +683,7 @@ flowchart LR
 | `ctx.typert` | `core` | [`typert-registry`](../packages/typert/registry) | - | [`typert-loader`](../packages/typert/loader), [`api-gateway`](../packages/api/gateway) | - | 插件直接或通过 dsh-typert-loader 注册实时 zod 贡献；API 网关消费调用描述符和提供方，其他运行时消费方则在各自边界查询 schema 与反射元数据。 |
 | `ctx.typertGateway` | `core` | [`api-gateway`](../packages/api/gateway) | - | - | - | 将生成的 Remote 描述符与实时 Cordis 服务关联，解析已注册的身份，并通过共享的 Connection RPC 载体提供一元调用。 |
 | `ctx.sessionPersistence` | `seam` | [`session-persistence`](../packages/session/session-persistence) | [`session-persistence-jsonl`](../packages/session/session-persistence-jsonl) | [`agent-loop`](../packages/core/agent-loop), [`tool-bash`](../packages/shell/tool-bash), [`hooks-claude-code`](../packages/hooks/hooks-claude-code), [`hooks-codex`](../packages/hooks/hooks-codex), [`session-query`](../packages/session-query/session-query), [`session-query-sqlite`](../packages/session-query/session-query-sqlite), [`message-feedback`](../packages/feedback/message-feedback) | - | JSONL backend 把 SessionEvent 词汇持久化为每个 Session 一份产物。 |
+| `ctx.sessionLogExports` | service | [session-log-export](../packages/session-query/session-log-export) | - | connection, [commands](../packages/interaction/commands) | - | 持有已注册的下载路由、读取保护及拆卸时的导出取消。 |
 | `ctx.configEditor` | `core` | [`config-editor`](../packages/boot/config-editor) | - | [`settings`](../packages/settings/settings), [`agent-default-model`](../packages/core/agent-default-model) | - | Persists profile config patches under the application file lock and HMR queue, then reconciles Loader entries. |
 | `ctx.settings` | `core` | [`settings`](../packages/settings/settings) | - | [`api-settings-controller`](../packages/api/settings-controller) | - | Forms project volatile Config fields from active profile entries and delegate validated edits to config-editor. Plugins consume their own Config references. |
 | `ctx.subagentModelSelection` | `core` | [`tool-subagent`](../packages/subagent/tool-subagent) | - | [`tool-subagent`](../packages/subagent/tool-subagent) | - | 拥有默认关闭的设置命名空间；Agent 作用域的委派工具会在组合新顶层 Session 时读取它。 |
@@ -662,6 +735,7 @@ flowchart LR
 | `ctx.inspector` | `core` | `inspector` | - | - | - | 负责 Worker 托管的 CDP target，以及独立于传输的 Host 和 Client observation 与 Cordis tree query API。 |
 | `ctx.jobs` | `seam` | [`jobs`](../packages/jobs/jobs) | [`jobs-local`](../packages/jobs/jobs-local) | [`tool-bash`](../packages/shell/tool-bash), [`tool-pwsh`](../packages/shell/tool-pwsh), [`tool-terminal`](../packages/terminal/tool-terminal), [`tool-subagent`](../packages/subagent/tool-subagent), [`tool-jobs`](../packages/jobs/tool-jobs), [`api-job-controller`](../packages/api/job-controller) | - | 生产方（后台 bash/pwsh、PTY 发送和 subagent 委派）登记正在运行的工作；声明 record 的 job 还为非消费观察者流式提供原始输出；tool-jobs 是面向模型的控制器，用于读取、列出和终止这些工作；jobs-local 是进程本地注册表。 |
 | `ctx.web` | `seam` | [`web`](../packages/web/web) | [`web-search-exa`](../packages/web/web-search-exa), [`web-search-perplexity`](../packages/web/web-search-perplexity), [`web-search-deepseek`](../packages/web/web-search-deepseek), [`web-fetch-http`](../packages/web/web-fetch-http) | [`tool-web`](../packages/web/tool-web) | - | 搜索和抓取提供方注册到同一个 ctx.web seam；tool-web 负责稳定的面向模型名称。 |
+| `ctx.webTest` | `service` | [`web-test`](../packages/web-test/web-test) | - | - | - | 提供配置的身份标签与声明入口元数据；不选择 profile、不改变数据根目录，也不提供入口能力。 |
 | `ctx.spillStore` | `seam` | [`spill`](../packages/spill/spill) | [`spill-local`](../packages/spill/spill-local) | [`spill-policy`](../packages/spill/spill-policy) | - | 后端保存过大的工具文本，并返回面向模型的定位信息和取回提示；spill-policy 是 tools/post-execute 消费方，负责决定何时 spill。 |
 | `ctx.directoryPicker` | `seam` | [`host-directory-picker`](../packages/host/directory-picker) | [`host-directory-picker-native`](../packages/host/directory-picker-native), [`host-directory-picker-browse`](../packages/host/directory-picker-browse) | [`api-workspace-controller`](../packages/api/workspace-controller) | - | 带判别标记的交互能力：原生后端在 Host 显示设备上打开一个操作系统选择器，浏览后端为应用内浏览器提供列表与创建原语；双端后端通过其浏览器侧填充 ui-workspace 目录流程的 slot（不通过协议发布）。 |
 | `ctx.webServer` | `core` | [`host-webserver`](../packages/host/webserver) | - | [`client-connection`](../packages/client/connection), [`client-modules`](../packages/client/modules), [`client-hmr`](../packages/client/hmr) | - | 普通的 node:http 载体：具名路由注册表、索引转换 tap，以及静态 dist 回退；Web 传输插件注册自己的路由。 |

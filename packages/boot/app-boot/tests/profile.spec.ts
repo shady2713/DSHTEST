@@ -190,7 +190,7 @@ it('composes current files from profile data and retains launch overlay and tele
   writeFileSync(join(home, PROFILE_PATCH_FILENAME), '- id: session-telemetry-otel\n  disabled: false\n')
   const context = {
     name: 'test', dir, patchPath, installAnchor, home, cwd: home,
-    startedBundles: ['base'],
+    startedBundles: ['base'], applicationPatches: [],
     overlays: [{ id: 'session-telemetry-otel', disabled: false }], telemetryDisabledEnv: 'false',
   }
   expect(composeEntries([readProfilePatches('test', context)])[0]?.disabled).toBe(true)
@@ -354,6 +354,26 @@ describe('loadProfile', () => {
     loadProfile('t', 'web', anchor, home)
     expect(readProfileManifest('t', resolveProfileDir('web', home)).dsh?.profile?.bundles)
       .toEqual([...PROFILE_TEMPLATES.web?.bundles ?? []])
+  })
+
+  it('refuses a profile another application owns unless it registered it in this home', () => {
+    const anchor = stageInstallation({ 'bundle-a': { patch: '[]\n' } })
+    const home = tmp()
+    // The name is not a shipped template, so nothing may create it under an
+    // ambient home: booting it there would run that application on this home.
+    expect(PROFILE_TEMPLATES['web-test']).toBeUndefined()
+    expect(() => loadProfile('t', 'web-test', anchor, home))
+      .toThrow(/profile "web-test" belongs to the Web testing application/)
+    expect(() => loadProfile('t', 'web-test', anchor, home))
+      .toThrow(/Harness home .* that holds no "web-test" profile/)
+    expect(existsSync(resolveProfileDir('web-test', home))).toBe(false)
+
+    // The owning application registers the profile in its own data root, and that
+    // registered profile loads there.
+    const owned = tmp()
+    initProfile(resolveProfileDir('web-test', owned), ['bundle-a'])
+    expect(loadProfile('t', 'web-test', anchor, owned).layers.map(layer => layer.packageName))
+      .toEqual(['bundle-a'])
   })
 
   it('normalizes only the exact installation-owned headless bundle tuple', () => {

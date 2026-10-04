@@ -1,7 +1,7 @@
 /**
  * The model-facing `grep` tool: search file contents with a ripgrep regular
- * expression. Execution spawns the packaged ripgrep binary
- * (`@vscode/ripgrep`) directly through the subprocess seam with a plain argv
+ * expression. The read-only search provider runs the packaged ripgrep binary
+ * (`@vscode/ripgrep`) through the subprocess seam with a plain argv
  * vector using a fixed line-oriented `rg --json` command so file path, line
  * number, and line text parse without colon-splitting ambiguity — this module
  * owns the model-facing schema, argument validation, argv construction,
@@ -17,7 +17,7 @@ import type { GenericCallView, SearchResultView, ToolResult } from '@deepseek-ai
 import type { RetainedItems } from '@deepseek-ai/dsh-output-retention'
 import type { SpillRef } from '@deepseek-ai/dsh-spill'
 import type { GrepMatch } from './search-core.ts'
-import { SearchError, previewLine, retainGrepMatches, runRipgrep, toWorkdirRelative, trySaveFormattedResult } from './search-core.ts'
+import { SearchError, previewLine, retainGrepMatches, toWorkdirRelative, trySaveFormattedResult } from './search-core.ts'
 import { grepSearchMeta, searchViewFromMeta } from './presentation.ts'
 import { acceptedDirectCallValue } from './direct-call.ts'
 
@@ -268,7 +268,7 @@ export function presentGrepResult(
  * Register the `grep` tool and its scope-aware system-prompt guidance.
  *
  * @param ctx - the plugin context; registrations are effects scoped to it, and
- *   execution uses its `subprocess` service.
+ *   execution requires its `fsSearch` service.
  * @param caps - the deployment's resolved grep caps (plugin config after defaulting).
  */
 export function applyGrepTool(ctx: Context, caps: GrepToolCaps): void {
@@ -320,7 +320,10 @@ export function applyGrepTool(ctx: Context, caps: GrepToolCaps): void {
     },
     async execute(args, exec) {
       const input = parseGrepArgs(args)
-      const run = await runRipgrep(ctx, exec, 'grep', buildGrepCommand(input), caps.rawOutputMaxBytes, caps.graceMs, caps.stderrMaxBytes)
+      const run = await ctx.fsSearch.search({ kind: 'grep', input }, {
+        signal: exec.signal,
+        ...exec.agent === undefined ? {} : { session: exec.agent.session },
+      }, caps)
       if (run.noMatches) return { matches: [] }
 
       const all: GrepMatch[] = []

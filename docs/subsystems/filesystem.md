@@ -464,6 +464,25 @@ Types: [SandboxExecutionPolicy](sandbox.md)
 
 Source: [`packages/fs/fs/src/index.ts`](../../packages/fs/fs/src/index.ts)
 
+<a id="ctxfssearch--readonlysearch-abstract-seam"></a>
+
+### `ctx.fsSearch` — `ReadonlySearch` (abstract seam)
+
+Service Definition for structured file discovery and content search.
+
+```ts cordis-catalog
+/**
+ * Execute one read-only search with fixed process options.
+ * @param request - Validated glob or grep input.
+ * @param execution - Session identity, workspace, and cancellation.
+ * @param caps - Resolved capture and termination limits.
+ * @returns Complete raw search output and its workspace.
+ */
+abstract search(request: ReadonlySearchRequest, execution: SearchExecution, caps: SearchProcessCaps): Promise<RipgrepRun>
+```
+
+Source: [`packages/fs/tool-fs-search/src/search-service.ts`](../../packages/fs/tool-fs-search/src/search-service.ts)
+
 <a id="fs-events"></a>
 
 ### `fs/*` events

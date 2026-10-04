@@ -7,6 +7,29 @@ A service can be a core spine service, a swappable capability seam, a bundle/com
 
 ```mermaid
 flowchart LR
+  pkg_client_ui_sidebar_browser["client-ui-sidebar-browser"]
+  svc_desktopBrowserControl["ctx.desktopBrowserControl<br/>Explicit Session browser control"]
+  pkg_desktop_host["desktop-host"]
+  pkg_browser_use_web_test["browser-use-web-test"]
+  pkg_tool_fs_search["tool-fs-search"]
+  svc_fsSearch["ctx.fsSearch<br/>Read-only source discovery"]
+  pkg_web_test_policy["web-test-policy"]
+  svc_webTestClock["ctx.webTestClock<br/>Policy validity clock"]
+  svc_webTestScopeSource["ctx.webTestScopeSource<br/>Published project scope"]
+  pkg_web_test["web-test"]
+  pkg_web_test_contracts["web-test-contracts"]
+  svc_webTestContracts["ctx.webTestContracts<br/>Web testing request validation"]
+  pkg_web_test_runtime["web-test-runtime"]
+  pkg_web_test_conversation["web-test-conversation"]
+  svc_webTestRuntime["ctx.webTestRuntime<br/>Web testing durable writer"]
+  svc_webTestRecovery["ctx.webTestRecovery<br/>Read-only generation recovery"]
+  svc_webTestPrototypeOwner["ctx.webTestPrototypeOwner<br/>Bounded prototype dispatch owner"]
+  svc_webTestPolicy["ctx.webTestPolicy<br/>Web testing authorization"]
+  pkg_web_test_models["web-test-models"]
+  svc_webTestModels["ctx.webTestModels<br/>Model route configuration"]
+  pkg_web_test_presentation["web-test-presentation"]
+  svc_webTestConversation["ctx.webTestConversation<br/>Scoped conversation entry"]
+  svc_webTestCommands["ctx.webTestCommands<br/>Shared project command Remote"]
   pkg_hmr["hmr"]
   svc_hmr["ctx.hmr<br/>Serialized module and configuration reloads"]
   pkg_app_boot["app-boot"]
@@ -96,6 +119,10 @@ flowchart LR
   pkg_tool_bash["tool-bash"]
   pkg_hooks_claude_code["hooks-claude-code"]
   pkg_hooks_codex["hooks-codex"]
+  pkg_session_log_export["session-log-export"]
+  svc_sessionLogExports["ctx.sessionLogExports<br/>Authenticated Session archive downloads"]
+  pkg_connection["connection"]
+  pkg_commands["commands"]
   pkg_config_editor["config-editor"]
   svc_configEditor["ctx.configEditor<br/>Profile configuration edits"]
   pkg_settings["settings"]
@@ -159,7 +186,6 @@ flowchart LR
   svc_planMode["ctx.planMode<br/>Plan collaboration state"]
   pkg_agent_preset_registry["agent-preset-registry"]
   svc_agentPresets["ctx.agentPresets<br/>Per-session agent composition"]
-  pkg_commands["commands"]
   svc_commands["ctx.commands<br/>Human command registry"]
   pkg_session_projection["session-projection"]
   svc_sessionProjections["ctx.sessionProjections<br/>Session projection units"]
@@ -251,6 +277,7 @@ flowchart LR
   pkg_web_search_perplexity["web-search-perplexity"]
   pkg_web_search_deepseek["web-search-deepseek"]
   pkg_web_fetch_http["web-fetch-http"]
+  svc_webTest["ctx.webTest<br/>Web testing application metadata"]
   pkg_spill["spill"]
   svc_spillStore["ctx.spillStore<br/>Spill storage seam"]
   pkg_spill_local["spill-local"]
@@ -303,6 +330,7 @@ flowchart LR
   pkg_client_modules --> svc_clientModules
   pkg_client_product_analytics --> svc_productAnalytics
   pkg_client_ui_plugin_manager --> svc_pluginRegistryProbe
+  pkg_client_ui_sidebar_browser --> svc_desktopBrowserControl
   pkg_command_feedback --> svc_sessionFeedback
   pkg_commands --> svc_commands
   pkg_compaction --> svc_compaction
@@ -317,6 +345,7 @@ flowchart LR
   pkg_deepseek_account --> svc_deepseekAccount
   pkg_deepseek_account_platform --> svc_deepseekAccount
   pkg_deepseek_llm_api_extensions --> svc_deepseekLlmApiExtensions
+  pkg_desktop_host --> svc_desktopBrowserControl
   pkg_experimental_agent_team --> svc_agentTeams
   pkg_experimental_api_speech_to_text --> svc_speechController
   pkg_experimental_browser_use_chrome_devtools_mcp --> svc_browserUse
@@ -370,6 +399,7 @@ flowchart LR
   pkg_schedule --> svc_schedule
   pkg_session --> svc_sessions
   pkg_session_log_deepseek --> svc_deepseekLlmApiExtensions
+  pkg_session_log_export --> svc_sessionLogExports
   pkg_session_persistence --> svc_sessionPersistence
   pkg_session_persistence_jsonl --> svc_sessionPersistence
   pkg_session_projection --> svc_sessionProjections
@@ -410,6 +440,7 @@ flowchart LR
   pkg_terminal --> svc_terminals
   pkg_terminal_bash --> svc_terminals
   pkg_token_meter --> svc_tokenMeter
+  pkg_tool_fs_search --> svc_fsSearch
   pkg_tool_subagent --> svc_subagentModelSelection
   pkg_tools --> svc_tools
   pkg_typert_registry --> svc_typert
@@ -420,6 +451,18 @@ flowchart LR
   pkg_web_search_deepseek --> svc_web
   pkg_web_search_exa --> svc_web
   pkg_web_search_perplexity --> svc_web
+  pkg_web_test --> svc_webTest
+  pkg_web_test --> svc_webTestRecovery
+  pkg_web_test --> svc_webTestScopeSource
+  pkg_web_test_contracts --> svc_webTestContracts
+  pkg_web_test_conversation --> svc_webTestCommands
+  pkg_web_test_conversation --> svc_webTestConversation
+  pkg_web_test_models --> svc_webTestModels
+  pkg_web_test_policy --> svc_webTestClock
+  pkg_web_test_policy --> svc_webTestPolicy
+  pkg_web_test_policy --> svc_webTestScopeSource
+  pkg_web_test_runtime --> svc_webTestPrototypeOwner
+  pkg_web_test_runtime --> svc_webTestRuntime
   pkg_webhook --> svc_webhookRuntime
   pkg_workflow --> svc_workflowEngine
   pkg_workflow_ptc --> svc_workflowEngine
@@ -459,11 +502,13 @@ flowchart LR
   svc_deepseekAccount --> pkg_api_account_controller
   svc_deepseekAccount --> pkg_llm_deepseek
   svc_deepseekLlmApiExtensions --> pkg_llm_deepseek
+  svc_desktopBrowserControl --> pkg_browser_use_web_test
   svc_directoryPicker --> pkg_api_workspace_controller
   svc_dynamicCordisRunner --> pkg_tool_cordis
   svc_fileReferences --> pkg_api_session_controller
   svc_fileUploads --> pkg_api_session_controller
   svc_fs --> pkg_tool_fs
+  svc_fsSearch --> pkg_web_test_policy
   svc_hmr --> pkg_app_boot
   svc_invariants --> pkg_agent
   svc_invariants --> pkg_agent_loop
@@ -493,6 +538,8 @@ flowchart LR
   svc_sandboxPolicy --> pkg_bash_sandbox
   svc_sandboxPolicy --> pkg_fs_sandbox
   svc_sandboxPolicy --> pkg_terminal_bash
+  svc_sessionLogExports --> pkg_commands
+  svc_sessionLogExports --> pkg_connection
   svc_sessionPersistence --> pkg_agent_loop
   svc_sessionPersistence --> pkg_hooks_claude_code
   svc_sessionPersistence --> pkg_hooks_codex
@@ -567,6 +614,19 @@ flowchart LR
   svc_webServer --> pkg_client_connection
   svc_webServer --> pkg_client_hmr
   svc_webServer --> pkg_client_modules
+  svc_webTestCommands --> pkg_web_test
+  svc_webTestContracts --> pkg_web_test_conversation
+  svc_webTestContracts --> pkg_web_test_policy
+  svc_webTestContracts --> pkg_web_test_runtime
+  svc_webTestConversation --> pkg_web_test_conversation
+  svc_webTestModels --> pkg_web_test
+  svc_webTestModels --> pkg_web_test_presentation
+  svc_webTestPolicy --> pkg_web_test
+  svc_webTestPolicy --> pkg_web_test_conversation
+  svc_webTestPrototypeOwner --> pkg_web_test
+  svc_webTestRuntime --> pkg_web_test
+  svc_webTestRuntime --> pkg_web_test_conversation
+  svc_webTestScopeSource --> pkg_web_test_policy
   svc_webhookRuntime --> pkg_webhook_github
   svc_workflowEngine --> pkg_tool_ralph
   svc_workflowEngine --> pkg_tool_workflow
@@ -577,6 +637,18 @@ flowchart LR
 
 | ctx key | Role | Owner | Implementations | Direct consumers | Companion plugins | Note |
 | --- | --- | --- | --- | --- | --- | --- |
+| `ctx.desktopBrowserControl` | `seam` | [`client-ui-sidebar-browser`](../packages/client/ui-sidebar-browser) | `desktop-host` | `browser-use-web-test` | - | Trusted consumers bind existing Sessions to Main targets; model-facing tools submit bounded commands for acknowledged ownership. |
+| `ctx.fsSearch` | `service` | [`tool-fs-search`](../packages/fs/tool-fs-search) | - | [`web-test-policy`](../packages/web-test/web-test-policy) | - | Structured glob and grep requests use a fixed packaged search provider; the policy validates the one-time process invocation. |
+| `ctx.webTestClock` | `seam` | [`web-test-policy`](../packages/web-test/web-test-policy) | [`web-test-policy`](../packages/web-test/web-test-policy) | - | - | The system clock supplies the time read for confirmation expiry and flow authorization. |
+| `ctx.webTestScopeSource` | `seam` | [`web-test-policy`](../packages/web-test/web-test-policy) | [`web-test`](../packages/web-test/web-test) | [`web-test-policy`](../packages/web-test/web-test-policy) | - | The application reads committed Runtime metadata for policy decisions without a second durable project store. |
+| `ctx.webTestContracts` | `service` | [`web-test-contracts`](../packages/web-test/web-test-contracts) | - | [`web-test-runtime`](../packages/web-test/web-test-runtime), [`web-test-policy`](../packages/web-test/web-test-policy), [`web-test-conversation`](../packages/web-test/web-test-conversation) | - | Configuration, project, environment and submission inputs share the same validators and branded identities. |
+| `ctx.webTestRuntime` | `service` | [`web-test-runtime`](../packages/web-test/web-test-runtime) | - | [`web-test`](../packages/web-test/web-test), [`web-test-conversation`](../packages/web-test/web-test-conversation) | - | Owns generation locking, project publication, Session association, environment facts and explicit URL observations. |
+| `ctx.webTestRecovery` | `service` | [`web-test`](../packages/web-test/web-test) | - | - | - | Owns recovery-only candidate activation and retains paused, unknown and archived records without mounting an executor. |
+| `ctx.webTestPrototypeOwner` | `service` | [`web-test-runtime`](../packages/web-test/web-test-runtime) | - | [`web-test`](../packages/web-test/web-test) | - | Registers bounded runs and records admissions, unknown outcomes and revocation only for its exact trusted owning Context. |
+| `ctx.webTestPolicy` | `service` | [`web-test-policy`](../packages/web-test/web-test-policy) | - | [`web-test`](../packages/web-test/web-test), [`web-test-conversation`](../packages/web-test/web-test-conversation) | - | Checks declared scope and bounded grants at tool and executor entry points; reopening facts grants no permission. |
+| `ctx.webTestModels` | `service` | [`web-test-models`](../packages/web-test/web-test-models) | - | [`web-test`](../packages/web-test/web-test), [`web-test-presentation`](../packages/web-test/web-test-presentation) | - | Verifies exact provider and model choices, persists selections, and returns closed refusal reasons. |
+| `ctx.webTestConversation` | `service` | [`web-test-conversation`](../packages/web-test/web-test-conversation) | - | [`web-test-conversation`](../packages/web-test/web-test-conversation) | - | Associates official root conversations with published projects and withdraws governed tool visibility after revisions change. |
+| `ctx.webTestCommands` | `service` | [`web-test-conversation`](../packages/web-test/web-test-conversation) | - | [`web-test`](../packages/web-test/web-test) | - | Cards and conversation tools share project registration, environment declaration, read-only status and explicit URL checking. |
 | `ctx.hmr` | `core` | [`hmr`](../packages/boot/hmr) | - | [`app-boot`](../packages/boot/app-boot) | - | Owns module and exact configuration watchers; application mutations share its queue and automatic reloads await the application file lock. |
 | `ctx.pluginRegistryProbe` | `core` | [`client-ui-plugin-manager`](../packages/client/ui-plugin-manager) | - | [`client-ui-plugin-manager`](../packages/client/ui-plugin-manager) | - | Races public registry responses on the Host; the Client owns the initial registry recommendation. |
 | `ctx.pluginManager` | `core` | [`plugin-manager`](../packages/boot/plugin-manager) | - | [`plugin-manager`](../packages/boot/plugin-manager), `ui-settings-plugin-inventory` | - | Shares profile package operations with the CLI and reports persisted and running state to Web and agent callers. |
@@ -609,6 +681,7 @@ flowchart LR
 | `ctx.typert` | `core` | [`typert-registry`](../packages/typert/registry) | - | [`typert-loader`](../packages/typert/loader), [`api-gateway`](../packages/api/gateway) | - | Plugins register live zod contributions directly or through dsh-typert-loader; the API gateway consumes invocation descriptors and providers, while other runtime consumers query schemas and reflection metadata at their own edges. |
 | `ctx.typertGateway` | `core` | [`api-gateway`](../packages/api/gateway) | - | - | - | Associates generated Remote descriptors with live Cordis services, resolves registered identities, and exposes unary calls through the shared Connection RPC carrier. |
 | `ctx.sessionPersistence` | `seam` | [`session-persistence`](../packages/session/session-persistence) | [`session-persistence-jsonl`](../packages/session/session-persistence-jsonl) | [`agent-loop`](../packages/core/agent-loop), [`tool-bash`](../packages/shell/tool-bash), [`hooks-claude-code`](../packages/hooks/hooks-claude-code), [`hooks-codex`](../packages/hooks/hooks-codex), [`session-query`](../packages/session-query/session-query), [`session-query-sqlite`](../packages/session-query/session-query-sqlite), [`message-feedback`](../packages/feedback/message-feedback) | - | The JSONL backend persists the SessionEvent vocabulary as one artifact per Session. |
+| `ctx.sessionLogExports` | `service` | [`session-log-export`](../packages/session-query/session-log-export) | - | `connection`, [`commands`](../packages/interaction/commands) | - | Owns the registered download route, read protection and exporter cancellation during teardown. |
 | `ctx.configEditor` | `core` | [`config-editor`](../packages/boot/config-editor) | - | [`settings`](../packages/settings/settings), [`agent-default-model`](../packages/core/agent-default-model) | - | Persists profile config patches under the application file lock and HMR queue, then reconciles Loader entries. |
 | `ctx.settings` | `core` | [`settings`](../packages/settings/settings) | - | [`api-settings-controller`](../packages/api/settings-controller) | - | Forms project volatile Config fields from active profile entries and delegate validated edits to config-editor. Plugins consume their own Config references. |
 | `ctx.subagentModelSelection` | `core` | [`tool-subagent`](../packages/subagent/tool-subagent) | - | [`tool-subagent`](../packages/subagent/tool-subagent) | - | Owns the default-off settings namespace that Agent-scoped delegation tools sample when composing a new top-level Session. |
@@ -660,6 +733,7 @@ flowchart LR
 | `ctx.inspector` | `core` | `inspector` | - | - | - | Owns the Worker-hosted CDP target and the transport-independent Host and Client observation and Cordis-tree query API. |
 | `ctx.jobs` | `seam` | [`jobs`](../packages/jobs/jobs) | [`jobs-local`](../packages/jobs/jobs-local) | [`tool-bash`](../packages/shell/tool-bash), [`tool-pwsh`](../packages/shell/tool-pwsh), [`tool-terminal`](../packages/terminal/tool-terminal), [`tool-subagent`](../packages/subagent/tool-subagent), [`tool-jobs`](../packages/jobs/tool-jobs), [`api-job-controller`](../packages/api/job-controller) | - | Producers (background bash/pwsh, PTY sends, and subagent delegations) register running work; record-declaring jobs additionally stream raw output for non-consuming observers; tool-jobs is the model-facing controller that reads, lists, and kills it; jobs-local is the process-local registry. |
 | `ctx.web` | `seam` | [`web`](../packages/web/web) | [`web-search-exa`](../packages/web/web-search-exa), [`web-search-perplexity`](../packages/web/web-search-perplexity), [`web-search-deepseek`](../packages/web/web-search-deepseek), [`web-fetch-http`](../packages/web/web-fetch-http) | [`tool-web`](../packages/web/tool-web) | - | Search and fetch providers register into one ctx.web seam; tool-web owns the stable model-facing names. |
+| `ctx.webTest` | `service` | [`web-test`](../packages/web-test/web-test) | - | - | - | Exposes configured identity labels and declared entry metadata; it does not select a profile, change the data root, or provide entry capabilities. |
 | `ctx.spillStore` | `seam` | [`spill`](../packages/spill/spill) | [`spill-local`](../packages/spill/spill-local) | [`spill-policy`](../packages/spill/spill-policy) | - | The backend saves oversized tool text and returns a model-facing locator plus retrieval hint; spill-policy is the tools/post-execute consumer that decides when to spill. |
 | `ctx.directoryPicker` | `seam` | [`host-directory-picker`](../packages/host/directory-picker) | [`host-directory-picker-native`](../packages/host/directory-picker-native), [`host-directory-picker-browse`](../packages/host/directory-picker-browse) | [`api-workspace-controller`](../packages/api/workspace-controller) | - | Discriminated interaction capability: the native backend opens one OS chooser on the host display, the browse backend serves listing/creation primitives for the in-app browser; dual-face backends fill ui-workspace directory-flow slots from their browser halves (no wire advertisement). |
 | `ctx.webServer` | `core` | [`host-webserver`](../packages/host/webserver) | - | [`client-connection`](../packages/client/connection), [`client-modules`](../packages/client/modules), [`client-hmr`](../packages/client/hmr) | - | Plain node:http carrier: named-route registry, index transform taps, and the static dist fallback; web-transport plugins register their own routes. |

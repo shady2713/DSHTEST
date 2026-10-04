@@ -6,6 +6,8 @@ Query vocabulary over the live-preferred logical session corpus. The [Service De
 
 Source: [`packages/session-query/session-query/src/types.ts`](../../packages/session-query/session-query/src/types.ts)
 
+[Session log export](../../packages/session-query/session-log-export/README.md) owns authenticated archive downloads, file read protection, and cancellation during teardown.
+
 ## Logical records
 
 `SessionRecord` is returned by the cross-corpus list. It exposes source availability independently from the cloned live-preferred header. `SessionEventRecord` is a lightweight raw-log projection; classification uses the same `foldSurface()` transitions as model-history derivation.
@@ -369,6 +371,14 @@ type SessionQueryErrorCode =
 ## Cordis API
 
 Generated from source by `scripts/gen-cordis-catalog.ts` (verified fresh by `pnpm run verify-cordis-catalog` in doc-sync; regenerate with `pnpm run gen-cordis-catalog`) — the language sides differ only in locale-specific paired document paths. Signature blocks use a `ts cordis-catalog` fence and keep the original source JSDoc; dispatch modes are defined in the [primer](../cordis-primer.md#dispatch-modes), and the framework-inherited `ctx` API lives in [cordis-api/inherited.md](../cordis-api/inherited.md).
+
+<a id="ctxsessionlogexports--sessionlogexports"></a>
+
+### `ctx.sessionLogExports` — `SessionLogExports`
+
+Owns the download route and drains its protected file readers before teardown.
+
+Source: [`packages/session-query/session-log-export/src/index.ts`](../../packages/session-query/session-log-export/src/index.ts)
 
 <a id="ctxsessionquery--sessionqueryengine-abstract-seam"></a>
 

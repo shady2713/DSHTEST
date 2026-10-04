@@ -1,13 +1,18 @@
 /** Durable attachment storage seam (`ctx.attachments`). @module @deepseek-ai/dsh-attachment */
 
 import { Context, Service } from '@deepseek-ai/cordis'
-import { admitEncodedFile as admitFileInput, admitEncodedImages } from './admission.ts'
+import { admitEncodedFile as admitFileInput, admitEncodedImages, stageEncodedFile as stageFileInput } from './admission.ts'
 import { AttachmentError, isAttachmentError as matchesAttachmentError } from './error.ts'
 import type {
   AdmittedPromptContentPart,
   AttachmentAdmissionPart,
   EncodedFileAttachment,
   FileAttachmentRef,
+  FileDeletionResult,
+  FileReadLease,
+  FileReferenceOwner,
+  FileStageTicket,
+  StagedFileAttachment,
   ImageAttachmentLimits,
   ImageAttachmentRef,
   ImageRequestTarget,
@@ -18,10 +23,10 @@ import type {
   StoredImageAttachment,
 } from './types.ts'
 
-export { AttachmentId, ImageVariantId } from './brand.ts'
+export { AttachmentId, FileReferenceOwnerId, FileStageTicket, ImageVariantId } from './brand.ts'
 export { AttachmentError, isAttachmentError, isImageAdmissionError } from './error.ts'
 export type { AttachmentErrorCode, ImageAdmissionErrorCode } from './error.ts'
-export { admitEncodedFile, admitEncodedImages } from './admission.ts'
+export { admitEncodedFile, admitEncodedImages, stageEncodedFile } from './admission.ts'
 export { longEdgeDimensions, requestImageDimensions } from './request-projection.ts'
 export type { ProjectedDimensions } from './request-projection.ts'
 export type {
@@ -31,6 +36,10 @@ export type {
   EncodedFileAttachment,
   EncodedImageAttachment,
   FileAttachmentRef,
+  FileDeletionResult,
+  FileReadLease,
+  FileReferenceOwner,
+  StagedFileAttachment,
   ImageAttachmentLimits,
   ImageAttachmentRef,
   ImageRequestTarget,
@@ -204,6 +213,98 @@ export abstract class AttachmentStore extends Service {
     void input
     return Promise.reject(new AttachmentError(
       'The mounted attachment provider cannot stream verbatim files.',
+      'ATTACHMENT_FILES_UNSUPPORTED',
+    ))
+  }
+
+  /**
+   * Store bytes with durable staging protection before publishing a producer reference.
+   * @param input - exact bytes and optional display name.
+   * @returns a file and a ticket retained across restarts until explicit release.
+   */
+  stageFile(input: SaveFileAttachment): Promise<StagedFileAttachment> {
+    void input
+    return this.fileRetentionUnsupported()
+  }
+
+  /**
+   * Validate a canonical base64 upload and preserve its staging ticket.
+   * @param input - encoded file bytes and optional display name.
+   * @returns the stored file and durable staging protection.
+   */
+  stageEncodedFile(input: EncodedFileAttachment): Promise<StagedFileAttachment> {
+    return stageFileInput(this, input)
+  }
+
+  /**
+   * Store streamed bytes with durable staging protection.
+   * @param input - bounded chunks, optional cancellation, and display name.
+   * @returns a file and a ticket retained across restarts until explicit release.
+   */
+  stageFileStream(input: SaveFileStreamAttachment): Promise<StagedFileAttachment> {
+    void input
+    return this.fileRetentionUnsupported()
+  }
+
+  /**
+   * Durably add references before their owner publishes them. Repeated additions are idempotent.
+   * Failed publication retains these references; release only after the owner is durably removed.
+   * @param owner - independent durable producer identity.
+   * @param refs - files the producer is about to publish.
+   * @returns completion after every reference is durably retained.
+   */
+  commitFileReferences(owner: FileReferenceOwner, refs: readonly FileAttachmentRef[]): Promise<void> {
+    void owner
+    void refs
+    return this.fileRetentionUnsupported()
+  }
+
+  /**
+   * Release a producer only after its published references are durably inaccessible.
+   * @param owner - producer whose complete reference set may be released.
+   * @returns completion after release is durable; an absent owner is idempotent.
+   */
+  releaseFileReferences(owner: FileReferenceOwner): Promise<void> {
+    void owner
+    return this.fileRetentionUnsupported()
+  }
+
+  /**
+   * Release staging protection after a durable owner commit or abandoned upload.
+   * @param ticket - provider-issued staging ticket.
+   * @returns completion after release is durable; an absent ticket is idempotent.
+   */
+  releaseFileStage(ticket: FileStageTicket): Promise<void> {
+    void ticket
+    return this.fileRetentionUnsupported()
+  }
+
+  /**
+   * Protect the complete file set before producing reader or export output.
+   * @param refs - exact references needed by the operation.
+   * @param signal - cancellation releases protection and prevents acquisition.
+   * @returns a lease held until explicit release or cancellation.
+   */
+  acquireFileReadLease(refs: readonly FileAttachmentRef[], signal?: AbortSignal): Promise<FileReadLease> {
+    void refs
+    signal?.throwIfAborted()
+    return this.fileRetentionUnsupported()
+  }
+
+  /**
+   * Delete one managed alias after durable owners, stages, and readers permit it.
+   * Images and files with unknown historical references remain retained.
+   * @param ref - exact managed file reference.
+   * @returns the deletion admission outcome; no result claims free disk space.
+   */
+  deleteFile(ref: FileAttachmentRef): Promise<FileDeletionResult> {
+    void ref
+    return this.fileRetentionUnsupported()
+  }
+
+  private fileRetentionUnsupported<T>(): Promise<T> {
+    return Promise.reject(new AttachmentError(
+      'The mounted attachment provider cannot manage file references.',
       'ATTACHMENT_FILES_UNSUPPORTED',
     ))
   }

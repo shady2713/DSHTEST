@@ -1,0 +1,49 @@
+# Bilingual-pair consistency record for README.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write packages/web-test/web-test-contracts/README.md
+/:
+  en: 67915eab0eca3d7e
+  zh: eb20156dfa111a8c
+/deepseek-ai-dsh-web-test-contracts:
+  en: 754f55b66414a813
+  zh: 2eb58ac8eb5f20b0
+/deepseek-ai-dsh-web-test-contracts/summary:
+  en: f191ce918f647079
+  zh: a51f93eea13c96dc
+/deepseek-ai-dsh-web-test-contracts/table-of-contents:
+  en: d152484eb41ac6b4
+  zh: f7984b8f97d2797a
+/deepseek-ai-dsh-web-test-contracts/use-this-package:
+  en: 36a0a722ffa3a3cf
+  zh: 6ac22ee5d9c2b96e
+/deepseek-ai-dsh-web-test-contracts/use-this-package/remote-methods:
+  en: 84d9c79b172e7d63
+  zh: 0eebc1fd75530085
+/deepseek-ai-dsh-web-test-contracts/use-this-package/what-one-declaration-carries:
+  en: 4e448de912da5f44
+  zh: 5fb1de13ad63c82d
+/deepseek-ai-dsh-web-test-contracts/use-this-package/identities-and-revisions:
+  en: 8ba8d0631702a428
+  zh: b7146a0a30caf116
+/deepseek-ai-dsh-web-test-contracts/use-this-package/failures:
+  en: 9391ff1deed1a30e
+  zh: 23f8735ce9a5a088
+/deepseek-ai-dsh-web-test-contracts/understand-the-implementation:
+  en: 7122ce7f43d387a4
+  zh: 2a0d6bf70f76dc35
+/deepseek-ai-dsh-web-test-contracts/further-exploration:
+  en: fb5264fa56e2496f
+  zh: 405287d053d8b9e8
+/deepseek-ai-dsh-web-test-contracts/model-experience:
+  en: a7f030ada39c693f
+  zh: 0c593f73662b56d6
+/deepseek-ai-dsh-web-test-contracts/model-experience/kv-cache-effect:
+  en: 38dc3ec5a3d2703d
+  zh: 0851874241f77160
+/deepseek-ai-dsh-web-test-contracts/known-limitations-and-deferred-work:
+  en: dfd6859a456b737e
+  zh: d49faac9342cb170
+/deepseek-ai-dsh-web-test-contracts/known-limitations-and-deferred-work/dev-note:
+  en: 4cd88b92e69392d5
+  zh: 2b575b27fb4af4f3

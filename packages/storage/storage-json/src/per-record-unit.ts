@@ -32,11 +32,22 @@ import type { Dirent } from 'node:fs'
 import { StorageError } from '@deepseek-ai/dsh-storage'
 import type { KvUnit, KvUnitDescriptor } from '@deepseek-ai/dsh-storage'
 import { writeAtomic } from './atomic.ts'
+import type { AtomicWritePolicy } from './atomic.ts'
 import { parseRecord, serializeRecord } from './format.ts'
 import type { UnitState } from './format.ts'
 
 /** Keys become path segments in this layout; this set is path-safe on every OS. */
 const SAFE_KEY_RE = /^[a-zA-Z0-9_-]+$/
+
+/**
+ * Document reads in flight at once while loading a unit. Tables load one after
+ * another, so this is the whole unit's budget rather than one table's: a single
+ * unbounded burst outran the process handle budget on Windows, and each
+ * resulting `EMFILE` read looked like an absent record, so a table of 10,000
+ * records silently lost 1,811 of them. Batching per table alone is not enough,
+ * because the table directories themselves are read concurrently.
+ */
+const READ_BATCH_SIZE = 64
 
 /**
  * Open one `per-record`-layout unit under `root`: the unit directory is
@@ -45,6 +56,7 @@ const SAFE_KEY_RE = /^[a-zA-Z0-9_-]+$/
  * @param descriptor - Static identity and shape of the unit.
  * @param root - Absolute backend root directory.
  * @param onClose - Backend callback releasing the unit's open-slot.
+ * @param policy - Windows rename retry cadence for every document write.
  * @returns the opened unit.
  */
 // oxlint-disable-next-line typescript/require-await -- async keeps both openers' call sites uniform
@@ -52,21 +64,25 @@ export async function openPerRecordUnit(
   descriptor: KvUnitDescriptor,
   root: string,
   onClose: () => void,
+  policy: AtomicWritePolicy,
 ): Promise<KvUnit> {
-  return new PerRecordJsonUnit(descriptor, join(root, descriptor.name), onClose)
+  return new PerRecordJsonUnit(descriptor, join(root, descriptor.name), onClose, policy)
 }
 
 /**
  * Read every record document under the unit directory: each declared table's
  * `<key>.json` files plus `global.json`. A missing directory is the empty
  * unit (materialization defers to the first write); a foreign document
- * (missing, malformed, or stamped with an unaccepted version) reads as an absent
- * record, per the per-record contract.
+ * (missing, unreadable, malformed, or stamped with an unaccepted version)
+ * reads as an absent record, per the per-record contract. Table directories
+ * load one at a time under a unit-wide read budget, and running out of file
+ * handles fails the load instead of masquerading as absence.
  * @param descriptor - Static identity and shape of the unit.
  * @param dir - Absolute unit directory path.
+ * @param policy - Windows rename retry cadence for every document write.
  * @returns the authoritative state reconstructed from the tree.
  */
-async function loadPerRecordState(descriptor: KvUnitDescriptor, dir: string): Promise<UnitState> {
+async function loadPerRecordState(descriptor: KvUnitDescriptor, dir: string, policy: AtomicWritePolicy): Promise<UnitState> {
   const versions = acceptedStamps(descriptor)
   const state: UnitState = {
     version: descriptor.version,
@@ -83,22 +99,40 @@ async function loadPerRecordState(descriptor: KvUnitDescriptor, dir: string): Pr
   }
   const hasNewDocuments = entries === undefined
     ? false
-    : (await Promise.all(entries.map(async (entry) => {
-      if (entry.isDirectory()) {
-        const records = state.tables.get(entry.name)
-        if (records !== undefined) {
-          return loadTableRecords(records, versions, join(dir, entry.name))
-        }
-      }
-      if (entry.name === 'global.json' && descriptor.hasGlobal) {
-        const global = await readRecord(join(dir, entry.name), versions)
-        if (global !== undefined) state.global = global
-        return true
-      }
-      return false
-    }))).some(Boolean)
-  if (!hasNewDocuments) await bootstrapLegacyUnit(descriptor, dir, state)
+    : await loadEntriesSequentially(entries, descriptor, dir, state, versions)
+  if (!hasNewDocuments) await bootstrapLegacyUnit(descriptor, dir, state, policy)
   return state
+}
+
+/**
+ * Load every table directory and the global document one at a time, so the
+ * concurrent reads of a whole unit stay at {@link READ_BATCH_SIZE} rather than
+ * multiplying by the table count. Returns whether the unit tree held any
+ * document path, which is what suppresses the legacy bootstrap.
+ */
+async function loadEntriesSequentially(
+  entries: readonly Dirent[],
+  descriptor: KvUnitDescriptor,
+  dir: string,
+  state: UnitState,
+  versions: readonly number[],
+): Promise<boolean> {
+  let hasNewDocuments = false
+  for (const entry of entries) {
+    if (entry.isDirectory()) {
+      const records = state.tables.get(entry.name)
+      if (records !== undefined) {
+        hasNewDocuments = await loadTableRecords(records, versions, join(dir, entry.name)) || hasNewDocuments
+      }
+      continue
+    }
+    if (entry.name === 'global.json' && descriptor.hasGlobal) {
+      const global = await readRecord(join(dir, entry.name), versions)
+      if (global !== undefined) state.global = global
+      hasNewDocuments = true
+    }
+  }
+  return hasNewDocuments
 }
 
 /** The version stamps this unit reads as its own: current plus declared compatible versions. */
@@ -119,8 +153,14 @@ function acceptedStamps(descriptor: KvUnitDescriptor): readonly number[] {
  * @param descriptor - Static identity and shape of the unit.
  * @param dir - The per-record unit directory (`<root>/<name>`).
  * @param state - The empty tree state; bootstrapped records are added.
+ * @param policy - Windows rename retry cadence for every document write.
  */
-async function bootstrapLegacyUnit(descriptor: KvUnitDescriptor, dir: string, state: UnitState): Promise<void> {
+async function bootstrapLegacyUnit(
+  descriptor: KvUnitDescriptor,
+  dir: string,
+  state: UnitState,
+  policy: AtomicWritePolicy,
+): Promise<void> {
   const legacyPath = join(dirname(dir), `${descriptor.name}.json`)
   let text: string | undefined
   try {
@@ -150,40 +190,59 @@ async function bootstrapLegacyUnit(descriptor: KvUnitDescriptor, dir: string, st
     for (const [key, value] of Object.entries(records)) {
       const path = join(dir, table, `${key}.json`)
       await mkdir(dirname(path), { recursive: true, mode: 0o700 })
-      await writeAtomic(path, serializeRecord(descriptor.version, value))
+      await writeAtomic(path, serializeRecord(descriptor.version, value), policy)
       target.set(key, value)
     }
   }
 }
 
 /**
- * Read one declared table's record documents into `records`.
+ * Read one declared table's record documents into `records`, {@link READ_BATCH_SIZE}
+ * at a time.
  * @returns whether the directory contains any `.json` document path,
  * independently of key safety, readability, or stored version.
  */
 async function loadTableRecords(records: Map<string, unknown>, versions: readonly number[], dir: string): Promise<boolean> {
   const files = await readdir(dir, { withFileTypes: true })
   const hasDocuments = files.some(file => file.name.endsWith('.json'))
-  const loaded = await Promise.all(files.map(async (file) => {
-    if (!file.name.endsWith('.json')) return
-    const key = file.name.slice(0, -'.json'.length)
-    if (!SAFE_KEY_RE.test(key)) return
-    const record = await readRecord(join(dir, file.name), versions)
-    if (record !== undefined) return [key, record] as const
-  }))
-  for (const record of loaded) {
-    if (record !== undefined) records.set(...record)
+  const documents = files.filter(file => file.name.endsWith('.json')
+    && SAFE_KEY_RE.test(file.name.slice(0, -'.json'.length)))
+  for (let start = 0; start < documents.length; start += READ_BATCH_SIZE) {
+    const batch = await Promise.all(documents.slice(start, start + READ_BATCH_SIZE).map(async (file) => {
+      const record = await readRecord(join(dir, file.name), versions)
+      if (record === undefined) return undefined
+      return [file.name.slice(0, -'.json'.length), record] as const
+    }))
+    for (const record of batch) {
+      if (record !== undefined) records.set(...record)
+    }
   }
   return hasDocuments
 }
 
-/** Read one record document; a foreign (unreadable or stale) one reads as absent. */
+/**
+ * Read one record document. A document that is missing, is not a file, cannot
+ * be read, is malformed, or is stamped with an unaccepted version is FOREIGN and
+ * reads as absent, so one bad document does not reject the unit — the contract
+ * the session-projection cache domain relies on.
+ *
+ * Running out of file handles is the one exception. `EMFILE`/`ENFILE` describe
+ * the process, not the document, so treating them as absence is how a 10,000
+ * record table lost 1,811 committed records without a word. The unit-wide read
+ * budget above is what keeps this from firing during an ordinary load; a genuine
+ * exhaustion fails the load, because at that point the unit's contents are
+ * unknown rather than foreign.
+ */
 async function readRecord(path: string, versions: readonly number[]): Promise<unknown> {
+  let text: string
   try {
-    return parseRecord(await readFile(path, 'utf8'), versions)
-  } catch {
+    text = await readFile(path, 'utf8')
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    if (code === 'EMFILE' || code === 'ENFILE') throw error
     return undefined
   }
+  return parseRecord(text, versions)
 }
 
 /**
@@ -201,12 +260,13 @@ export class PerRecordJsonUnit implements KvUnit {
     private readonly descriptor: KvUnitDescriptor,
     private readonly dir: string,
     private readonly onClose: () => void,
+    private readonly policy: AtomicWritePolicy,
   ) {}
 
   /** Re-read the tree: the directory is the authoritative state. */
   async loadAll(): Promise<{ tables: Record<string, Record<string, unknown>>; global: unknown }> {
     this.assertOpen()
-    const state = await loadPerRecordState(this.descriptor, this.dir)
+    const state = await loadPerRecordState(this.descriptor, this.dir, this.policy)
     const tables: Record<string, Record<string, unknown>> = {}
     for (const [table, records] of state.tables) {
       tables[table] = Object.fromEntries(records)
@@ -284,7 +344,7 @@ export class PerRecordJsonUnit implements KvUnit {
   private writeDocument(path: string, value: unknown): Promise<void> {
     return (async () => {
       await mkdir(dirname(path), { recursive: true, mode: 0o700 })
-      await writeAtomic(path, serializeRecord(this.descriptor.version, value))
+      await writeAtomic(path, serializeRecord(this.descriptor.version, value), this.policy)
     })()
   }
 

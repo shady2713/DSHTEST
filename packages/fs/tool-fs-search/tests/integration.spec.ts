@@ -13,7 +13,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, rm, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, parse } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import { ToolCallId } from '@deepseek-ai/dsh-llm'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
@@ -68,7 +68,33 @@ describe('search tools over the real subprocess service + the packaged rg', () =
   })
 
   afterEach(async () => {
+    await ctx.fiber.dispose()
     await rm(dir, { recursive: true, force: true })
+  })
+
+  it('applies literal protected-subtree exclusions before both file discovery and content search', async () => {
+    const privateRoot = join(dir, 'private[!]')
+    await mkdir(privateRoot)
+    await writeFile(join(privateRoot, 'secret.ts'), 'forbiddenNeedle\n')
+    const runtime = ctx.subprocess
+    const spawn = runtime.spawn.bind(runtime)
+    runtime.spawn = (spec) => {
+      const owner = ToolFsSearch.consumeReadonlySearchSpawn(spec)
+      if (owner === undefined) throw new Error('search has no provider authority')
+      expect(ToolFsSearch.consumeReadonlySearchSpawn(spec)).toBeUndefined()
+      const elsewhere = process.platform === 'win32'
+        ? `${parse(dir).root.toUpperCase() === 'Z:\\' ? 'Y' : 'Z'}:\\elsewhere`
+        : '/elsewhere'
+      return spawn(owner.restrict(dir, [privateRoot, join(dir, '..'), join(dir, '..', 'neighbor'), elsewhere]))
+    }
+    const glob = await call('glob', { pattern: '*.ts' }, agent())
+    expect(glob.isError).toBe(false)
+    expect(text(glob)).not.toContain('secret.ts')
+    expect(text(glob)).toContain('alpha.ts')
+    // An explicit target exercises the same restrictions after the argv terminator.
+    const grep = await call('grep', { pattern: 'forbiddenNeedle', path: dir }, agent())
+    expect(grep.isError).toBe(false)
+    expect(text(grep)).toBe('No matches found')
   })
 
   describe('glob', () => {

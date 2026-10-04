@@ -317,7 +317,16 @@ vi.mock('../src/login-shell-environment.ts', async importOriginal => ({
   readDesktopLoginShellEnvironment: harness.loginShell,
 }))
 vi.mock('../src/runtime-tree.ts', () => ({ readDesktopRuntime: () => ({ release: { version: '1.0.0' } }) }))
-vi.mock('../src/paths.ts', () => ({ resolveDesktopPaths: () => ({ profile: 'desktop-test-profile' }) }))
+// The shell reads its install before any Electron path is resolved and hands the
+// resolved identity to its Host, so this double answers both with the official
+// product: Electron keeps its own `userData` and the Host composes no layer.
+vi.mock('../src/paths.ts', () => ({
+  resolveDesktopPaths: () => ({ profile: 'desktop-test-profile' }),
+  resolveDesktopApplication: () => ({
+    applicationId: 'dsh-desktop', home: '/home', paths: { profile: 'desktop-test-profile' }, host: undefined,
+  }),
+  desktopHostEnvironment: () => ({}),
+}))
 vi.mock('../src/project-manager.ts', () => ({
   DesktopProjectManager: class {
     readonly applyRelease = harness.applyRelease

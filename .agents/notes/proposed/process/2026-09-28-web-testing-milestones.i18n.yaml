@@ -1,0 +1,22 @@
+# Bilingual-pair consistency record for 2026-09-28-web-testing-milestones.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/proposed/process/2026-09-28-web-testing-milestones.md
+/agent-note-development-milestones-and-validation-plan:
+  en: 082383bc622ad578
+  zh: 4dfda9d18e727609
+/agent-note-development-milestones-and-validation-plan/problem:
+  en: c3f7f655d9e59306
+  zh: 610688c97c93ecfd
+/agent-note-development-milestones-and-validation-plan/proposal:
+  en: 32606938822d6774
+  zh: a040575f83464a22
+/agent-note-development-milestones-and-validation-plan/alternatives-considered:
+  en: 5e31e99598720933
+  zh: 5d563206b977f6c8
+/agent-note-development-milestones-and-validation-plan/acceptance-criteria:
+  en: 56c0d1be6694e2f3
+  zh: c695d31384deec16
+/agent-note-development-milestones-and-validation-plan/risks:
+  en: 6c73e2d151cf316a
+  zh: 279503b8b9553c17

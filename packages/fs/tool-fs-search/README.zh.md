@@ -27,6 +27,8 @@ kind: "package-reference"
 
 在 `ctx.subprocess` 后端之后挂载工具；无需宿主 `rg` 安装，也无需文件系统提供方。模型随后获得按修改时间排序的文件发现与按行组织的内容搜索，两者都有界并受超时防护。
 
+在 Agent 预设内，搜索行必须声明 `isolate: { fsSearch: true }`。其 Provider 归该预设修订所有；共享 Host 搜索服务不能替代此声明。预设 registry 会拒绝泄漏到共享服务域的搜索 Provider。
+
 ### 最小组合
 
 一个子进程后端，然后是工具；spill 后端为可选，使达到上限的结果可完整恢复。
@@ -88,7 +90,7 @@ Node 部署在受支持的 macOS、Linux 与 Windows 目标上获得 `@vscode/ri
 
 ### 设计理念
 
-本地工作区发现天然是由进程支持的 `rg` 工作流；如果把搜索放到 `ctx.fs` 上，就会迫使每个文件系统后端扩展搜索 API。subprocess seam 负责 spawn 执行、进程树终止、环境清理与有界输出捕获；本包负责 schema、参数校验、argv 构造、解析、保留、格式化结果 spill 与超时声明。工具绝不暴露后台任务——只有在 `rg` 退出、被协作式超时终止、被中止或失败后，调用才会返回。
+`ReadonlySearch` 是 Service Definition，`PackagedReadonlySearch` 是 Provider，`glob`/`grep` 是 `ctx.fsSearch` 的 Consumer。请求选择 glob 或正则表达式及路径，不能提供二进制、argv、环境或预处理器。Provider 负责固定 ripgrep 参数、删除继承环境，以及卸载时取消操作；subprocess 服务负责进程树终止与有界捕获。工具等待搜索结束后返回，不暴露后台任务。直接挂载 `applyGlobTool` 或 `applyGrepTool` 的调用方必须提供 `fsSearch`；挂载本包会一同安装其 Provider 和 Consumer。
 
 ### 源码地图
 
@@ -98,12 +100,13 @@ Node 部署在受支持的 macOS、Linux 与 Windows 目标上获得 `@vscode/ri
 | [`src/glob.ts`](src/glob.ts) | `glob` schema、argv、解析、内联采样、格式化 |
 | [`src/grep.ts`](src/grep.ts) | `grep` schema、argv、`--json` 解析、预览保留、格式化 |
 | [`src/search-core.ts`](src/search-core.ts) | 共享 spawn 助手、`SEARCH_*` 错误、spill 交接、工作目录相对展示 |
+| [`src/search-service.ts`](src/search-service.ts) | 只读 Search Definition、打包的 Provider、会话身份与生命周期取消 |
 | [`src/presentation.ts`](src/presentation.ts) | 搜索卡片元数据投影 |
 | [`src/direct-call.ts`](src/direct-call.ts) | spill 后处理的直接调用结果接受 |
 
 ### 搜索如何运行
 
-每次调用解析打包二进制（`@vscode/ripgrep`，或 pkg 单文件运行时中可执行程序的 `-rg` 伴随文件），前置 `--no-config`，使宿主的 `RIPGREP_CONFIG_PATH` 无法向不受约束的 spawn 注入 `--pre` 预处理器，并把每个模型控制的值作为普通 argv 元素传入——不存在 shell 层，因此不涉及 shell 引号处理。collect 模式预算限制完整 stdout 与 stderr 尾部；lossy stdout 读取以 `SEARCH_RAW_OUTPUT_OVERFLOW` 失败，而不是解析静默不完整的流。工具从不读取原始 spill 路径。
+每次调用解析打包二进制（`@vscode/ripgrep`，或 pkg 单文件运行时中可执行程序的 `-rg` 伴随文件），前置 `--no-config` 与 `--no-follow`，把模型值作为普通 argv 元素传入。环境 tombstone 删除继承条目；Windows 保留 `SystemRoot`，`LC_ALL` 固定为 `C`。私有 WeakMap 为 Provider 创建的 spawn 身份记录一次同步 backstop 调用权限；复制、重复或已取消的 spec 均没有搜索权限。Web 测试策略检查调用 Session 和规范目标，在执行时扣除一次动作，并在打开文件前限制 argv。collect 预算限制完整 stdout 与 stderr；lossy stdout 以 `SEARCH_RAW_OUTPUT_OVERFLOW` 失败。调用方或 Provider 取消时报告 `SEARCH_ABORTED`，包括 Provider outcome 拒绝的情况。工具从不读取原始 spill 路径。
 
 ### 两类预算、两类产物
 

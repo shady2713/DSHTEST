@@ -580,7 +580,8 @@ export function sandboxDefineTool(options: unknown): ToolDefinition {
       } : {},
     },
     async execute(args: unknown, exec: unknown): Promise<JsonValue> {
-      return cloneJson(await rawExecute(args, exec), 'harness.defineTool execute result') as JsonValue
+      const guardedExec = guardedRuntimeValue(exec, 'tool execution', (error) => { throw error }, new WeakMap())
+      return cloneJson(await rawExecute(args, guardedExec), 'harness.defineTool execute result') as JsonValue
     },
   })
   const parameters = { ...tool.parameters, ...normalized.rootAnnotations }
@@ -679,21 +680,111 @@ function denyContext(value: unknown, service: string, reportFailure: (error: Err
 
 /**
  * Wrap an injected service so its methods forward to the real instance but
- * their return values pass through {@link denyContext}. Non-function members
- * (plain data) pass through as-is; a returned Promise is guarded on resolve.
+ * their returned values and runtime handles remain guarded. Framework symbols,
+ * reflective instance state, and live Map/Set containers are not exposed.
  */
-function guardedService(service: object, name: string, reportFailure: (error: Error) => void): unknown {
-  return new Proxy(service, {
-    get(target, prop) {
-      const value: unknown = Reflect.get(target, prop, target)
-      if (typeof value !== 'function') return denyContext(value, name, reportFailure)
-      return (...args: unknown[]): unknown => {
-        const result: unknown = Reflect.apply(value, target, args)
-        if (result instanceof Promise) return result.then(v => denyContext(v, name, reportFailure))
-        return denyContext(result, name, reportFailure)
-      }
+function guardedService(service: object, name: string, reportFailure: (error: Error) => void,
+  seen = new WeakMap<object, object>()): unknown {
+  const existing = seen.get(service)
+  if (existing !== undefined) return existing
+  const guardedValue = (input: unknown, member?: string): unknown =>
+    guardedRuntimeValue(input, name, reportFailure, seen, service, member)
+  const facade = new Proxy({}, {
+    get(_target, prop) {
+      if (typeof prop !== 'string') return undefined
+      return guardedValue(Reflect.get(service, prop, service), prop)
+    },
+    has: (_target, prop) => typeof prop === 'string' && Reflect.has(service, prop),
+    ownKeys: () => Reflect.ownKeys(service).filter(prop => typeof prop === 'string'),
+    getOwnPropertyDescriptor(_target, prop) {
+      if (typeof prop !== 'string') return undefined
+      const descriptor = Reflect.getOwnPropertyDescriptor(service, prop)
+      if (descriptor === undefined) return undefined
+      return { configurable: true, enumerable: descriptor.enumerable === true,
+        get: () => guardedValue(Reflect.get(service, prop, service), prop) }
+    },
+    set(_target, prop) {
+      return rejectGuard(reportFailure, `sandbox service "${name}" is read-only; cannot assign "${String(prop)}"`)
+    },
+    defineProperty(_target, prop) {
+      return rejectGuard(reportFailure, `sandbox service "${name}" is read-only; cannot define "${String(prop)}"`)
+    },
+    deleteProperty(_target, prop) {
+      return rejectGuard(reportFailure, `sandbox service "${name}" is read-only; cannot delete "${String(prop)}"`)
     },
   })
+  seen.set(service, facade)
+  return facade
+}
+
+/** Guard values delivered by service returns, event arguments, and callback receivers. */
+function guardedRuntimeValue(input: unknown, name: string, reportFailure: (error: Error) => void,
+  seen: WeakMap<object, object>, receiver?: object, member?: string): unknown {
+  const value = denyContext(input, name, reportFailure)
+  const guard = (item: unknown): unknown => guardedRuntimeValue(item, name, reportFailure, seen, receiver)
+  if (typeof value === 'function') {
+    return (...args: unknown[]): unknown => {
+      if (member === 'create' || member === 'resume' || member === 'createAgent') {
+        const indexes = member === 'resume' ? [0, 1] : [member === 'createAgent' ? 1 : 0]
+        for (const index of indexes) {
+          const options = args[index]
+          if (options !== null && typeof options === 'object' && Reflect.get(options, 'setup') !== undefined) {
+            return rejectGuard(reportFailure, `sandbox service "${name}".${member} does not accept trusted setup callbacks; compose through your own plugin ctx`)
+          }
+          if (options !== null && typeof options === 'object') {
+            // A fresh target fixes setup reads even when the input uses getters or a Proxy.
+            // Other option values, including signals and opaque authorities, retain identity.
+            args[index] = new Proxy({}, {
+              get(_target, key) {
+                if (key === 'setup') return undefined
+                const value: unknown = Reflect.get(options, key, options)
+                return value
+              },
+              has: (_target, key) => key !== 'setup' && Reflect.has(options, key),
+              ownKeys: () => Reflect.ownKeys(options).filter(key => key !== 'setup'),
+              getOwnPropertyDescriptor(_target, key) {
+                if (key === 'setup') return undefined
+                const descriptor = Reflect.getOwnPropertyDescriptor(options, key)
+                return descriptor === undefined ? undefined : { configurable: true, enumerable: descriptor.enumerable === true,
+                  get: (): unknown => {
+                    const value: unknown = Reflect.get(options, key, options)
+                    return value
+                  } }
+              },
+            })
+          }
+        }
+      }
+      return guard(Reflect.apply(value, receiver,
+        args.map(arg => typeof arg === 'function'
+          ? guardedCallback(arg as (...args: unknown[]) => unknown, name, reportFailure) : arg)))
+    }
+  }
+  if (value === null || typeof value !== 'object') return value
+  if (value instanceof Promise) return value.then(guard)
+  if (ArrayBuffer.isView(value) || value instanceof ArrayBuffer || value instanceof Date) return value
+  if (value instanceof Map || value instanceof Set) {
+    return rejectGuard(reportFailure, `sandbox service "${name}" does not expose live Map or Set state; use its public methods`)
+  }
+  const found = seen.get(value)
+  if (found !== undefined) return found
+  if (Array.isArray(value)) {
+    const copy: unknown[] = []
+    seen.set(value, copy)
+    for (const item of value) copy.push(guard(item))
+    return copy
+  }
+  return guardedService(value, name, reportFailure, seen)
+}
+
+/** Callback entry points must not deliver the dispatcher's Agent, Fiber, or service Context. */
+function guardedCallback(callback: (...args: unknown[]) => unknown, name: string,
+  reportFailure: (error: Error) => void): (...args: unknown[]) => unknown {
+  return function (this: unknown, ...args: unknown[]): unknown {
+    const seen = new WeakMap<object, object>()
+    const guard = (value: unknown): unknown => guardedRuntimeValue(value, name, reportFailure, seen)
+    return Reflect.apply(callback, guard(this), args.map(guard))
+  }
 }
 /* jscpd:ignore-end */
 
@@ -761,7 +852,9 @@ function sandboxContext(ctx: Context, reportFailure: (error: Error) => void): Co
         return (...args: unknown[]): unknown => {
           if (TIMER_VERBS.has(prop) && !declared.has('timer')) return denyRead('timer')
           const method = ctx[prop as keyof Context]
-          return Reflect.apply(method as (...a: unknown[]) => unknown, ctx, args)
+          const guardedArgs = args.map(arg => typeof arg === 'function'
+            ? guardedCallback(arg as (...args: unknown[]) => unknown, `ctx.${prop}`, reportFailure) : arg)
+          return Reflect.apply(method as (...a: unknown[]) => unknown, ctx, guardedArgs)
         }
       }
       return readService(prop, true)

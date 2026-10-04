@@ -3313,7 +3313,7 @@ SHA-256: `7d54a5a5e629e2e7783bfac72683bcc5e969e9f43426b9289826aaf294ff6344`
 
 SHA-256: `f19bee84bf3d20904553cdcd57465232bc1c2a194f54c4d195292ba0487223a6`
 
-来源：[`packages/attachment/attachment/src/types.ts:39`](../packages/attachment/attachment/src/types.ts)
+来源：[`packages/attachment/attachment/src/types.ts:68`](../packages/attachment/attachment/src/types.ts)
 
 | 属性 | 存在性 | 类型 |
 |---|---|---|
@@ -3564,7 +3564,7 @@ SHA-256: `a6b41f5bede8094d7bf635be5d69b1bd7a25e006ca9cf9415bceb9322f1a7feb`
 
 SHA-256: `b0b0eb1b16490f6bee135b2377e8f8c39227974c799ad7d49ff418af23ecbc35`
 
-来源：[`packages/attachment/attachment/src/types.ts:11`](../packages/attachment/attachment/src/types.ts)
+来源：[`packages/attachment/attachment/src/types.ts:40`](../packages/attachment/attachment/src/types.ts)
 
 | 属性 | 存在性 | 类型 |
 |---|---|---|
@@ -3604,7 +3604,7 @@ SHA-256: `12d5808fac1996b9b3c2afa806e03022252ba2d7b88f835862ae1896591f60c7`
 
 SHA-256: `2f1e6a7ebace43d727ae138ddcd352eb3813960009e5805b8c5ac84300c97716`
 
-来源：[`packages/attachment/attachment/src/types.ts:8`](../packages/attachment/attachment/src/types.ts)
+来源：[`packages/attachment/attachment/src/types.ts:37`](../packages/attachment/attachment/src/types.ts)
 
 以下类型之一：
 
@@ -6013,7 +6013,7 @@ SHA-256: `a5d80b5a2f3a6bbaf8f0334126632b78f94d8346122c68e8122ea89906d63d26`
 
 SHA-256: `0f46153645c297846a3fad3911636659ca4717a5e7d71c9f50bffacd312115ef`
 
-来源：[`packages/attachment/attachment/src/types.ts:28`](../packages/attachment/attachment/src/types.ts)
+来源：[`packages/attachment/attachment/src/types.ts:57`](../packages/attachment/attachment/src/types.ts)
 
 | 属性 | 存在性 | 类型 |
 |---|---|---|

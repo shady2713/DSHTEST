@@ -1,0 +1,2 @@
+- id: web-test
+  name: ../../lib/index.js

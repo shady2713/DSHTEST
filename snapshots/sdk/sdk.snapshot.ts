@@ -350,9 +350,13 @@ async function fixtureFiles(scenario: CorpusScenario): Promise<string[]> {
 async function hydrateReplayFixtures(scenario: CorpusScenario, cwd: string): Promise<string[]> {
   const root = join(cwd, '.replay-fixtures')
   await mkdir(root, { recursive: true })
+  // The token only ever appears inside a JSON string value, so the runtime cwd joins the file
+  // JSON-escaped. A Windows path's backslashes are invalid JSON escapes on their own, and the
+  // replay plugin then refuses the session header it cannot parse.
+  const escapedCwd = JSON.stringify(cwd).slice(1, -1)
   return Promise.all((await fixtureFiles(scenario)).map(async (source) => {
     const destination = join(root, basename(source))
-    await writeFile(destination, (await readFile(source, 'utf8')).replaceAll('{{cwd}}', cwd))
+    await writeFile(destination, (await readFile(source, 'utf8')).replaceAll('{{cwd}}', escapedCwd))
     return destination
   }))
 }

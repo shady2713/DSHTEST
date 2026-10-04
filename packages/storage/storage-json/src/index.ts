@@ -13,6 +13,8 @@ import { StorageError, UNIT_NAME_RE, storageBackendServiceKey } from '@deepseek-
 import type { KvFacet, KvUnit, KvUnitDescriptor, StorageBackend } from '@deepseek-ai/dsh-storage'
 import { openSingleUnit } from './single-unit.ts'
 import { openPerRecordUnit } from './per-record-unit.ts'
+import { resolveWritePolicy, SHIPPED_WINDOWS_RENAME_DELAYS_MS } from './atomic.ts'
+import type { AtomicWritePolicy } from './atomic.ts'
 
 /** Cordis plugin name. */
 export const name = 'storage-json'
@@ -28,11 +30,21 @@ export const inject = ['storage']
 export interface Config {
   /** Directory holding one `<unit>.json` file (or `<unit>/` tree) per unit. */
   root: string
+  /**
+   * Delay in milliseconds before each retry of an atomic publish that Windows
+   * refused with `EACCES`, `EBUSY`, or `EPERM` (default `[20, 40, 80, 160]`).
+   * The list's length is the retry budget, so four entries buy four retries and
+   * at most five rename attempts. Lengthen it for a medium where a virus
+   * scanner, indexer, or backup agent holds unit files for a while; empty
+   * disables the retry.
+   */
+  windowsRenameDelaysMs?: number[]
 }
 
 /** Config schema. */
 export const Config: z<Config> = z.object({
   root: z.string().required(),
+  windowsRenameDelaysMs: z.array(z.natural()).default([...SHIPPED_WINDOWS_RENAME_DELAYS_MS]),
 })
 
 /** JSON backend: owns the file-tree root and serves the `kv` facet. */
@@ -43,7 +55,15 @@ export class JsonStorageBackend implements StorageBackend {
   private readonly opening = new Map<string, Promise<KvUnit>>()
   private closed = false
 
-  constructor(private readonly root: string) {}
+  /**
+   * @param root - Directory holding the unit files.
+   * @param policy - Windows rename retry cadence. `apply` passes the configured
+   * budget; a direct caller that omits it gets {@link SHIPPED_WINDOWS_RENAME_DELAYS_MS}.
+   */
+  constructor(
+    private readonly root: string,
+    private readonly policy: AtomicWritePolicy = resolveWritePolicy(SHIPPED_WINDOWS_RENAME_DELAYS_MS),
+  ) {}
 
   readonly kv: KvFacet = {
     // The body up to the first await runs synchronously, so the opening-slot
@@ -67,8 +87,8 @@ export class JsonStorageBackend implements StorageBackend {
     // path convention under the shared root.
     const onClose = () => this.open.delete(descriptor.name)
     const unit = descriptor.layout === 'per-record'
-      ? await openPerRecordUnit(descriptor, this.root, onClose)
-      : await openSingleUnit(descriptor, this.root, onClose)
+      ? await openPerRecordUnit(descriptor, this.root, onClose, this.policy)
+      : await openSingleUnit(descriptor, this.root, onClose, this.policy)
     if (this.closed) {
       // The backend closed while this open was in flight: do not hand out a
       // live unit past close().
@@ -107,7 +127,8 @@ function validateDescriptor(descriptor: KvUnitDescriptor): void {
  * @param config - Validated configuration.
  */
 export function apply(ctx: Context, config: Config) {
-  const backend = new JsonStorageBackend(config.root)
+  // schemastery's .default() fills the retry budget after validation.
+  const backend = new JsonStorageBackend(config.root, resolveWritePolicy(config.windowsRenameDelaysMs as number[]))
   ctx.effect(() => {
     const unregister = ctx.storage.backend.register('json', backend)
     return async () => {

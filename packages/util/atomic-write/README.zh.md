@@ -38,6 +38,23 @@ await writeFileAtomic('/home/u/.dsh/cordis.patch.yml', text, { mode: 0o600 })
 
 父目录会按需创建，读取方只会观察到旧内容或完整的新内容。在 Windows 上，报告为 `EACCES`、`EBUSY` 或 `EPERM` 的瞬时替换干扰会在有界时间内重试；任何剩余失败都会移除临时文件，并保持目标文件不变。
 
+### 用自己的节奏重试 rename
+
+当写入流程在 rename 前后还需要别的工作时——例如对临时文件及其父目录做 `fsync`，而 `writeFileAtomic` 不做这件事——可以单独使用那次重试：`renameAtomicTemp`。它只 rename 一份你已经写好的临时文件，不重试其他任何步骤；调用方若自定义 `wait` 接入点，也就自行决定退避何时真正执行。
+
+```ts
+import { renameAtomicTemp } from '@deepseek-ai/dsh-atomic-write'
+import type { AtomicRenamePolicy } from '@deepseek-ai/dsh-atomic-write'
+
+declare const temp: string
+declare const target: string
+declare const policy: AtomicRenamePolicy
+
+await renameAtomicTemp(temp, target, policy)
+```
+
+延迟列表即重试预算：其长度 N 提供 N 次重试，因此最多 N+1 次尝试，空列表则只尝试一次。`writeFileAtomic` 声明一份固定的八项列表，其延迟从 20 ms 翻倍到 200 ms 上限；知道干扰其文件的软件会占用多久的流程则自行声明。预算耗尽时报告最后一次拒绝，之后移除临时文件是调用方的工作。
+
 ### 协调写入方
 
 对于单靠原子提交无法保证安全的读-渲染-提交循环，请在操作期间持有写锁：
@@ -76,12 +93,12 @@ Windows 在无法观察到锁时会对 `EPERM` 重试一次，因为持锁方可
 
 | 文件 | 职责 |
 |---|---|
-| [`src/index.ts`](src/index.ts) | `writeFileAtomic` 与 `withFileLock`，即本包的全部接口 |
+| [`src/index.ts`](src/index.ts) | `writeFileAtomic`、`renameAtomicTemp` 与 `withFileLock`，即本包的全部接口 |
 | — | 不发布运行时不变式伴生入口；这个纯文件系统原语不维护事件流或可变运行时数据；其替换约定由单元测试覆盖。 |
 
 ### 写入路径
 
-`writeFileAtomic` 先以独占创建（`wx`）打开一个随机后缀的同级文件并写入内容，然后 rename 到目标上。独占打开拒绝跟随预先埋在可猜测临时路径上的符号链接；同目录兄弟文件保证 rename 落在同一文件系统上；rename 替换的是目标位置的符号链接本身，绝不写穿到该链接指向的文件。Windows 重试会保留同一份完整的兄弟文件，并采用有界指数退避，因此协作式写锁之外的软件瞬时占用目标时，不会让安全替换立即失败；已归档的[重试决策记录](../../../.agents/notes/archived/bug-fix/2026-08-29-windows-atomic-replace-retry.md)记录了最初的理由与被拒绝的替代方案。
+`writeFileAtomic` 先以独占创建（`wx`）打开一个随机后缀的同级文件并写入内容，然后 rename 到目标上。独占打开拒绝跟随预先埋在可猜测临时路径上的符号链接；同目录兄弟文件保证 rename 落在同一文件系统上；rename 替换的是目标位置的符号链接本身，绝不写穿到该链接指向的文件。Windows 重试会保留同一份完整的兄弟文件，并采用有界指数退避，因此协作式写锁之外的软件瞬时占用目标时，不会让安全替换立即失败；已归档的[重试决策记录](../../../.agents/notes/archived/bug-fix/2026-08-29-windows-atomic-replace-retry.md)记录了最初的理由与被拒绝的替代方案。`renameAtomicTemp` 拥有该重试步骤，以及它在 Windows 上接受的 `EACCES`/`EBUSY`/`EPERM` 集合，因此在 rename 前做 fsync 的流程可以复用同一份实现，而不必携带第二份副本。
 
 `withFileLock` 以 `wx` 创建 `<filename>.lock` 同级文件。`EEXIST` 直接表示竞争；只有一次新的 `lstat` 确认锁路径存在时，`EPERM` 才表示竞争，从而兼容 Windows 的独占创建行为，又不掩盖无关的权限故障。锁以 `<pid>\n` 记录创建者的 PID，由持有者在 `finally` 中移除。竞争者读到的记录若经信号探测报告该 PID 不存在（`ESRCH`），就以 `wx` 创建 `<filename>.lock.takeover-<记录哈希>` 认领文件，重新读取锁并再次探测其 PID，仅当锁仍是同一条记录且该 PID 仍不存在时才移除它，随后移除认领文件并立即重试。以其他用户身份存在的持有者（`EPERM`）和指向竞争者自身进程的记录会继续等待。读到同一条记录的竞争者争用同一个认领文件，第二次探测会排除复用了已退出 PID 的持有者，因此接管绝不会移除另一个竞争者在已退出持有者之后获得的锁。接管只能证明记录中的进程已退出；启动了其他写入者的操作要为后继者留下找到它们的途径，[Plugin Manager](../../boot/plugin-manager/README.zh.md) 对其 pnpm 运行就是这样做的。竞争按指数退避，在每次调用声明的 `waitMs` 期限（默认两秒）过后失败；[接管决策记录](../../../.agents/notes/implemented/bug-fix/2026-09-24-exited-holder-lock-takeover.zh.md)负责说明理由。
 

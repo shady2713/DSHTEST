@@ -46,6 +46,8 @@ Client 插件提供 `ctx.fileUpload`。其 `upload()` 方法接收所属 Session
 
 Host 插件提供 `ctx.fileUploads`。它拥有经过认证的流式路由、编码 Remote 兜底、命令凭证解析器与暂存凭证生命周期；编码准入、附件错误识别与字节存储仍由 `ctx.attachments` 提供。凭证表以接收方 Agent 的 Session 对象为键。Session Controller 注册可恢复休眠普通 Agent 的解析器，并在 prompt 准入时消费凭证。Prompt 投递通过可释放事务持有每个凭证绑定。成功投递提交事务前，释放会恢复原绑定；提交后，队列或历史观察会退休该凭证。
 
+上传暂存由 Host 私下持有提供方的持久票据。退休 prompt 凭证时，只有 Session 的持久化监听器全部成功完成才释放票据；flush 在观察者完成事件路由后才开始。缺少持久化监听器、flush 失败及已关闭但持久化未确认的绑定都保留票据。Session 关闭释放未使用的暂存，插件拆卸在完成前排空进行中的上传与待释放任务。Client 凭证不包含票据。
+
 | 文件 | 职责 |
 |---|---|
 | [`src/index.ts`](src/index.ts) | Host 流式路由、附件服务准入与按 Agent scope 管理的凭证生命周期 |

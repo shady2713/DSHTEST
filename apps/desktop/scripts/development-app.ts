@@ -11,9 +11,12 @@ export interface DevelopmentAppOptions {
   readonly directory: string
   readonly home: string
   readonly userData: string
-  readonly mainPort: number
-  readonly rendererPort: number
-  readonly hostPort: number
+  /** Omitted launches the Main process with no inspector listening. */
+  readonly mainPort?: number | undefined
+  /** Omitted launches the renderer with no remote debugging port. */
+  readonly rendererPort?: number | undefined
+  /** Omitted starts the Host with no inspector and no inherited port. */
+  readonly hostPort?: number | undefined
   readonly openDevtools: string
 }
 
@@ -60,17 +63,20 @@ export function prepareDevelopmentApp(options: DevelopmentAppOptions): string {
  * @returns shell program with literal arguments and environment values.
  */
 export function developmentLauncher(options: DevelopmentAppOptions, bundle: string): string {
+  // A port that was not chosen is not passed at all: leaving an inherited
+  // `DSH_DESKTOP_HOST_INSPECT_PORT` in the environment would open a debug interface
+  // the caller asked not to have.
   const environment = {
     DSH_HOME: options.home,
     DSH_DESKTOP_DEV_APP: '1',
-    DSH_DESKTOP_HOST_INSPECT_PORT: String(options.hostPort),
     DSH_DESKTOP_OPEN_DEVTOOLS: options.openDevtools,
     ELECTRON_ENABLE_LOGGING: '1',
+    ...(options.hostPort === undefined ? {} : { DSH_DESKTOP_HOST_INSPECT_PORT: String(options.hostPort) }),
   }
   const args = [
     join(bundle, 'Contents', 'MacOS', 'Electron'),
-    `--inspect=127.0.0.1:${String(options.mainPort)}`,
-    `--remote-debugging-port=${String(options.rendererPort)}`,
+    ...(options.mainPort === undefined ? [] : [`--inspect=127.0.0.1:${String(options.mainPort)}`]),
+    ...(options.rendererPort === undefined ? [] : [`--remote-debugging-port=${String(options.rendererPort)}`]),
     `--user-data-dir=${options.userData}`,
     options.appRoot,
   ]

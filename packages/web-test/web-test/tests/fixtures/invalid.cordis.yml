@@ -1,0 +1,4 @@
+- id: web-test
+  name: ../../lib/index.js
+  config:
+    applicationId: 42

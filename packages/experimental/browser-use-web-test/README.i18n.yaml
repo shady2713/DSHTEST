@@ -1,0 +1,49 @@
+# Bilingual-pair consistency record for README.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write packages/experimental/browser-use-web-test/README.md
+/:
+  en: 415ec5bd75b3ae4d
+  zh: 07f9ab1c6110063f
+/deepseek-ai-dsh-experimental-browser-use-web-test:
+  en: 97320c3921b830fc
+  zh: 09abce3ec8b9455a
+/deepseek-ai-dsh-experimental-browser-use-web-test/summary:
+  en: 82babb200c18a6be
+  zh: 8030a93a0b2e2cf1
+/deepseek-ai-dsh-experimental-browser-use-web-test/table-of-contents:
+  en: d152484eb41ac6b4
+  zh: f7984b8f97d2797a
+/deepseek-ai-dsh-experimental-browser-use-web-test/use-this-package:
+  en: 18eb62a9df1695e6
+  zh: 824d5d5bc1d1d846
+/deepseek-ai-dsh-experimental-browser-use-web-test/use-this-package/minimal-configuration:
+  en: dcf9a1bb14387420
+  zh: ebce5b3d47c9ea3c
+/deepseek-ai-dsh-experimental-browser-use-web-test/understand-the-implementation:
+  en: 7ab38ab61bb40dd8
+  zh: 7f8ac3edcdad896b
+/deepseek-ai-dsh-experimental-browser-use-web-test/further-exploration:
+  en: fb4a59ac3776f7a5
+  zh: 271912848e61808c
+/deepseek-ai-dsh-experimental-browser-use-web-test/model-experience:
+  en: 215e7ba838619b7b
+  zh: a311da3843709f90
+/deepseek-ai-dsh-experimental-browser-use-web-test/model-experience/browser-channel-tools:
+  en: 1b4828dbd59604e8
+  zh: 269ab39de9056908
+/deepseek-ai-dsh-experimental-browser-use-web-test/model-experience/browser-channel-tools/what-the-model-sees:
+  en: b11813ae894eda19
+  zh: a448e2b930aa6612
+/deepseek-ai-dsh-experimental-browser-use-web-test/model-experience/browser-channel-tools/token-effect:
+  en: dc977b6c22529858
+  zh: de0956db5aff1e59
+/deepseek-ai-dsh-experimental-browser-use-web-test/model-experience/browser-channel-tools/kv-cache-effect:
+  en: 2979d1d4bb25cdfc
+  zh: 457f08eeb3791d1d
+/deepseek-ai-dsh-experimental-browser-use-web-test/known-limitations-and-deferred-work:
+  en: 8c819ab367ce706d
+  zh: b324456ed4be0d55
+/deepseek-ai-dsh-experimental-browser-use-web-test/known-limitations-and-deferred-work/dev-note:
+  en: 6fed9f163fa2a5ba
+  zh: 7d9560a446af4012

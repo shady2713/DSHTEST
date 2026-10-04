@@ -27,6 +27,8 @@ Use `dsh-tool-fs-search` to give models `glob` file discovery and `grep` content
 
 Mount the tools after a `ctx.subprocess` backend; no host `rg` install is needed, and no filesystem provider is required. The model then gets modification-time-ordered file discovery and line-oriented content search, each bounded and timeout-guarded.
 
+Inside an Agent preset, the search row must declare `isolate: { fsSearch: true }`. Its provider belongs to that preset revision; a shared Host search service does not replace this declaration. The preset registry refuses a search provider that leaks into the shared service realm.
+
 ### Minimal composition
 
 A subprocess backend, then the tools; the spill backend is optional and makes capped results fully recoverable.
@@ -88,7 +90,7 @@ This section explains the design decisions behind the search tools and points at
 
 ### Design concept
 
-Local workspace discovery is naturally a process-backed `rg` workflow, and putting search on `ctx.fs` would force every filesystem backend to grow a search API. The subprocess seam owns spawn execution, process-tree termination, environment scrubbing, and bounded output capture; this package owns schemas, argument validation, argv construction, parsing, retention, formatted-result spill, and timeout declaration. The tools never expose a background job — the call returns only after `rg` exits, is terminated by the cooperative timeout, is aborted, or fails.
+`ReadonlySearch` is the Service Definition, `PackagedReadonlySearch` is its Provider, and `glob`/`grep` are Consumers of `ctx.fsSearch`. Requests select a glob or regex and a path; they cannot supply a binary, argv, environment or preprocessor. The provider owns fixed ripgrep arguments, inherited-environment removal, and cancellation on disposal; the subprocess service owns process-tree termination and bounded capture. The tools return after search settles and expose no background job. Callers mounting `applyGlobTool` or `applyGrepTool` directly must provide `fsSearch`; mounting the package installs its provider and consumers together.
 
 ### Source map
 
@@ -98,12 +100,13 @@ Local workspace discovery is naturally a process-backed `rg` workflow, and putti
 | [`src/glob.ts`](src/glob.ts) | `glob` schema, argv, parsing, inline sampling, formatting |
 | [`src/grep.ts`](src/grep.ts) | `grep` schema, argv, `--json` parsing, preview retention, formatting |
 | [`src/search-core.ts`](src/search-core.ts) | Shared spawn helper, `SEARCH_*` errors, spill handoff, workdir-relative display |
+| [`src/search-service.ts`](src/search-service.ts) | Read-only Search Definition, packaged Provider, session identity and lifetime cancellation |
 | [`src/presentation.ts`](src/presentation.ts) | Search-card metadata projection |
 | [`src/direct-call.ts`](src/direct-call.ts) | Direct-call result acceptance for spill post-processing |
 
 ### How a search runs
 
-Each call resolves the packaged binary (`@vscode/ripgrep`, or the executable's `-rg` sidecar in a pkg single-file runtime), prepends `--no-config` so a host `RIPGREP_CONFIG_PATH` cannot inject a `--pre` preprocessor into the unconfined spawn, and passes every model-controlled value as a plain argv element — no shell layer exists, so no quoting applies. Collect-mode budgets bound complete stdout and a stderr tail; a lossy stdout read fails as `SEARCH_RAW_OUTPUT_OVERFLOW` rather than parsing a silently-partial stream. The tools never read a raw spill path.
+Each call resolves the packaged binary (`@vscode/ripgrep`, or the executable's `-rg` sidecar in a pkg single-file runtime), prepends `--no-config` and `--no-follow`, and passes model values as plain argv elements. Environment tombstones remove inherited entries; Windows retains `SystemRoot`, and `LC_ALL` is fixed to `C`. A private WeakMap records each provider-created spawn identity for one synchronous backstop call; copied, reused or cancelled specs grant no search authority. The Web testing policy checks the calling Session and canonical target, spends one action at execution, and restricts argv before files open. Collect budgets bound complete stdout and stderr; lossy stdout fails with `SEARCH_RAW_OUTPUT_OVERFLOW`. Caller or provider cancellation reports `SEARCH_ABORTED`, including a rejected provider outcome. The tools never read raw spill paths.
 
 ### Two budgets, two artifacts
 

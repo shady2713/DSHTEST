@@ -1,0 +1,97 @@
+# Bilingual-pair consistency record for README.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write packages/web-test/web-test-conversation/README.md
+/:
+  en: 3c02ccf635eaff79
+  zh: 910de282141a6e68
+/deepseek-ai-dsh-web-test-conversation:
+  en: 209f2cf86576472c
+  zh: 68c7ee8fff7a2dcf
+/deepseek-ai-dsh-web-test-conversation/summary:
+  en: 29e6f4c42a10b0ea
+  zh: a24d9ae29bd85695
+/deepseek-ai-dsh-web-test-conversation/table-of-contents:
+  en: 76368b6b1da79c80
+  zh: ddafa933c150c4d1
+/deepseek-ai-dsh-web-test-conversation/use-this-package:
+  en: d4bb91d47e970ba3
+  zh: 60c52b4adca8826e
+/deepseek-ai-dsh-web-test-conversation/use-this-package/what-is-configurable-and-what-is-not:
+  en: afdfa00ec51e1c16
+  zh: a71cf7eaf1b7264c
+/deepseek-ai-dsh-web-test-conversation/further-exploration:
+  en: 15c00dbd648c87b4
+  zh: c571123a35d27188
+/deepseek-ai-dsh-web-test-conversation/understand-the-implementation:
+  en: ee4615a04fa6503d
+  zh: ee2c5fb2204a43cf
+/deepseek-ai-dsh-web-test-conversation/understand-the-implementation/the-mask-is-visibility-the-policy-is-enforcement:
+  en: c5f807e7d8ef9487
+  zh: bdb34a40e0747fd4
+/deepseek-ai-dsh-web-test-conversation/understand-the-implementation/the-next-mask-is-installed-before-the-previous-one-is-released:
+  en: 97f63980af4e2adb
+  zh: 2cbcb1f9ad1a4c32
+/deepseek-ai-dsh-web-test-conversation/understand-the-implementation/the-governed-names-come-from-the-policy-not-from-a-list-here:
+  en: 4a2afe9a084e649f
+  zh: 07fb5177be8c1735
+/deepseek-ai-dsh-web-test-conversation/understand-the-implementation/the-command-set-is-closed-and-its-unavailability-is-stated:
+  en: 5babbb3a312579b1
+  zh: 222bd3cbf0992c6e
+/deepseek-ai-dsh-web-test-conversation/understand-the-implementation/a-status-query-and-a-mutating-ask-are-two-surfaces-not-one-switch:
+  en: a312f4f5b921e2bb
+  zh: 0378384a40854921
+/deepseek-ai-dsh-web-test-conversation/understand-the-implementation/a-refusal-is-ordered-and-the-first-one-wins:
+  en: a7b463d8c3db8014
+  zh: c41e1bb381eb6b28
+/deepseek-ai-dsh-web-test-conversation/understand-the-implementation/a-session-never-borrows-another-project-s-context:
+  en: 961514e7386e630b
+  zh: 5ce5daab30bcd689
+/deepseek-ai-dsh-web-test-conversation/understand-the-implementation/declared-material-is-read-never-assumed:
+  en: a3583466709e4ad5
+  zh: 1aa3bd8a29d00524
+/deepseek-ai-dsh-web-test-conversation/understand-the-implementation/three-question-row-combinations-are-refused-at-load:
+  en: 7f720a2c9a147776
+  zh: f515e100543e0720
+/deepseek-ai-dsh-web-test-conversation/understand-the-implementation/the-composition-owns-the-collision-not-this-package:
+  en: 931aab441cc52c04
+  zh: 2b0c583a3935c6c7
+/deepseek-ai-dsh-web-test-conversation/understand-the-implementation/durable-project-selection-and-explicit-confirmation:
+  en: 3fea5419ba317c27
+  zh: 1d250ac2a9cc873e
+/deepseek-ai-dsh-web-test-conversation/understand-the-implementation/the-invariant-companion-is-omitted:
+  en: 3b729abf763c5e39
+  zh: 9d016b7516dd3815
+/deepseek-ai-dsh-web-test-conversation/model-experience:
+  en: 215e7ba838619b7b
+  zh: a311da3843709f90
+/deepseek-ai-dsh-web-test-conversation/model-experience/admitted-effects:
+  en: db08a92a037d499a
+  zh: 5ddea24cd556fe48
+/deepseek-ai-dsh-web-test-conversation/model-experience/admitted-effects/what-the-model-sees:
+  en: c3663c3f0e03012d
+  zh: b67e191635654d34
+/deepseek-ai-dsh-web-test-conversation/model-experience/admitted-effects/token-effect:
+  en: 830c7b6bdb0e610d
+  zh: f47bf00bfe6dd031
+/deepseek-ai-dsh-web-test-conversation/model-experience/admitted-effects/kv-cache-effect:
+  en: 406f7a517f4a86b3
+  zh: 56685a383d615cd0
+/deepseek-ai-dsh-web-test-conversation/model-experience/refused-effects:
+  en: 24250251cc9724ca
+  zh: 726b759ed07a47b5
+/deepseek-ai-dsh-web-test-conversation/model-experience/refused-effects/what-the-model-sees:
+  en: 6a306bdc9380c59d
+  zh: f06a57bd22bb249e
+/deepseek-ai-dsh-web-test-conversation/model-experience/refused-effects/token-effect:
+  en: 755f7b3c9507148e
+  zh: bbdd40b5c7a6ae7a
+/deepseek-ai-dsh-web-test-conversation/model-experience/refused-effects/kv-cache-effect:
+  en: 01fad9080fcd6bfb
+  zh: 45c851c3f5d86d57
+/deepseek-ai-dsh-web-test-conversation/known-limitations-and-deferred-work:
+  en: cd583901c742c55e
+  zh: 3c52b14604f6acb1
+/deepseek-ai-dsh-web-test-conversation/known-limitations-and-deferred-work/dev-note:
+  en: 6d50b007c84565d0
+  zh: a279c5fe845a932b

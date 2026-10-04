@@ -14,6 +14,7 @@ import type { SessionPersistenceRevision } from './revision.ts'
 // Re-export the metadata vocabulary so Consumers import it from the Service Definition.
 export type { SessionHeader } from '@deepseek-ai/dsh-session'
 export { SessionPersistenceRevision } from './revision.ts'
+export { fileAttachmentRefsInSessionEvents } from './file-attachments.ts'
 export type {
   SessionAccess,
   SessionHandle,

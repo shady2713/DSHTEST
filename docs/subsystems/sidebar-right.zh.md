@@ -145,6 +145,129 @@ Host 的 `ctx.workspaceFiles` 服务与生成的 `workspaceFiles` Remote 命名�
 - **`subagentchat`**——`builtin`，`dsh-resource://subagentchat/session/<child>?parent=<parent>&mode=<mode>`。资源提供方保留一个显式寻址的 subagent Conversation，并通过共享 Conversation Factory 渲染（[README](../../packages/client/ui-subagent/README.zh.md)）。
 
 <a id="not-built"></a>
+## 桌面执行类型
+
+[浏览器控制](../../packages/client/ui-sidebar-browser/README.zh.md)定义这些 Main 拥有的目标和 Runtime 拥有的执行身份。其 Service API 见 [Web 测试](web-test.zh.md#cordis-surface)。
+
+```ts type-equiv
+/** Browser storage account: a canonical workspace CWD or an ungrouped Session. */
+type DesktopBrowserWorkspaceKey = Branded<'DesktopBrowserWorkspaceKey'>
+```
+
+```ts type-equiv
+/** Main-owned guest identity and current URL, never supplied by a model tool. */
+interface DesktopBrowserControlledTarget {
+  readonly target: DesktopBrowserTargetId
+  readonly hostEpoch: number
+  readonly workspace: DesktopBrowserWorkspaceKey
+  readonly url: string
+  readonly executionRole?: DesktopBrowserExecutionRole
+}
+```
+
+```ts type-equiv
+/** Identity of one trusted runtime browser execution group. */
+type DesktopBrowserGroupId = Branded<'DesktopBrowserGroupId'>
+```
+
+```ts type-equiv
+/** Identity of the live activation that owns a browser execution group. */
+type DesktopBrowserActivationId = Branded<'DesktopBrowserActivationId'>
+```
+
+```ts type-equiv
+/** Project associated with a trusted browser execution group. */
+type DesktopBrowserProjectId = Branded<'DesktopBrowserProjectId'>
+```
+
+```ts type-equiv
+/** Runtime batch associated with a trusted browser execution group. */
+type DesktopBrowserRunId = Branded<'DesktopBrowserRunId'>
+```
+
+```ts type-equiv
+/** Role with an isolated login store inside one execution group. */
+type DesktopBrowserRoleId = Branded<'DesktopBrowserRoleId'>
+```
+
+```ts type-equiv
+/** Revocable Main-acknowledged authorization of one role target. */
+type DesktopBrowserRoleGrantId = Branded<'DesktopBrowserRoleGrantId'>
+```
+
+```ts type-equiv
+/** Opaque process-local authority; a copied literal does not grant execution-group access. */
+interface DesktopBrowserExecutionAuthority {
+  readonly kind: 'trusted-desktop-execution-authority'
+}
+```
+
+```ts type-equiv
+/** Trusted runtime identity; neither a page nor a model creates this owner. */
+interface DesktopBrowserExecutionOwner {
+  readonly group: DesktopBrowserGroupId
+  readonly activation: DesktopBrowserActivationId
+  readonly project: DesktopBrowserProjectId
+  readonly run: DesktopBrowserRunId
+  readonly sessionId: SessionId
+  readonly hostEpoch: number
+  readonly workspace: DesktopBrowserWorkspaceKey
+}
+```
+
+```ts type-equiv
+/** Main-issued role storage identity, separate from ordinary sidebar workspaces. */
+interface DesktopBrowserExecutionRole {
+  readonly owner: DesktopBrowserExecutionOwner
+  readonly role: DesktopBrowserRoleId
+}
+```
+
+```ts type-equiv
+/** One target's acknowledged permission within an execution group. */
+interface DesktopBrowserRoleBinding extends DesktopBrowserControlledTarget {
+  readonly executionRole: DesktopBrowserExecutionRole
+  readonly grant: DesktopBrowserRoleGrantId
+}
+```
+
+```ts type-equiv
+/** Private, atomic authorization or withdrawal of all targets in one group. */
+interface DesktopBrowserGroupBindingRequest {
+  readonly version: typeof DESKTOP_BROWSER_AUTOMATION_VERSION
+  readonly requestId: number
+  readonly revision: number
+  readonly kind: 'bind-group' | 'release-group'
+  readonly owner: DesktopBrowserExecutionOwner
+  readonly roles: readonly DesktopBrowserRoleBinding[]
+}
+```
+
+```ts type-equiv
+/**
+ * Main-issued identity of the guest one automation command addresses. A command
+ * naming a target the connected Host does not own is refused, so a target from a
+ * previous window, lease, or Host generation cannot act.
+ */
+type DesktopBrowserTargetId = Branded<'DesktopBrowserTargetId'>
+```
+
+```ts type-equiv
+/** One authenticated request from the connected Host to one owned target. */
+interface DesktopBrowserCommand {
+  readonly version: typeof DESKTOP_BROWSER_AUTOMATION_VERSION
+  /** Correlates the reply; the Host never treats an uncorrelated message as an answer. */
+  readonly requestId: number
+  /** Generation of the connected Host. The Main refuses a command from a Host it no longer serves. */
+  readonly hostEpoch: number
+  readonly target: DesktopBrowserTargetId
+  /** Session explicitly authorized by a trusted Host consumer for this target. */
+  readonly sessionId: SessionId
+  readonly role?: DesktopBrowserRoleBinding
+  readonly body: DesktopBrowserCommandBody
+}
+```
+
 ## 不做
 
 - 持久化：布局状态只在内存里；刷新后每个会话从折叠开始，任何会话的 tab 都不会出现在另一个会话里。

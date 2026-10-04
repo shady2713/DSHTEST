@@ -8,7 +8,9 @@
     "src"
   ],
   "references": [
+    { "path": "../../packages/web-test/web-test-runtime" },
     { "path": "../../vendor/cordis" },
+    { "path": "../../packages/util/brand" },
     { "path": "../../packages/core/agent" },
     { "path": "../../packages/jobs/jobs" },
     { "path": "../../packages/schedule/schedule" },
@@ -24,6 +26,9 @@
     },
     {
       "path": "../../packages/client/connection/tsconfig.host.json"
+    },
+    {
+      "path": "../../packages/client/ui-sidebar-browser/tsconfig.host.json"
     },
     {
       "path": "../../packages/host/webserver"

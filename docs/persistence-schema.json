@@ -21987,7 +21987,7 @@
       "digest": "0f46153645c297846a3fad3911636659ca4717a5e7d71c9f50bffacd312115ef",
       "names": [],
       "sources": [
-        "packages/attachment/attachment/src/types.ts:28"
+        "packages/attachment/attachment/src/types.ts:57"
       ]
     },
     {
@@ -22516,7 +22516,7 @@
         "packages/attachment/attachment/src/types.ts#ImageMediaType"
       ],
       "sources": [
-        "packages/attachment/attachment/src/types.ts:8"
+        "packages/attachment/attachment/src/types.ts:37"
       ]
     },
     {
@@ -24413,7 +24413,7 @@
         "packages/attachment/attachment/src/types.ts#ImageAttachmentRef"
       ],
       "sources": [
-        "packages/attachment/attachment/src/types.ts:11"
+        "packages/attachment/attachment/src/types.ts:40"
       ]
     },
     {
@@ -25205,7 +25205,7 @@
         "packages/attachment/attachment/src/types.ts#FileAttachmentRef"
       ],
       "sources": [
-        "packages/attachment/attachment/src/types.ts:39"
+        "packages/attachment/attachment/src/types.ts:68"
       ]
     },
     {

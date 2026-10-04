@@ -184,6 +184,7 @@ Every package below exports a Cordis plugin that a bundle patch can name in a Lo
 | `@deepseek-ai/dsh-experimental-browser-use-chrome-devtools-mcp` | yes | Experimental per-Session Chromium browser tools through chrome-devtools-mcp |
 | `@deepseek-ai/dsh-experimental-browser-use-playwright-mcp` | yes | Experimental per-Session Chromium browser tools through @playwright/mcp |
 | `@deepseek-ai/dsh-experimental-browser-use-stagehand-native` | yes | Experimental Stagehand browser tools with separately configured native models |
+| `@deepseek-ai/dsh-experimental-browser-use-web-test` | yes | Experimental browser-use provider exposing the Web testing controlled automation channel |
 | `@deepseek-ai/dsh-experimental-client-ui-agent-team` | no | Web Agent Teams roster, task board, and teammate navigation |
 | `@deepseek-ai/dsh-experimental-client-ui-voice-input` | no | Record speech and insert editable text into the conversation draft |
 | `@deepseek-ai/dsh-experimental-computer-use-cua-driver-mcp` | yes | Experimental computer use through an installed Cua Driver MCP executable |
@@ -321,6 +322,7 @@ Every package below exports a Cordis plugin that a bundle patch can name in a Lo
 | Package | Config | Description |
 |---|---|---|
 | `@deepseek-ai/dsh-ptc-runtime-node` | yes | Sandboxed Node process implementation of the DeepSeek Harness PTC execution capability |
+| `@deepseek-ai/dsh-ptc-runtime-quickjs` | yes | Worker-owned QuickJS WebAssembly PTC provider with declared async tool bindings |
 
 ## runtime-diagnostics
 
@@ -489,6 +491,18 @@ Every package below exports a Cordis plugin that a bundle patch can name in a Lo
 | `@deepseek-ai/dsh-web-search-deepseek` | yes | DeepSeek-backed search provider (native web_search via the Anthropic-compatible API) for the DeepSeek Harness web capability seam (ctx.web) |
 | `@deepseek-ai/dsh-web-search-exa` | yes | Exa-backed search provider for the DeepSeek Harness web capability seam (ctx.web) |
 | `@deepseek-ai/dsh-web-search-perplexity` | yes | Perplexity-backed search provider for the DeepSeek Harness web capability seam (ctx.web) |
+
+## web-test
+
+| Package | Config | Description |
+|---|---|---|
+| `@deepseek-ai/dsh-web-test` | yes | Web testing application identity and declared entry metadata |
+| `@deepseek-ai/dsh-web-test-contracts` | no | Shared Web testing identifiers, request schemas, field-naming Remote errors, and the generated contract Remote |
+| `@deepseek-ai/dsh-web-test-conversation` | yes | Web testing conversation entry (ctx.webTestConversation) and command Remote (ctx.webTestCommands): per-agent controlled tool attachment on the official root conversation agent, the session-to-project association the gate reads, the explicit tool-ask-user mode, and the one Remote a card and a conversation both address |
+| `@deepseek-ai/dsh-web-test-models` | yes | Web testing first-run model configuration and capability routing (ctx.webTestModels): real per-provider connection tests, classified failures, version-persisted task routes, and a recoverable wait for work a credential change interrupts |
+| `@deepseek-ai/dsh-web-test-policy` | yes | Web testing pre-execution policy (ctx.webTestPolicy): the non-relaxable tool guard and the service-level backstop, read-only code-root protection with named upload/download/temporary material directories, per-entry environment declaration bound to the published project revision, and bounded concrete-flow authorization |
+| `@deepseek-ai/dsh-web-test-presentation` | no | Conversation-local safe first-run model configuration using official settings and credentials Remotes |
+| `@deepseek-ai/dsh-web-test-runtime` | yes | Web testing single domain writer (ctx.webTestRuntime): control-root identity and Windows exclusive lock, reservation/publish creation protocol, strict project reads, and the commit-time notification outbox on the webtest storage domain |
 
 ## webhook
 

@@ -22,7 +22,7 @@ import {
   type IpcMainInvokeEvent,
   type MenuItemConstructorOptions,
 } from 'electron'
-import { resolveDesktopPaths } from './paths.ts'
+import { desktopHostEnvironment, resolveDesktopApplication, resolveDesktopPaths } from './paths.ts'
 import { DesktopProjectManager } from './project-manager.ts'
 import { DesktopHostFatalError, DesktopHostProcess, DesktopHostUncleanExitError } from './host-process.ts'
 import { DesktopPlatformView, PLATFORM_IPC, platformBounds } from './platform-view.ts'
@@ -54,6 +54,7 @@ import { DesktopPolicyTestAuth } from './policy-test-auth.ts'
 import { DesktopUpdateDialog, type UpdateDialogOptions } from './update-dialog.ts'
 import { readDesktopRuntime } from './runtime-tree.ts'
 import { DesktopBrowserGuests } from './browser-guests.ts'
+import { HostTargetRegistry } from './automation-targets.ts'
 import { installDesktopShortcuts } from './keyboard.ts'
 import { DesktopUpdateOverlays } from './update-overlay.ts'
 import { DesktopQuitConfirmation } from './quit-confirmation.ts'
@@ -77,6 +78,15 @@ let windowsLanguage: string | undefined
 let backendReady = false
 /** Error-level console output of the primary window, attached to crash reports. */
 const rendererConsole = new RendererConsoleTail()
+
+// Another application that carries this shell names itself in the environment, and its
+// data root owns the browser profile, shortcut preferences, and crash reports this
+// window would otherwise read from the official product's userData directory.
+// Read before anything resolves an Electron path, including the logs directory below.
+const desktopApplication = resolveDesktopApplication()
+if (desktopApplication.paths.userData !== undefined) {
+  app.setPath('userData', desktopApplication.paths.userData)
+}
 
 // Platform-conventional logs directory (macOS ~/Library/Logs/<name>, otherwise under userData);
 // set before ready so the first fatal report already resolves under it.
@@ -400,6 +410,10 @@ async function main(): Promise<void> {
   let hostUrl: string | undefined
   let hostCookie: string | undefined
   const browserGuests = new DesktopBrowserGuests(() => hostUrl)
+  // The Main owns which guest a command identity may reach. A target id is an address
+  // the Host can replay, so it resolves only through this map, only for the Host
+  // generation that was granted it.
+  const automationTargets = new HostTargetRegistry()
   let injections: readonly unknown[] = []
   let welcomeBackend: DesktopWelcomeBackend | undefined
   let reportedLaunch = false
@@ -441,10 +455,16 @@ async function main(): Promise<void> {
     () => locale.id === 'zh-CN' ? 'zh_CN' : 'en_US', process.platform === 'win32' ? 'win32' : 'darwin')
   const backend = new DesktopBackendController((onFailure) => {
     const hostInspectPort = developmentHostInspectPort(development)
+    const hostEpoch = automationTargets.connectHost()
     const host = new DesktopHostProcess(resources.node, resources.dsh, activeProject,
-      hostInspectPort, { ...hostEnvironment, DSH_CLIENT_VERSION: desktopClientVersion() }, onFailure,
+      hostInspectPort, {
+        ...hostEnvironment,
+        ...desktopHostEnvironment(desktopApplication),
+        DSH_CLIENT_VERSION: desktopClientVersion(),
+      }, onFailure,
       primaryRuntime,
-      resources, (next) => { platformView.setSession(next) })
+      resources, (next) => { platformView.setSession(next) },
+      target => automationTargets.resolve(target), hostEpoch, automationTargets)
     return {
       start: async () => {
         const ready = await host.start()
@@ -495,6 +515,7 @@ async function main(): Promise<void> {
         }, (enabled) => { analyticsEnabled = enabled })
       },
       stop: async () => {
+        automationTargets.revokeHost(hostEpoch)
         analyticsEnabled = false
         stopAccount?.()
         try { await host.stop(requireCleanStop) }
@@ -1065,7 +1086,13 @@ async function main(): Promise<void> {
   const createMainWindow = (): BrowserWindow => {
     const window = createWindow(appPreload, false, true)
     mainWindow = window
-    browserGuests.bind(window, (guest, name) => shortcuts.attachGuest(window, guest, name))
+    browserGuests.bind(
+      window,
+      (guest, name) => shortcuts.attachGuest(window, guest, name),
+      () => automationTargets.currentEpoch(),
+      target => automationTargets.register(target),
+      () =>{  automationTargets.changed() },
+    )
     shortcuts.attach(window)
     window.on('focus', automaticCheck)
     // Closing hides: the page and the Host keep running, and the next show resumes the same document.

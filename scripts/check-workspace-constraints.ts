@@ -198,6 +198,10 @@ const packageFileExtras: Readonly<Record<string, readonly string[]>> = {
   '@deepseek-ai/dsh-experimental-inspector': ['lib/worker.js'],
   // Creator's composition guidance travels with the declaration package.
   '@deepseek-ai/dsh-agent-preset': ['skills'],
+  // The Web testing application is started through its composition layer, which
+  // `requireCompositionLayer` refuses to boot without, and an installed copy
+  // resolves that layer beside lib/index.js rather than through an export.
+  '@deepseek-ai/dsh-web-test': ['web-test.cordis.patch.yml'],
   // The Web Host mounts the default-off settings owner independently of each
   // Agent-scoped delegation-tool instance.
   '@deepseek-ai/dsh-tool-subagent': ['lib/model-selection-settings.js'],

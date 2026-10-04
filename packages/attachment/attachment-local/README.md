@@ -89,6 +89,10 @@ Request versions live below `<DSH_HOME>/cache/attachments/request-images/`, reso
 
 Generic-file bytes have one canonical object at `<DSH_HOME>/attachments/v1/file-objects/<digest-prefix>/<digest>`. Each reference path at `<DSH_HOME>/attachments/v1/files/<digest-prefix>/<digest>/<name>` is a read-only hard link, so different names for equal bytes do not duplicate disk content. `readFileStream` reads the reference path in bounded chunks and verifies the complete digest and recorded byte count before a consumer can finish successfully. A missing, changed, or truncated object fails its consumer instead of producing a complete export with different bytes.
 
+Generic-file retention uses a versioned storage domain keyed to the canonical attachment root. A kernel lease excludes other live providers: POSIX uses `flock`, while Windows holds a file HANDLE with sharing disabled. Process termination releases kernel ownership. The provider serializes staging, owner publication, lease acquisition, and deletion; durable stages and independent Session, report, snapshot, and baseline owners survive restart. Legacy saves and historical objects without a complete inventory remain unknown and cannot be collected.
+
+`deleteFile` removes a known unowned alias only when no stage or reader needs it, and removes canonical bytes only after its final alias. The returned logical byte count does not measure physical free space. A durable deletion intent allows retry after unlink or final index failure. Reads protect actual stream handles, cancellation releases leases, and provider withdrawal drains dependent producers before closing readers, the domain, and kernel ownership. Staging and deletion require the storage domain facility; deployments without it can keep legacy files conservatively.
+
 ### Source map
 
 | File | Role |
@@ -96,6 +100,7 @@ Generic-file bytes have one canonical object at `<DSH_HOME>/attachments/v1/file-
 | [`src/index.ts`](src/index.ts) | Plugin entry: `LocalAttachmentStore`, `Config` schema, defaults |
 | [`src/store.ts`](src/store.ts) | Content-addressed write and verified read: staging, hard-link publish, fsync chain, digest verification |
 | [`src/file-store.ts`](src/file-store.ts) | Verbatim streamed file writes, verified streamed reads, and safe stored filenames |
+| [`src/file-lifecycle.ts`](src/file-lifecycle.ts) + [`src/file-lease.ts`](src/file-lease.ts) | Durable owners and stages, read protection, deletion admission, and kernel provider ownership |
 | [`src/normalization.ts`](src/normalization.ts) + [`src/encoding.ts`](src/encoding.ts) | Provider-independent normalization and bounded format/quality candidates |
 | [`src/request-image.ts`](src/request-image.ts) | Route-specific request transforms, cache identity, and singleflight |
 | [`src/image.ts`](src/image.ts) | Full raster decode and metadata verification |
@@ -148,6 +153,6 @@ This Dev Note is working context for maintainers: undecided directions and open 
 
 #### Future: retention and remote storage
 
-Retention and garbage collection are deferred because resumed and forked sessions may share immutable objects, and a backend serving remote runtimes or shared storage would need its own durability proof. Both directions are undecided; the local storage currently retains every object under `DSH_HOME`.
+Automatic collection and recovery of abandoned stages remain undecided. A backend serving remote runtimes or shared storage would also need its own durability and reader coordination.
 
 </details>

@@ -29,6 +29,8 @@ Mount one persistence backend to make sessions durable. The backend registers it
 
 ### Choosing a backend
 
+`fileAttachmentRefsInSessionEvents` reads file references only from declared first-party content fields, including completed blocks of failed Assistant attempts and fork-inherited events. Malformed or contradictory file metadata refuses collection. Extension events and unrelated payload fields remain opaque and do not establish complete historical ownership.
+
 The seam ships the [JSONL](../session-persistence-jsonl/README.md) backend: one append-only `.jsonl.zstd` log per session. A third-party backend may implement the service directly; the [backend contract](#understand-the-implementation) below is what it must honor.
 
 ### What the service provides

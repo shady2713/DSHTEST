@@ -28,6 +28,51 @@ import type { RetainedItems } from '@deepseek-ai/dsh-output-retention'
 import type { SubprocessHandle, SubprocessOutcome, SubprocessOutputRead, SubprocessSpawnSpec } from '@deepseek-ai/dsh-subprocess'
 import type { SaveTextSpill, SpillRef } from '@deepseek-ai/dsh-spill'
 import type { ToolExecution } from '@deepseek-ai/dsh-tools'
+import type { Session } from '@deepseek-ai/dsh-session'
+import { consumeSearchArguments, type SearchInvocation } from './search-service.ts'
+
+/** Search authority attached to one provider-created, immutable spawn request. */
+export interface ReadonlySearchSpawn {
+  /** Calling session and requested target. */
+  readonly invocation: SearchInvocation
+  /**
+   * Resolve the search to an authorized canonical target before opening files.
+   * @param target - Canonical authorized file or directory.
+   * @param excludedPaths - Canonical protected subtrees.
+   * @returns Fixed ripgrep argv with the exclusions after all caller filters.
+   */
+  restrict(target: string, excludedPaths: readonly string[]): SubprocessSpawnSpec
+}
+
+const searchSpawns = new WeakMap<SubprocessSpawnSpec, ReadonlySearchSpawn>()
+
+/**
+ * Consume one genuine search spawn identity. Copies, reuse, and disposed owners have no authority.
+ * @param spec - Exact request reaching the subprocess backstop.
+ * @returns Its read-only search authority, absent for general process requests.
+ */
+export function consumeReadonlySearchSpawn(spec: SubprocessSpawnSpec): ReadonlySearchSpawn | undefined {
+  const owner = searchSpawns.get(spec)
+  searchSpawns.delete(spec)
+  return spec.signal?.aborted === true ? undefined : owner
+}
+
+/** Environment tombstones delete ambient entries using the provider's native key semantics. */
+function searchEnvironment(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = Object.fromEntries(Object.keys(process.env).map(key => [key, undefined]))
+  for (const key of ['HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'NO_PROXY', 'http_proxy', 'https_proxy', 'all_proxy', 'no_proxy']) {
+    env[key] = undefined
+  }
+  if (process.platform === 'win32') env.SystemRoot = process.env.SystemRoot
+  env.LC_ALL = 'C'
+  return Object.freeze(env)
+}
+
+/** Escape a literal filesystem path for ripgrep's glob parser. */
+function literalGlob(path: string): string {
+  const portable = path.split(sep).join('/')
+  return portable.replace(/[\\?*\[\]{}!]/gu, '\\$&')
+}
 
 /**
  * Default cap on the complete raw `rg` stdout the tools will parse (the
@@ -191,10 +236,11 @@ export function resolveRgPath(): Promise<string> {
  * (`@deepseek-ai/dsh-tool-call-timeout-policy`) and caller cancellation terminate the
  * process tree.
  *
- * The spawn is unconfined (a plain `ctx.subprocess` call), so `--no-config`
- * is prepended: a host `RIPGREP_CONFIG_PATH` (or `rg.conf` next to the
+ * `--no-config` and `--no-follow` are prepended: a host `RIPGREP_CONFIG_PATH`
+ * (or `rg.conf` next to the
  * binary) can otherwise inject `--pre` and make ripgrep execute an arbitrary
- * preprocessor for every matched file. The collect dispositions are the
+ * preprocessor for every matched file. Inherited environment entries are
+ * removed except Windows SystemRoot; LC_ALL is fixed to C. The collect dispositions are the
  * seam's diagnostic-tail shape (no spill files): the tools never read a raw
  * spill path, and truncated stdout fails as `SEARCH_RAW_OUTPUT_OVERFLOW`.
  *
@@ -206,9 +252,9 @@ export function resolveRgPath(): Promise<string> {
  * classified: a synchronous throw at spawn CREATION (a NUL in argv, an abort
  * racing the pre-check, a rejected `@vscode/ripgrep` resolution) reports that
  * the command could not start, while a rejection of `handle.done` reports a
- * provider failure without claiming whether execution began. Both become
- * `SEARCH_FAILED` with the original as `cause`; an abort already observed by
- * creation time becomes `SEARCH_ABORTED` instead.
+ * provider failure without claiming whether execution began. Failures become
+ * `SEARCH_FAILED` with the original as `cause`; observed cancellation becomes
+ * `SEARCH_ABORTED`, including cancellation reported by a rejected outcome.
  *
  * @param ctx - the plugin context; execution uses its `subprocess` service.
  * @param exec - the tool-execution context; supplies the session cwd and the abort signal.
@@ -221,7 +267,7 @@ export function resolveRgPath(): Promise<string> {
  */
 export async function runRipgrep(
   ctx: Context,
-  exec: ToolExecution,
+  exec: { readonly signal: AbortSignal; readonly agent?: { readonly session: Pick<Session, 'header' | 'id'> } },
   toolName: string,
   argv: readonly string[],
   rawOutputMaxBytes: number,
@@ -235,17 +281,45 @@ export async function runRipgrep(
   const workdir = cwd ?? process.cwd()
   let handle: SubprocessHandle
   try {
-    handle = ctx.subprocess.spawn({
-      argv: [await resolveRgPath(), '--no-config', ...argv],
+    const executable = await resolveRgPath()
+    const invocation = consumeSearchArguments(argv)
+    const spec: SubprocessSpawnSpec = Object.freeze({
+      argv: Object.freeze([executable, '--no-config', '--no-follow', ...argv]),
       cwd: workdir,
-      stdio: {
+      stdio: Object.freeze({
         stdin: 'ignore',
-        stdout: { maxBytes: rawOutputMaxBytes },
-        stderr: { maxBytes: stderrMaxBytes },
-      },
+        stdout: Object.freeze({ maxBytes: rawOutputMaxBytes }),
+        stderr: Object.freeze({ maxBytes: stderrMaxBytes }),
+      }),
       graceMs,
       signal: exec.signal,
-    } satisfies SubprocessSpawnSpec)
+      env: searchEnvironment(),
+    })
+    if (invocation !== undefined) {
+      searchSpawns.set(spec, Object.freeze({
+        invocation,
+        restrict: (target: string, excludedPaths: readonly string[]): SubprocessSpawnSpec => {
+          const terminator = argv.indexOf('--')
+          const options = terminator === -1 ? argv : argv.slice(0, terminator)
+          const exclusions: string[] = []
+          for (const excluded of excludedPaths) {
+            const rel = relative(target, excluded)
+            if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) continue
+            const pattern = literalGlob(rel)
+            exclusions.push(`--glob=!/${pattern}`, `--glob=!/${pattern}/**`)
+          }
+          return {
+            ...spec,
+            argv: [executable, '--no-config', '--no-follow', ...options, ...exclusions, '--', target],
+          }
+        },
+      }))
+    }
+    try {
+      handle = ctx.subprocess.spawn(spec)
+    } finally {
+      searchSpawns.delete(spec)
+    }
   } catch (error: unknown) {
     // Node's spawn() throws synchronously for a NUL in argv, and the local
     // impl can throw synchronously when the signal aborts between the check
@@ -262,6 +336,10 @@ export async function runRipgrep(
   try {
     outcome = await handle.done
   } catch (error: unknown) {
+    // oxlint-disable-next-line typescript/no-unnecessary-condition -- cancellation can arrive while awaiting the provider
+    if (exec.signal.aborted) {
+      throw new SearchError(`${toolName} was aborted before completion (tool timeout or caller cancellation)`, 'SEARCH_ABORTED', { cause: error })
+    }
     throw new SearchError(`${toolName} subprocess failed before reporting an outcome (ripgrep provider failure)`, 'SEARCH_FAILED', { cause: error })
   }
   const stdout = handle.collected.stdout?.readFrom(0)

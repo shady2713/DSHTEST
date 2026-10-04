@@ -25,3 +25,27 @@ export type ImageVariantId = Branded<'ImageVariantId'>
 export function ImageVariantId(value: string): ImageVariantId {
   return value as ImageVariantId
 }
+
+/** Producer-owned durable file-reference identity. */
+export type FileReferenceOwnerId = Branded<'FileReferenceOwnerId'>
+
+/**
+ * Brand a producer identity.
+ * @param value - stable producer identity.
+ * @returns the branded owner identity.
+ */
+export function FileReferenceOwnerId(value: string): FileReferenceOwnerId {
+  return value as FileReferenceOwnerId
+}
+
+/** Provider-issued durable staging receipt. */
+export type FileStageTicket = Branded<'FileStageTicket'>
+
+/**
+ * Brand a stored staging receipt.
+ * @param value - provider-issued receipt identity.
+ * @returns the branded ticket.
+ */
+export function FileStageTicket(value: string): FileStageTicket {
+  return value as FileStageTicket
+}

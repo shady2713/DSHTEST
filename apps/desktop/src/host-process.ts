@@ -3,7 +3,18 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { join } from 'node:path'
 import type { PlatformSession } from '@deepseek-ai/dsh-deepseek-account'
+import {
+  DESKTOP_BROWSER_AUTOMATION_VERSION,
+  readBrowserGroupBindingRequest,
+  type DesktopBrowserCommand,
+  type DesktopBrowserCommandResult,
+  type DesktopBrowserBindingRequest,
+  type DesktopBrowserGroupBindingRequest,
+  type DesktopBrowserControlState,
+} from '@deepseek-ai/dsh-client-ui-sidebar-browser'
+import type { HostTargetRegistry } from './automation-targets.ts'
 import { desktopNodeEnvironment } from './node-environment.ts'
+import { runCommand, type BrowserAutomationTarget } from './browser-automation.ts'
 
 interface ReadyEvent {
   readonly type: 'ready'
@@ -23,18 +34,36 @@ interface PlatformSessionEvent {
   readonly session: PlatformSession | null
 }
 
-type DesktopHostEvent = ReadyEvent | FatalEvent | PlatformSessionEvent | { readonly type: 'shutdown-complete' } | {
-  readonly type: 'update-tasks'
+/**
+ * One automation command from the connected Host. It joins the existing event
+ * union rather than opening a second channel: an unrecognised message fails the
+ * Host, so a command shape that is not declared here is refused loudly rather
+ * than silently dropped.
+ */
+interface BrowserCommandEvent {
+  readonly type: 'browser-command'
+  readonly command: DesktopBrowserCommand
+  /** Correlates the Main's answer; the Host never treats an uncorrelated reply as its own. */
   readonly requestId: number
-  readonly active: boolean
-  readonly error?: string
-} | {
-  readonly type: 'quit-inspection'
-  readonly requestId: number
-  readonly activeTasks: boolean
-  readonly scheduledTasks: boolean
-  readonly error?: string
 }
+
+type DesktopHostEvent = ReadyEvent | FatalEvent | PlatformSessionEvent | BrowserCommandEvent
+  | { readonly type: 'browser-control-ready' }
+  | { readonly type: 'browser-binding'; readonly request: DesktopBrowserBindingRequest }
+  | { readonly type: 'browser-group-binding'; readonly request: DesktopBrowserGroupBindingRequest }
+  | { readonly type: 'browser-command-cancel'; readonly requestId: number; readonly hostEpoch: number }
+  | { readonly type: 'shutdown-complete' } | {
+    readonly type: 'update-tasks'
+    readonly requestId: number
+    readonly active: boolean
+    readonly error?: string
+  } | {
+    readonly type: 'quit-inspection'
+    readonly requestId: number
+    readonly activeTasks: boolean
+    readonly scheduledTasks: boolean
+    readonly error?: string
+  }
 
 /** Correlated answer to one shell control request. */
 type DesktopHostControlResponse = Extract<DesktopHostEvent, { readonly requestId: number }>
@@ -55,6 +84,7 @@ function isDesktopHostEvent(message: unknown): message is DesktopHostEvent {
   const candidate = message as Record<string, unknown>
   switch (candidate.type) {
     case 'shutdown-complete':
+    case 'browser-control-ready':
       return true
     case 'ready':
       return typeof candidate.url === 'string'
@@ -79,6 +109,33 @@ function isDesktopHostEvent(message: unknown): message is DesktopHostEvent {
     }
     case 'fatal':
       return typeof candidate.message === 'string' && (candidate.diagnostic === undefined || typeof candidate.diagnostic === 'string')
+    case 'browser-command': {
+      if (!Number.isSafeInteger(candidate.requestId)) return false
+      const command = candidate.command
+      if (typeof command !== 'object' || command === null) return false
+      const record = command as Record<string, unknown>
+      return record['version'] === DESKTOP_BROWSER_AUTOMATION_VERSION
+        && Number.isSafeInteger(record['requestId'])
+        && Number.isSafeInteger(record['hostEpoch'])
+        && typeof record['target'] === 'string'
+        && typeof record['sessionId'] === 'string' && record['sessionId'].length > 0
+        && typeof record['body'] === 'object' && record['body'] !== null
+    }
+    case 'browser-command-cancel':
+      return Number.isSafeInteger(candidate.requestId) && Number.isSafeInteger(candidate.hostEpoch)
+    case 'browser-group-binding':
+      return readBrowserGroupBindingRequest(candidate.request) !== undefined
+    case 'browser-binding': {
+      const request = candidate.request
+      if (typeof request !== 'object' || request === null || Array.isArray(request)) return false
+      const fields = request as Record<string, unknown>
+      return fields.version === DESKTOP_BROWSER_AUTOMATION_VERSION && Number.isSafeInteger(fields.requestId)
+        && Number.isSafeInteger(fields.hostEpoch) && Number.isSafeInteger(fields.revision)
+        && (fields.kind === 'bind' || fields.kind === 'unbind')
+        && typeof fields.sessionId === 'string' && fields.sessionId.length > 0
+        && typeof fields.target === 'string' && fields.target.length > 0
+        && typeof fields.workspace === 'string' && fields.workspace.length > 0
+    }
     case 'update-tasks':
       return Number.isSafeInteger(candidate.requestId) && typeof candidate.active === 'boolean'
         && (candidate.error === undefined || typeof candidate.error === 'string')
@@ -149,6 +206,8 @@ export class DesktopHostProcess {
   private stopping = false
   private shutdownCompleted = false
   private nextControlId = 1
+  private releaseBrowserState: (() => void) | undefined
+  private readonly browserCommands = new Map<number, { readonly command: DesktopBrowserCommand; readonly abort: AbortController }>()
   private readonly controlRequests = new Map<number, {
     resolve: (response: DesktopHostControlResponse) => void
     reject: (error: Error) => void
@@ -159,12 +218,19 @@ export class DesktopHostProcess {
    * @param runtimeDir - Immutable packages carried by the current application.
    * @param projectDir - Desktop plugin profile and child working directory.
    * @param inspectPort - Optional loopback inspector port for workspace development.
-   * @param environment - Environment inherited by the Host and its plugin subprocesses.
+   * @param environment - Environment inherited by the Host and its plugin
+   *   subprocesses, including the composition-layer handoff a shell running as
+   *   another application adds.
    * @param onFailure - Receives the first unexpected child failure, including after readiness.
    * @param primaryRuntime - Optional bundled dependency payload; when supplied, missing sibling
    *   `office-skills` resources fail Host startup.
    * @param packageManager - Bundled pnpm entry and Node launcher directory, scoped to package operations.
    * @param onPlatformSession - Private credential updates for embedded Platform views.
+   * @param resolveBrowserTarget - Resolves the guest one automation command addresses, or
+   *   undefined when this Host generation owns none; a missing entry refuses the command.
+   * @param hostEpoch - Generation this Host answers for. A command stamped with any other
+   *   value is refused, so a restarted Host does not inherit its predecessor's targets.
+   * @param browserTargets - Main-owned publication and Session authorization registry.
    */
   constructor(
     private readonly node: string,
@@ -177,6 +243,9 @@ export class DesktopHostProcess {
     private readonly packageManager?: { readonly pnpm: string; readonly nodeBin: string },
 
     private readonly onPlatformSession?: (session: PlatformSession | null) => void,
+    private readonly resolveBrowserTarget?: (target: string) => BrowserAutomationTarget | undefined,
+    private readonly hostEpoch = 0,
+    private readonly browserTargets?: HostTargetRegistry,
   ) {}
 
   /**
@@ -196,8 +265,11 @@ export class DesktopHostProcess {
       ...this.packageManager === undefined ? [] : [this.packageManager.pnpm, this.packageManager.nodeBin],
     ], {
       cwd: this.projectDir,
+      // The caller hands over the environment the child boots under, identity
+      // handoff included; this process resolves no Electron-owned path itself.
       env: desktopNodeEnvironment(this.node, undefined, this.environment),
       stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+      serialization: 'advanced',
     })
     this.child = child
     child.stderr?.setEncoding('utf8')
@@ -216,6 +288,27 @@ export class DesktopHostProcess {
         else this.fail(new Error('dsh desktop host acknowledged an unrequested shutdown'))
       }
       else if (message.type === 'fatal') this.fail(new DesktopHostFatalError(message.message, message.diagnostic))
+      else if (message.type === 'browser-command') {
+        void this.answerBrowserCommand(message.command, message.requestId)
+      }
+      else if (message.type === 'browser-command-cancel') {
+        if (message.hostEpoch === this.hostEpoch) this.browserCommands.get(message.requestId)?.abort.abort()
+      }
+      else if (message.type === 'browser-control-ready') {
+        this.releaseBrowserState?.()
+        this.releaseBrowserState = this.browserTargets?.subscribe((state) =>{  this.publishBrowserState(state) })
+      }
+      else if (message.type === 'browser-binding') {
+        const result = this.browserTargets?.bind(message.request) ?? { version: DESKTOP_BROWSER_AUTOMATION_VERSION,
+          requestId: message.request.requestId, hostEpoch: this.hostEpoch, ok: false }
+        child.send({ type: 'browser-binding-result', result }, (error) => { if (error !== null) this.fail(error) })
+      }
+      else if (message.type === 'browser-group-binding') {
+        const result = this.browserTargets?.bindGroup(message.request) ?? { version: DESKTOP_BROWSER_AUTOMATION_VERSION,
+          requestId: message.request.requestId, hostEpoch: this.hostEpoch, ok: false }
+        this.revokeBrowserCommands()
+        child.send({ type: 'browser-group-binding-result', result }, (error) => { if (error !== null) this.fail(error) })
+      }
       else {
         const request = this.controlRequests.get(message.requestId)
         if (message.error === undefined) request?.resolve(message)
@@ -257,6 +350,55 @@ export class DesktopHostProcess {
     return { activeTasks: response.activeTasks, scheduledTasks: response.scheduledTasks }
   }
 
+  /**
+   * Admit and run one Host automation command, then answer it on the same
+   * connection. The Host is the only sender, and the reply carries the result
+   * rather than a bare failure, so an unknown target, a moved Host generation and
+   * a superseded observation are all distinguishable to the caller.
+   */
+  private async answerBrowserCommand(command: DesktopBrowserCommand, envelope: number): Promise<void> {
+    const child = this.child
+    if (this.browserCommands.has(envelope)) {
+      this.fail(new Error('desktop browser: duplicate in-flight command envelope'))
+      return
+    }
+    const abort = new AbortController()
+    this.browserCommands.set(envelope, { command, abort })
+    // The envelope id correlates the answer on the wire; the result the Host reads
+    // always carries the command's own id, so a refusal names the call it refused.
+    let result: DesktopBrowserCommandResult
+    try {
+      result = child === undefined || !child.connected || this.failureReported || this.stopping
+        ? { version: DESKTOP_BROWSER_AUTOMATION_VERSION, requestId: command.requestId, ok: false, outcome: 'not-executed', reason: 'revoked' }
+        : await runCommand(command, {
+          currentEpoch: this.hostEpoch,
+          target: this.resolveBrowserTarget?.(command.target),
+          signal: abort.signal,
+          authorized: candidate => this.browserTargets?.authorizedCommand(candidate) === true,
+        })
+    } finally {
+      this.browserCommands.delete(envelope)
+    }
+    if (child !== this.child || child?.connected !== true || this.stopping) return
+    child.send({ type: 'browser-command-result', result, requestId: envelope }, (error) => {
+      if (error !== null) this.fail(error)
+    })
+  }
+
+  private publishBrowserState(state: DesktopBrowserControlState): void {
+    this.revokeBrowserCommands()
+    if (this.child?.connected !== true || this.stopping || this.failureReported) return
+    this.child.send({ type: 'browser-control-state', state }, (error) => { if (error !== null) this.fail(error) })
+  }
+
+  private revokeBrowserCommands(): void {
+    for (const pending of this.browserCommands.values()) {
+      if (this.stopping || this.failureReported || this.browserTargets?.authorizedCommand(pending.command) !== true) {
+        pending.abort.abort()
+      }
+    }
+  }
+
   private async control(
     request: { readonly type: 'update-tasks'; readonly action: 'inspect' | 'lock' | 'unlock' } | { readonly type: 'quit-inspection' },
     deadlineMs: number, deadlineMessage: string,
@@ -286,9 +428,12 @@ export class DesktopHostProcess {
    * other failures do not confirm exit.
    */
   async stop(requireGraceful = false): Promise<void> {
+    this.releaseBrowserState?.()
+    this.releaseBrowserState = undefined
     const child = this.child
     if (child === undefined) return
     this.stopping = true
+    this.revokeBrowserCommands()
     this.onPlatformSession?.(null)
     if (child.connected) child.send({ type: 'shutdown' }, (error) => { if (error !== null) this.fail(error) })
     const exited = this.exitPromise ?? Promise.resolve()
@@ -308,6 +453,7 @@ export class DesktopHostProcess {
   }
 
   private fail(error: Error): void {
+    for (const pending of this.browserCommands.values()) pending.abort.abort()
     this.onPlatformSession?.(null)
     this.readyReject(error)
     for (const request of this.controlRequests.values()) request.reject(error)

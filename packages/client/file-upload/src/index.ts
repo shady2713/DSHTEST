@@ -3,11 +3,14 @@
 import { randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import type { FileAttachmentRef } from '@deepseek-ai/dsh-attachment'
+import type AttachmentStore from '@deepseek-ai/dsh-attachment'
+import { bindFilePublisher, type FilePublisher } from '@deepseek-ai/dsh-attachment/file-publisher'
+import type { FileAttachmentRef, FileStageTicket, StagedFileAttachment } from '@deepseek-ai/dsh-attachment'
 import type {} from '@deepseek-ai/dsh-client-connection'
 import type { CommandFileReceiptResolver } from '@deepseek-ai/dsh-commands'
 import { scopeOf } from '@deepseek-ai/dsh-scope'
 import type { Session, SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
+import type SessionStore from '@deepseek-ai/dsh-session'
 import { Remote, RemoteError, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import { handleFileUploadHttp } from './http-route.ts'
 import { FILE_UPLOAD_PATH } from './protocol.ts'
@@ -22,8 +25,18 @@ declare module '@deepseek-ai/cordis' {
   }
 }
 
+const filePublishers = new WeakMap<object, FilePublisher>()
+
+function filePublisherFor(service: object): FilePublisher {
+  const original: unknown = Reflect.get(service, Symbol.for('cordis.original'))
+  const publisher = filePublishers.get(typeof original === 'object' && original !== null ? original : service)
+  if (publisher === undefined) throw new Error('file publication authority is unavailable')
+  return publisher
+}
+
 interface StagedFileUpload {
   readonly file: FileAttachmentRef
+  readonly ticket: FileStageTicket
   /** Prompt that accepted this receipt; absent until successful admission. */
   requestId?: string
 }
@@ -55,14 +68,22 @@ class PromptFileBindingGuard implements PromptFileBinding {
 
 /** Host service owning upload storage and Agent-scoped staged receipts. */
 export class FileUploads extends TypertRemoteService {
-  static inject = ['agents', 'attachments', 'commands', 'connection']
+  static inject = ['agents', 'attachments', 'commands', 'connection', 'sessions']
 
-  private readonly stagedFiles = new WeakMap<Session, Map<FileUploadReceiptId, StagedFileUpload>>()
+  private readonly stagedFiles = new Map<Session, Map<FileUploadReceiptId, StagedFileUpload>>()
+  private readonly pendingReleases = new Set<Promise<void>>()
+  private readonly pendingUploads = new Set<Promise<FileUploadValue>>()
+  private readonly releaseFailures: unknown[] = []
+  private readonly attachmentStore: AttachmentStore
+  private readonly sessionStore: SessionStore
+  private closing = false
   private agentResolver: AgentResolver | undefined
 
   /** @param ctx - Host context carrying Agent, attachment, command, and Connection services. */
   constructor(ctx: Context) {
     super(ctx, 'fileUploads')
+    this.attachmentStore = ctx.attachments
+    this.sessionStore = ctx.sessions
     const resolve: CommandFileReceiptResolver = (agent, receiptId) =>
       this.resolve(agent, receiptId as FileUploadReceiptId)
     ctx.effect(
@@ -79,7 +100,16 @@ export class FileUploads extends TypertRemoteService {
       'file-upload: streaming route',
     )
     ctx.on('session/event', (session, event) => { this.observeSessionEvent(session, event) })
-    ctx.on('session/disposed', (session) => { this.stagedFiles.delete(session) })
+    ctx.on('session/disposed', (session) => { this.abandonSession(session) })
+    let draining: Promise<void> | undefined
+    const drain = async (): Promise<void> => {
+      this.closing = true
+      await Promise.allSettled([...this.pendingUploads])
+      for (const session of this.stagedFiles.keys()) this.abandonSession(session)
+      await Promise.allSettled([...this.pendingReleases])
+      if (this.releaseFailures.length > 0) throw new AggregateError(this.releaseFailures, 'file-upload: staging release failed')
+    }
+    filePublishers.set(this, bindFilePublisher(ctx, () => draining ??= drain()))
   }
 
   /**
@@ -105,7 +135,7 @@ export class FileUploads extends TypertRemoteService {
   @Remote('upload')
   upload(agent: Agent, request: EncodedFileUploadRequest, signal: AbortSignal): Promise<FileUploadValue> {
     signal.throwIfAborted()
-    return this.commit(agent, async () => this.ctx.attachments.admitEncodedFile({
+    return this.trackUpload(agent, async () => filePublisherFor(this).stageEncodedFile({
       data: request.data,
       ...(request.name === undefined ? {} : { name: request.name }),
     }))
@@ -123,7 +153,7 @@ export class FileUploads extends TypertRemoteService {
     readonly name?: string
   }): Promise<FileUploadValue> {
     const agent = await this.resolveAgent(request.sessionId)
-    return this.commit(agent, async () => this.ctx.attachments.saveFileStream({
+    return this.trackUpload(agent, async () => filePublisherFor(this).stageFileStream({
       data: request.data,
       ...(request.signal === undefined ? {} : { signal: request.signal }),
       ...(request.name === undefined ? {} : { name: request.name }),
@@ -180,13 +210,22 @@ export class FileUploads extends TypertRemoteService {
     this.retire(agent.session, requestId)
   }
 
-  private async commit(agent: Agent, save: () => Promise<FileAttachmentRef>): Promise<FileUploadValue> {
+  private trackUpload(agent: Agent, save: () => Promise<StagedFileAttachment>): Promise<FileUploadValue> {
+    const pending = this.commit(agent, save)
+    this.pendingUploads.add(pending)
+    const finish = (): void => { this.pendingUploads.delete(pending) }
+    void pending.then(finish, finish)
+    return pending
+  }
+
+  private async commit(agent: Agent, save: () => Promise<StagedFileAttachment>): Promise<FileUploadValue> {
     this.assertOrdinaryAgent(agent)
-    let file: FileAttachmentRef
+    this.assertAcceptingUploads()
+    let stored: StagedFileAttachment
     try {
-      file = await save()
+      stored = await save()
     } catch (error) {
-      if (this.ctx.attachments.isAttachmentError(error)) {
+      if (this.attachmentStore.isAttachmentError(error)) {
         throw new RemoteError('session/attachment-invalid' as never, error.message, { reason: error.code } as never)
       }
       throw new RemoteError(
@@ -196,7 +235,13 @@ export class FileUploads extends TypertRemoteService {
         { cause: error },
       )
     }
-    if (this.ctx.agents.get(agent.id) !== agent) {
+    if (this.closing || this.ctx.agents.get(agent.id) !== agent) {
+      try {
+        await filePublisherFor(this).releaseFileStage(stored.ticket)
+      } catch (error: unknown) {
+        this.releaseFailures.push(error)
+        throw error
+      }
       throw new RemoteError(
         'session/not-found',
         `session "${agent.id}" was disposed before its file upload completed`,
@@ -209,8 +254,8 @@ export class FileUploads extends TypertRemoteService {
       this.stagedFiles.set(agent.session, staged)
     }
     const receiptId = randomUUID() as FileUploadReceiptId
-    staged.set(receiptId, { file })
-    return { receiptId, file }
+    staged.set(receiptId, stored)
+    return { receiptId, file: stored.file }
   }
 
   private async resolveAgent(sessionId: SessionId): Promise<Agent> {
@@ -221,6 +266,10 @@ export class FileUploads extends TypertRemoteService {
       throw new RemoteError('session/not-found', `session "${sessionId}" is not attached`, { sessionId })
     }
     return resolver(sessionId)
+  }
+
+  private assertAcceptingUploads(): void {
+    if (this.closing) throw new RemoteError('gateway/internal', 'file upload service is closing', {})
   }
 
   private assertAgentScope(agent: Agent): void {
@@ -247,10 +296,46 @@ export class FileUploads extends TypertRemoteService {
   private retire(session: Session, requestId: string): void {
     const staged = this.stagedFiles.get(session)
     if (staged === undefined) return
+    const retired: StagedFileUpload[] = []
     for (const [receiptId, upload] of staged) {
-      if (upload.requestId === requestId) staged.delete(receiptId)
+      if (upload.requestId === requestId) {
+        staged.delete(receiptId)
+        retired.push(upload)
+      }
     }
     if (staged.size === 0) this.stagedFiles.delete(session)
+    if (retired.length > 0) this.scheduleRelease(async () => {
+      // No durability listener, a failed flush, or a disposed Session cannot establish safe release.
+      if (this.sessionStore.get(session.id) !== session || !await this.sessionStore.flush(session)) return
+      await this.releaseStages(retired)
+    })
+  }
+
+  private abandonSession(session: Session): void {
+    const staged = this.stagedFiles.get(session)
+    if (staged === undefined) return
+    this.stagedFiles.delete(session)
+    const unused = [...staged.values()].filter(upload => upload.requestId === undefined)
+    // Bound receipts may still name queued or buffered history; their durable tickets stay retained.
+    if (unused.length > 0) this.scheduleRelease(async () => {
+      await this.releaseStages(unused)
+    })
+  }
+
+  private async releaseStages(uploads: readonly StagedFileUpload[]): Promise<void> {
+    const released = await Promise.allSettled(uploads.map(upload => filePublisherFor(this).releaseFileStage(upload.ticket)))
+    const errors = released.flatMap((result): unknown[] => result.status === 'rejected' ? [result.reason] : [])
+    if (errors.length > 0) throw new AggregateError(errors, 'file-upload: staging release failed')
+  }
+
+  private scheduleRelease(operation: () => Promise<void>): void {
+    // Session observers all finish before a flush can consume their routed events.
+    const pending = Promise.resolve().then(operation).catch((error: unknown) => {
+      this.releaseFailures.push(error)
+      this.ctx.logger.warn('file-upload: staging remains retained after a release failure')
+    })
+    this.pendingReleases.add(pending)
+    void pending.then(() => { this.pendingReleases.delete(pending) })
   }
 }
 

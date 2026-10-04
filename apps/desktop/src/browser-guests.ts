@@ -1,20 +1,46 @@
 /** Main-process ownership and fixed isolation policy for Sidebar webview guests. */
 import { randomUUID } from 'node:crypto'
+import { brandString } from '@deepseek-ai/dsh-brand'
 import { app, session, type BrowserWindow, type Session, type WebContents } from 'electron'
-import type { DesktopBrowserLeaseId, DesktopBrowserOpenRequest, DesktopBrowserReservation } from '@deepseek-ai/dsh-client-ui-sidebar-browser/types'
+import type {
+  DesktopBrowserLeaseId,
+  DesktopBrowserOpenRequest,
+  DesktopBrowserReservation,
+  DesktopBrowserTargetId,
+  DesktopBrowserWorkspaceKey,
+  DesktopBrowserExecutionRole,
+} from '@deepseek-ai/dsh-client-ui-sidebar-browser'
 import { DESKTOP_IPC } from './ipc.ts'
+import type { BrowserAutomationTarget } from './browser-automation.ts'
+import { LeasedGuestTarget } from './browser-automation-target.ts'
+
+/**
+ * A target is a lease, so its identity is the lease id under a distinct brand: a
+ * caller holding a lease id cannot pass it where a target id is expected without
+ * saying that it means the attached, automatable guest.
+ * @param lease - lease the guest is attached under.
+ * @returns the same identity branded as an automation target.
+ */
+function targetIdOf(lease: DesktopBrowserLeaseId): DesktopBrowserTargetId {
+  return brandString<DesktopBrowserTargetId>(lease)
+}
 
 interface GuestLease {
   readonly owner: WebContents
   readonly partition: string
+  readonly workspace: DesktopBrowserWorkspaceKey
+  readonly executionRole?: DesktopBrowserExecutionRole
   attached: boolean
   guest?: WebContents
+  target?: LeasedGuestTarget
   releaseInput?: () => void
+  releaseTarget?: (() => void) | undefined
 }
 
 /** Owns workspace storage partitions independently from individual tab guests. */
 export class DesktopBrowserGuests {
   private readonly partitions = new Map<string, string>()
+  private readonly rolePartitions = new Map<string, { partition: string; executionRole: DesktopBrowserExecutionRole }>()
   private readonly leases = new Map<DesktopBrowserLeaseId, GuestLease>()
 
   /** @param hostUrl - current authenticated DSH Host, which guests cannot request. */
@@ -37,8 +63,57 @@ export class DesktopBrowserGuests {
       this.partitions.set(workspace, partition)
     }
     const lease = randomUUID() as DesktopBrowserLeaseId
-    this.leases.set(lease, { owner, partition, attached: false })
+    this.leases.set(lease, { owner, partition, workspace: brandString<DesktopBrowserWorkspaceKey>(workspace), attached: false })
     return { lease, partition }
+  }
+
+  /**
+   * Reserve a role guest for the trusted Main execution-group coordinator.
+   * @param owner - authenticated application window; ordinary renderer IPC cannot call this method.
+   * @param executionRole - complete project, batch, activation and role identity.
+   * @returns role-isolated guest reservation, reused only for that exact role identity.
+   */
+  acquireRole(owner: WebContents, executionRole: DesktopBrowserExecutionRole): DesktopBrowserReservation {
+    const key = JSON.stringify([executionRole.owner.project, executionRole.owner.run, executionRole.owner.group,
+      executionRole.owner.activation, executionRole.owner.sessionId, executionRole.owner.hostEpoch,
+      executionRole.owner.workspace, executionRole.role])
+    let storage = this.rolePartitions.get(key)
+    if (storage === undefined) {
+      storage = { partition: `dsh-execution-role-${randomUUID()}`, executionRole }
+      this.configureSession(session.fromPartition(storage.partition))
+      this.rolePartitions.set(key, storage)
+    }
+    const lease = brandString<DesktopBrowserLeaseId>(randomUUID())
+    this.leases.set(lease, { owner, partition: storage.partition, workspace: executionRole.owner.workspace,
+      executionRole, attached: false })
+    return { lease, partition: storage.partition }
+  }
+
+  /**
+   * Close all role guests and forget their storage reuse keys after group revocation.
+   * @param owner - owning application window.
+   * @param executionRole - identity of the group to release; the role field does not narrow release.
+   * @returns after every owned group guest is destroyed; new acquisitions get fresh partitions.
+   */
+  async releaseRoleGroup(owner: WebContents, executionRole: DesktopBrowserExecutionRole): Promise<void> {
+    const group = executionRole.owner
+    const matches = (role: DesktopBrowserExecutionRole): boolean => role.owner.group === group.group
+      && role.owner.activation === group.activation
+      && role.owner.hostEpoch === group.hostEpoch
+    const owned = [...this.leases].filter(([, lease]) => lease.owner === owner && lease.executionRole !== undefined
+      && matches(lease.executionRole))
+    const result = await Promise.allSettled(owned.map(([id]) => this.release(owner, id)))
+    for (const [key, storage] of this.rolePartitions) {
+      if (matches(storage.executionRole)) this.rolePartitions.delete(key)
+    }
+    const failures: unknown[] = []
+    for (const item of result) {
+      if (item.status === 'rejected') {
+        const reason: unknown = item.reason
+        failures.push(reason)
+      }
+    }
+    if (failures.length > 0) throw new AggregateError(failures, 'desktop browser: role guest release failed')
   }
 
   /**
@@ -53,6 +128,7 @@ export class DesktopBrowserGuests {
     if (lease === undefined) return
     if (lease.owner !== owner) throw new Error('desktop browser: guest belongs to another window')
     lease.releaseInput?.()
+    lease.releaseTarget?.()
     this.leases.delete(key)
     const guest = lease.guest
     if (guest !== undefined && !guest.isDestroyed()) {
@@ -66,8 +142,17 @@ export class DesktopBrowserGuests {
    * Install attachment checks before the application document can create a webview.
    * @param window - primary application window.
    * @param attachInput - attaches native input after guest ownership is verified and returns its disposer.
+   * @param hostEpoch - reads the connected Host generation when a guest attaches.
+   * @param registerTarget - receives one automation target per attached guest and returns its disposer.
+   * @param changed - publishes updated Main-owned target URLs after navigation.
    */
-  bind(window: BrowserWindow, attachInput: (guest: WebContents, name: DesktopBrowserLeaseId) => () => void): void {
+  bind(
+    window: BrowserWindow,
+    attachInput: (guest: WebContents, name: DesktopBrowserLeaseId) => () => void,
+    hostEpoch: () => number = () => 0,
+    registerTarget?: (target: BrowserAutomationTarget) => () => void,
+    changed?: () => void,
+  ): void {
     const owner = window.webContents
     owner.on('will-attach-webview', (event, preferences, params) => {
       const id = typeof params.src === 'string' && params.src.startsWith('about:blank#')
@@ -106,12 +191,21 @@ export class DesktopBrowserGuests {
         lease.guest = guest
         attachedLease = id
         lease.releaseInput = attachInput(guest, id)
-        guest.once('destroyed', () => { lease.releaseInput?.(); this.leases.delete(id) })
+        // A target is a lease: its identity is the lease id, so a command cannot
+        // address a guest this window does not own or outlive.
+        lease.target = new LeasedGuestTarget(
+          targetIdOf(id), hostEpoch(), () => guest, url => this.allowedNavigation(url), lease.workspace,
+          window,
+        )
+        if (lease.executionRole !== undefined) Object.assign(lease.target, { executionRole: lease.executionRole })
+        lease.releaseTarget = registerTarget?.(lease.target)
+        guest.once('destroyed', () => { lease.releaseInput?.(); lease.releaseTarget?.(); this.leases.delete(id) })
       })
       guest.setWindowOpenHandler(({ url, postBody }) => {
         const lease = attachedLease === undefined ? undefined : this.leases.get(attachedLease)
         if (attachedLease !== undefined && lease?.guest === guest && lease.owner === owner && !owner.isDestroyed()
-          && postBody === undefined && this.allowedNavigation(url)) {
+          && postBody === undefined && this.allowedNavigation(url)
+          && (lease.target?.authorizedSession() === undefined || lease.target.permitsNavigation(url))) {
           const request: DesktopBrowserOpenRequest = { lease: attachedLease, url: new URL(url).href }
           owner.send(DESKTOP_IPC.browserOpenRequested, request)
         }
@@ -123,6 +217,8 @@ export class DesktopBrowserGuests {
       guest.on('will-redirect', (event, url, _inPlace, mainFrame) => {
         if (mainFrame && !this.allowedNavigation(url)) event.preventDefault()
       })
+      guest.on('did-navigate', () => { changed?.() })
+      guest.on('did-navigate-in-page', (_event, _url, mainFrame) => { if (mainFrame) changed?.() })
       guest.on('will-attach-webview', (event) => { event.preventDefault() })
       guest.on('login', (event, _details, _authInfo, callback) => { event.preventDefault(); callback() })
     })
@@ -147,9 +243,12 @@ export class DesktopBrowserGuests {
     browserSession.webRequest.onBeforeRequest((details, callback) => {
       const url = new URL(details.url)
       const network = ['http:', 'https:', 'ws:', 'wss:'].includes(url.protocol)
-      callback({ cancel: network
+      const lease = details.resourceType === 'mainFrame'
+        ? [...this.leases.values()].find(item => item.guest?.id === details.webContentsId) : undefined
+      const outsideBinding = lease?.target?.authorizedSession() !== undefined && !lease.target.permitsNavigation(details.url)
+      callback({ cancel: outsideBinding || (network
         ? url.username !== '' || url.password !== '' || this.isApplicationHost(url)
-        : !['about:', 'data:', 'blob:'].includes(url.protocol) })
+        : !['about:', 'data:', 'blob:'].includes(url.protocol)) })
     })
   }
 

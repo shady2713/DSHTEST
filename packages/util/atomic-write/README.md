@@ -38,6 +38,23 @@ await writeFileAtomic('/home/u/.dsh/cordis.patch.yml', text, { mode: 0o600 })
 
 Parent directories are created as needed, and readers observe either the old or the new complete content. On Windows, transient replacement interference reported as `EACCES`, `EBUSY`, or `EPERM` is retried for a bounded interval; any remaining failure removes the temporary file and leaves the target untouched.
 
+### Retrying a rename with your own cadence
+
+`renameAtomicTemp` is that retry on its own, for a write flow that needs different work around it — a `fsync` of the temp file and its parent directory, for instance, which `writeFileAtomic` does not do. It renames a temp file you have already written and retried nothing else; a caller that states its own `wait` seam also decides when the backoff actually runs.
+
+```ts
+import { renameAtomicTemp } from '@deepseek-ai/dsh-atomic-write'
+import type { AtomicRenamePolicy } from '@deepseek-ai/dsh-atomic-write'
+
+declare const temp: string
+declare const target: string
+declare const policy: AtomicRenamePolicy
+
+await renameAtomicTemp(temp, target, policy)
+```
+
+The delay list is the retry budget: its length N buys N retries, so at most N+1 attempts, and an empty list attempts once. `writeFileAtomic` states a fixed eight-entry list whose delays double from 20 ms to a 200 ms ceiling; a flow that knows how long the software interfering with its files holds them states its own. An exhausted budget reports the last refusal, and removing the temp file afterwards is the caller's work.
+
 ### Coordinating writers
 
 For a read-render-commit cycle that a bare atomic commit cannot make safe on its own, hold the writer lock around the operation:
@@ -76,12 +93,12 @@ The package is built on one separation: the atomic commit owns the swap, and the
 
 | File | Role |
 |---|---|
-| [`src/index.ts`](src/index.ts) | `writeFileAtomic` and `withFileLock`, the package's whole surface |
+| [`src/index.ts`](src/index.ts) | `writeFileAtomic`, `renameAtomicTemp`, and `withFileLock`, the package's whole surface |
 | — | No runtime invariant companion is published; this pure filesystem primitive owns no event stream or mutable runtime data; its replacement contract is enforced by unit tests. |
 
 ### Write path
 
-`writeFileAtomic` writes a random-suffix sibling opened with exclusive create (`wx`), then renames it over the target. The exclusive open refuses to follow a symlink planted at a guessable temp path; the same-directory sibling keeps the rename on one filesystem; and the rename replaces a symlinked target itself instead of writing through to its referent. A Windows retry keeps the same complete sibling and uses bounded exponential backoff, so temporary use of the target by software outside the cooperative writer lock cannot turn a safe replacement into an immediate failure; the archived [retry decision record](../../../.agents/notes/archived/bug-fix/2026-08-29-windows-atomic-replace-retry.md) documents the original rationale and rejected alternatives.
+`writeFileAtomic` writes a random-suffix sibling opened with exclusive create (`wx`), then renames it over the target. The exclusive open refuses to follow a symlink planted at a guessable temp path; the same-directory sibling keeps the rename on one filesystem; and the rename replaces a symlinked target itself instead of writing through to its referent. A Windows retry keeps the same complete sibling and uses bounded exponential backoff, so temporary use of the target by software outside the cooperative writer lock cannot turn a safe replacement into an immediate failure; the archived [retry decision record](../../../.agents/notes/archived/bug-fix/2026-08-29-windows-atomic-replace-retry.md) documents the original rationale and rejected alternatives. `renameAtomicTemp` owns that retry step and the `EACCES`/`EBUSY`/`EPERM` set it accepts on Windows, so a flow that fsyncs before renaming reuses one implementation instead of carrying a second copy.
 
 `withFileLock` creates a `<filename>.lock` sibling with `wx`. `EEXIST` identifies contention directly; `EPERM` does so only when a fresh `lstat` confirms the lock path exists, covering Windows exclusive-create behavior without hiding an unrelated permission failure. The lock records its creator's PID as `<pid>\n` and is removed by the holder in a `finally`. A contender that reads a record whose PID a signal probe reports as absent (`ESRCH`) creates a `<filename>.lock.takeover-<record hash>` claim with `wx`, re-reads the lock and probes its PID again, removes it only if it still holds the same record and that PID is still absent, removes the claim, and retries at once. A holder that exists under another user (`EPERM`) and a record naming the contender's own process are waited for. Contenders that read the same record contend for one claim, and the second probe rejects a holder that reused the exited PID, so a takeover never removes a lock that another contender acquired after the exited holder's. Takeover proves only that the recorded process exited; an operation that starts other writers leaves its successor a way to find them, as the [Plugin Manager](../../boot/plugin-manager/README.md) does for its pnpm runs. Contention backs off exponentially and fails when the per-call `waitMs` deadline (default two seconds) passes; the [takeover decision record](../../../.agents/notes/implemented/bug-fix/2026-09-24-exited-holder-lock-takeover.md) owns the rationale.
 

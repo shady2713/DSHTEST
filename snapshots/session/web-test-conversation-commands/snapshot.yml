@@ -1,0 +1,12 @@
+version: 1
+scenario: web-test-conversation-commands
+profile: headless
+composition: web-test-conversation-commands
+recording: authored
+replay:
+  override: true
+header:
+  class: web-test-conversation-commands
+  pin: true
+  changes: 2
+  promptChanges: 2

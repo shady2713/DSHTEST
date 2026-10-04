@@ -177,6 +177,8 @@ interface ComposedProfile {
   profile: Profile
   /** Immutable runtime resolution computed before any plugin imports. */
   resolution: RuntimeResolution
+  /** Application composition below user patches, frozen for this invocation. */
+  applicationPatches: PatchOptions[]
   /** Command-line overlay contents, frozen for this invocation. */
   overlays: PatchOptions[]
 }
@@ -184,12 +186,13 @@ interface ComposedProfile {
 /**
  * Load `name` and compose its effective patch stack: bundle layers in
  * `dsh.profile.bundles` order (a base-backed profile gets the base bundle's
- * platform-gated shell rows), the profile's user layer, the home-level user
+ * platform-gated shell rows), the application composition, the profile's user layer, the home-level user
  * layer (`$DSH_HOME/cordis.patch.yml` — machine-local preferences that apply
  * to every profile, so it outranks the per-profile layer), `--patch` overlays,
  * then the telemetry switch.
  * @param name - the profile name.
  * @param patchFiles - `--patch` overlay paths, in argv order.
+ * @param applicationPatchFiles - application composition paths below user patches.
  * @param fromDefaultProfile - shipped template for a missing named profile.
  * @param resolvedProfile - application-owned profile and installation.
  * @returns the profile and its patch layers.
@@ -197,6 +200,7 @@ interface ComposedProfile {
 async function composeProfile(
   name: string,
   patchFiles: readonly string[],
+  applicationPatchFiles: readonly string[],
   fromDefaultProfile?: string,
   resolvedProfile?: ResolvedProfileRuntime,
 ): Promise<ComposedProfile> {
@@ -205,7 +209,8 @@ async function composeProfile(
   const resolutionOptions = { installAnchor: resolvedProfile?.installAnchor ?? INSTALL_ANCHOR, profile }
   const resolution = await createRuntimeResolution(resolutionOptions)
   const overlays = patchFiles.flatMap(file => loadOverlayPatches(NAME, resolve(file)))
-  return { profile, resolution, overlays }
+  const applicationPatches = applicationPatchFiles.flatMap(file => loadOverlayPatches(NAME, resolve(file)))
+  return { profile, resolution, applicationPatches, overlays }
 }
 
 /** An application-owned profile and its independent installation fallback. */
@@ -228,6 +233,8 @@ export interface RunProfileOptions {
   fromDefaultProfile?: string | undefined
   /** `--patch` overlay paths, in argv order. */
   patchFiles: readonly string[]
+  /** Application composition paths, applied after bundles and before user patches. */
+  applicationPatchFiles: readonly string[]
   /** The invocation's inner arguments, handed to the tree through `ctx.cmdlineArgs`. */
   args: readonly string[]
   /** Application-owned package runtime, scoped to plugin package operations. */
@@ -263,7 +270,7 @@ export async function runProfile(options: RunProfileOptions): Promise<{ ctx: Con
   })()
   try {
     const composed = await composeProfile(
-      options.profile, options.patchFiles, options.fromDefaultProfile, options.resolvedProfile,
+      options.profile, options.patchFiles, options.applicationPatchFiles, options.fromDefaultProfile, options.resolvedProfile,
     )
     const appReady = createAppReady()
     const shutdown = createProcessShutdown(dispose)
@@ -291,7 +298,8 @@ export async function runProfile(options: RunProfileOptions): Promise<{ ctx: Con
       installAnchor: options.resolvedProfile?.installAnchor ?? INSTALL_ANCHOR,
       startedBundles: composed.profile.layers.map(layer => layer.packageName),
       cwd: process.cwd(), home: resolveDshHome(),
-      overlays: composed.overlays, telemetryDisabledEnv: process.env.DSH_TELEMETRY_DISABLED,
+      applicationPatches: composed.applicationPatches, overlays: composed.overlays,
+      telemetryDisabledEnv: process.env.DSH_TELEMETRY_DISABLED,
     }
     const ctx = await boot(NAME, rootConfig, readProfilePatches(NAME, profileContext, composed.profile), async (hostCtx) => {
       app.current = hostCtx

@@ -1,0 +1,104 @@
+# Web testing application composition layer.
+#
+# This layer mounts the application plugin and closes every product egress the
+# selected desktop baseline enables by default. The card requires the disable to
+# be explicit and in the composition: the base bundle's own comment records that a
+# row is opted out by patching the entry `disabled`, because config cannot disable
+# a row, so each control below is an entry-level disable rather than a config value.
+#
+# Verification and its limit: `session-telemetry-otel` and `session-log-deepseek`
+# are enabled on every base-backed profile and their disable is therefore observable
+# through any CLI-bootable profile. `desktop-product-telemetry` and
+# `product-analytics` live in the web-app bundle and activate only when the profile
+# context is named `desktop`; the CLI refuses to boot or dump that profile
+# (`apps/cli/src/args.ts:83`), so their final state can only be confirmed by booting
+# the Electron application itself. They are disabled here unconditionally so the
+# disable does not depend on that expression being evaluated.
+
+# The application plugin is added, not updated. A flat `- id:` row is an id-targeted
+# update: when the id is absent the loader reports `entry "web-test" not found`,
+# drops the row, and still boots clean. Only `- insert:` creates a new entry.
+# Its name is the built file URL rather than a bare package name, because a profile's
+# resolver cannot resolve the bare `@deepseek-ai/dsh-web-test` from this checkout —
+# the same class as the REQUEST_EXTENSION finding.
+- insert:
+    - id: web-test
+      name: ./lib/index.js
+    - id: web-test-contracts
+      name: ../web-test-contracts/lib/index.js
+    - id: web-test-runtime
+      name: ../web-test-runtime/lib/index.js
+      config:
+        controlRoot: !!js dshHomePath('control')
+        storageMode: generation-json
+    - id: web-test-prototype-owner
+      name: ./lib/prototype-entry.js
+    - id: web-test-scope-provider
+      name: ./lib/scope-provider.js
+    - id: web-test-models
+      name: ../web-test-models/lib/index.js
+      config:
+        verificationTtlMs: 300000
+        selections: {}
+        policies: {}
+    - id: web-test-conversation
+      name: ../web-test-conversation/lib/index.js
+      config:
+        askUserMode: legacy
+    - id: web-test-commands
+      name: ../web-test-conversation/lib/commands.js
+    - id: web-test-presentation
+      name: ../web-test-presentation/lib/index.js
+    - id: web-test-assembly
+      name: ./lib/assembly.js
+
+# The pre-execution policy, added the same way. It attaches at the tool registry's
+# monotonic guard stage, so it applies to every model-initiated call the base bundle
+# can reach, and it decorates the public capability services so a direct call is
+# decided too. Its protected directories are named by role: the upload, download, and
+# temporary-material directories this application's own storage will use once it has
+# one. `dataRoot` is the launcher's own label, so the paths are stated by the
+# composition rather than defaulted in the plugin.
+- insert:
+    - id: web-test-policy
+      name: ../web-test-policy/lib/index.js
+      config:
+        protectedPaths:
+          - path: !!js dshHomePath('attachments')
+            role: upload
+          - path: !!js dshHomePath('downloads')
+            role: download
+          - path: !!js dshHomePath('staging')
+            role: temporary-material
+        confirmationRequiredFor:
+          - read-source
+        confirmationTtlMs: 120000
+        authorizationValidityMs: 600000
+        maxActionsPerFlow: 40
+
+# OTel session capture. The base bundle defaults this row to FEEDBACK_ONLY, which
+# still exports a Session-log prefix on explicit user feedback, carrying the
+# harness home's anonymous user id as the resource user.id.
+- id: session-telemetry-otel
+  disabled: true
+
+# PTC programs reach files only through guarded tool bindings in this application.
+- id: ptc-runtime
+  disabled: true
+
+- insert:
+    - id: web-test-ptc-runtime-quickjs
+      name: ../../ptc-runtime/ptc-runtime-quickjs/lib/index.js
+
+# The default-on DeepSeek Session-log contributor is a separate request path from
+# the OTel exporter and stays open unless it is closed here too.
+- id: session-log-deepseek
+  disabled: true
+
+# Host-owned product telemetry and client product analytics. Both default to
+# enabled on the desktop profile and point at production destinations.
+- id: desktop-product-telemetry
+  disabled: true
+
+- id: product-analytics
+  disabled: true

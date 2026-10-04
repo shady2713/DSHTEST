@@ -17,7 +17,7 @@ import { join, sep } from 'node:path'
 import { createUserMessage, ToolCallId } from '@deepseek-ai/dsh-llm'
 import type { ContextFormed } from '@deepseek-ai/dsh-llm'
 import SystemPrompt, { renderPrompt } from '@deepseek-ai/dsh-system-prompt'
-import ToolRuntime, { TOOL_ABORTED_BEFORE_DISPATCH, type ToolExecution, type ToolExecutionToken } from '@deepseek-ai/dsh-tools'
+import ToolRuntime, { TOOL_ABORTED_BEFORE_DISPATCH, type ToolExecutionToken } from '@deepseek-ai/dsh-tools'
 import { SubprocessRuntime } from '@deepseek-ai/dsh-subprocess'
 import type { SubprocessCollectedOutputs, SubprocessHandle, SubprocessOutcome, SubprocessOutputRead, SubprocessOutputReader, SubprocessSpawnSpec } from '@deepseek-ai/dsh-subprocess'
 import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
@@ -383,6 +383,34 @@ describe('command construction (plain argv)', () => {
 })
 
 describe('workdir derivation and signal forwarding', () => {
+  it('does not give the generic process helper read-only search authority', async () => {
+    const { ctx, subprocess } = await setup()
+    subprocess.handler = (spec) => {
+      expect(ToolFsSearch.consumeReadonlySearchSpawn(spec)).toBeUndefined()
+      return runResult('ordinary.ts\n')
+    }
+    const run = await runRipgrep(ctx, { signal: new AbortController().signal }, 'glob', ['--files'], 1000, 100, 1000)
+    expect(run.stdout).toBe('ordinary.ts\n')
+  })
+  it('rejects authority after cancellation and omits Windows environment entries on POSIX', async () => {
+    const { ctx, subprocess } = await setup()
+    const platform = process.platform
+    const controller = new AbortController()
+    try {
+      Reflect.defineProperty(process, 'platform', { configurable: true, value: 'linux' })
+      subprocess.handler = (spec) => {
+        expect(spec.env?.SystemRoot).toBeUndefined()
+        expect(spec.env?.LC_ALL).toBe('C')
+        controller.abort()
+        expect(ToolFsSearch.consumeReadonlySearchSpawn(spec)).toBeUndefined()
+        expect(ToolFsSearch.consumeReadonlySearchSpawn({ ...spec, signal: undefined })).toBeUndefined()
+        return runResult('')
+      }
+      expect((await call(ctx, 'glob', { pattern: '*' }, { signal: controller.signal })).isError).toBe(true)
+    } finally {
+      Reflect.defineProperty(process, 'platform', { configurable: true, value: platform })
+    }
+  })
   it('forwards the session cwd as the spawn cwd', async () => {
     const { ctx, subprocess } = await setup()
     subprocess.handler = () => runResult('a.ts\n')
@@ -409,7 +437,7 @@ describe('workdir derivation and signal forwarding', () => {
     const spec = subprocess.spawns[0]
     // --no-config keeps a host RIPGREP_CONFIG_PATH from injecting a
     // preprocessor into this unconfined spawn.
-    expect(spec?.argv).toEqual([rgPath, '--no-config', '--json', '--regexp=needle'])
+    expect(spec?.argv).toEqual([rgPath, '--no-config', '--no-follow', '--json', '--regexp=needle'])
     expect(spec?.stdio.stdin).toBe('ignore')
     // stdout gets the tool's parse budget; stderr is a diagnostic excerpt;
     // both are the seam's diagnostic-tail shape (no spill files requested).
@@ -432,7 +460,11 @@ describe('workdir derivation and signal forwarding', () => {
     const controller = new AbortController()
     subprocess.handler = () => runResult('')
     const result = await call(ctx, 'grep', { pattern: 'x' }, { signal: controller.signal })
-    expect(subprocess.spawns[0]?.signal).toBe(controller.signal)
+    const signal = subprocess.spawns[0]?.signal
+    expect(signal?.aborted).toBe(false)
+    controller.abort('caller cancellation')
+    expect(signal?.aborted).toBe(true)
+    expect(signal?.reason).toBe('caller cancellation')
     expect(result.isError).toBe(false)
   })
 
@@ -471,7 +503,7 @@ describe('workdir derivation and signal forwarding', () => {
     const { ctx } = await setup()
     const controller = new AbortController()
     controller.abort()
-    const exec = { signal: controller.signal, name: 'glob', callId: ToolCallId('direct-pre-abort') } as unknown as ToolExecution
+    const exec = { signal: controller.signal, name: 'glob', callId: ToolCallId('direct-pre-abort') }
     await expect(runRipgrep(ctx, exec, 'glob', ['--files'], 1_000_000, 3_000, 64 * 1024)).rejects
       .toMatchObject({ name: 'SearchError', code: 'SEARCH_ABORTED' })
   })
@@ -482,7 +514,6 @@ describe('workdir derivation and signal forwarding', () => {
     const { ctx, subprocess } = await setup()
     const controller = new AbortController()
     subprocess.handler = () => {
-      controller.abort('cancel search')
       return { reject: new Error('spawn ENOENT') }
     }
 
@@ -752,7 +783,7 @@ describe('glob results', () => {
     subprocess.handler = () => runResult('sub/a.ts\n')
     const result = await call(ctx, 'glob', { pattern: '*.ts', path: 'sub' })
     expect(result.isError).toBe(false)
-    expect(subprocess.spawns[0]?.argv).toEqual([rgPath, '--no-config', '--files', '--glob=*.ts', '--sort=modified', '--no-ignore', '--hidden',
+    expect(subprocess.spawns[0]?.argv).toEqual([rgPath, '--no-config', '--no-follow', '--files', '--glob=*.ts', '--sort=modified', '--no-ignore', '--hidden',
       '--glob=!**/.git', '--glob=!**/.git/**',
       '--glob=!**/.svn', '--glob=!**/.svn/**',
       '--glob=!**/.hg', '--glob=!**/.hg/**',

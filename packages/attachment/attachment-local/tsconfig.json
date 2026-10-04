@@ -8,6 +8,9 @@
     { "path": "../../../vendor/schemastery" },
     { "path": "../attachment" },
     { "path": "../../util/home-paths" },
-    { "path": "../../util/lazy-require" }
+    { "path": "../../util/lazy-require" },
+    { "path": "../../storage/storage" },
+    { "path": "../../storage/storage-domain" },
+    { "path": "../../../native/system/packages/entry" }
   ]
 }

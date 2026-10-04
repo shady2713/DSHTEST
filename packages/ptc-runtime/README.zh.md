@@ -9,7 +9,7 @@ kind: "package-group"
 
 ## 概述
 
-`ptc-runtime/` 组让模型编写一个程序，以普通异步调用的方式调用宿主提供的函数，然后只返回程序的打印输出和返回值。如需在全新 Node 进程中按所配沙箱策略执行，请选择 TypeScript 后端；如需 CPython 进程，请选择实验性 Python 后端。每次运行都不会保留之前程序的状态。失败会作为结果返回，供调用方诊断或提供给模型。
+`ptc-runtime/` 组让模型编写一个程序，以普通异步调用的方式调用宿主提供的函数，然后只返回程序的打印输出和返回值。如需在所配沙箱策略下使用直接 API 执行 TypeScript，请选择 Node；如需将 TypeScript 限定于声明的绑定与 ECMAScript 内建对象，请选择 QuickJS；如需 CPython 执行，请选择实验性 Python 后端。每次运行都不会保留之前程序的状态。失败会作为结果返回，供调用方诊断或提供给模型。
 
 ## 目录
 
@@ -22,12 +22,13 @@ kind: "package-group"
 <a id="packages"></a>
 ## 包
 
-这三个包共同提供程序执行能力；每个 README 描述其各自部分做什么。
+这些包提供 Service Definition 及执行 provider；每个 README 描述各自职责。
 
 | 包 | 角色 | ctx 键 |
 |---|---|---|
 | [`ptc-runtime/`](ptc-runtime/README.zh.md) | 定义 PTC 运行时做什么：针对宿主提供的绑定运行一个程序，并报告其打印和返回的内容 | `ctx.ptcRuntime` |
 | [`ptc-runtime-node/`](ptc-runtime-node/README.zh.md) | 在全新受管 Node 进程中按已解析沙箱策略执行 TypeScript | 注册 `ctx.ptcRuntime` |
+| [`ptc-runtime-quickjs/`](ptc-runtime-quickjs/README.zh.md) | 在 Worker 拥有的 QuickJS WebAssembly context 中执行 TypeScript，提供声明的绑定而无直接文件或进程 API | 注册 `ctx.ptcRuntime` |
 | [`experimental/ptc-runtime-python/`](../experimental/ptc-runtime-python/README.zh.md) | 实验性 Python 后端：负责 Node 宿主与 CPython 子进程之间的 fd-3 协议，以及 CPython 运行时实现 | — |
 
 -----

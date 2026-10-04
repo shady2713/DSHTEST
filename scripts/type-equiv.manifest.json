@@ -2,6 +2,31 @@
   "comment": "Maps each primary ` ```ts type-equiv ` or ` ```ts public-api ` block (by doc + declared symbol + projection) to the source declaration and original JSDoc it must match. Paired `.zh.md` blocks are byte-identical derivatives checked through their unsuffixed sibling and have no duplicate entry. Omit projection for the complete declaration; use public-api with a ` ```ts public-api ` block for a body-stripped public class declaration. verify-type-equiv.ts enforces a 1:1 correspondence between primary blocks and entries. Add an entry when you add a primary source-equivalence block; remove it when you remove the block.",
   "entries": [
     {
+      "doc": "docs/subsystems/web-test.md",
+      "symbol": "ConversationProjectUpdateRequest",
+      "source": "packages/web-test/web-test-conversation/src/commands.ts"
+    },
+    {
+      "doc": "docs/subsystems/web-test.md",
+      "symbol": "WebTestEntryPointId",
+      "source": "packages/web-test/web-test/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/web-test.md",
+      "symbol": "WebTestIdentity",
+      "source": "packages/web-test/web-test/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/web-test.md",
+      "symbol": "WebTestConfig",
+      "source": "packages/web-test/web-test/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/web-test.md",
+      "symbol": "WebTestEntryPoint",
+      "source": "packages/web-test/web-test/src/types.ts"
+    },
+    {
       "doc": "docs/subsystems/compaction.md",
       "symbol": "ImageOffloadTarget",
       "source": "packages/compaction/compaction-image-offload/src/projection.ts"
@@ -2366,6 +2391,211 @@
       "doc": "docs/subsystems/product-telemetry.md",
       "symbol": "ProductTelemetryRecord",
       "source": "packages/host/product-telemetry-otel/src/index.ts"
+    },
+    {
+      "doc": "docs/subsystems/attachment.md",
+      "symbol": "FileReferenceOwner",
+      "source": "packages/attachment/attachment/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/attachment.md",
+      "symbol": "StagedFileAttachment",
+      "source": "packages/attachment/attachment/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/attachment.md",
+      "symbol": "FileReadLease",
+      "source": "packages/attachment/attachment/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/attachment.md",
+      "symbol": "FileDeletionResult",
+      "source": "packages/attachment/attachment/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/attachment.md",
+      "symbol": "FileAttachmentRef",
+      "source": "packages/attachment/attachment/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/attachment.md",
+      "symbol": "EncodedFileAttachment",
+      "source": "packages/attachment/attachment/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/attachment.md",
+      "symbol": "SaveFileAttachment",
+      "source": "packages/attachment/attachment/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/attachment.md",
+      "symbol": "SaveFileStreamAttachment",
+      "source": "packages/attachment/attachment/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/boot.md",
+      "symbol": "ProfilePnpmInvocation",
+      "source": "packages/boot/app-boot/src/profile-context.ts"
+    },
+    {
+      "doc": "docs/subsystems/boot.md",
+      "symbol": "ProfileContext",
+      "source": "packages/boot/app-boot/src/profile-context.ts"
+    },
+    {
+      "doc": "docs/subsystems/boot.md",
+      "symbol": "RunProfileOptions",
+      "source": "apps/cli/src/profile-boot.ts"
+    },
+    {
+      "doc": "docs/subsystems/boot.md",
+      "symbol": "DesktopHostBootRequest",
+      "source": "apps/desktop-host/src/desktop-identity.ts"
+    },
+    {
+      "doc": "docs/subsystems/web-test.md",
+      "symbol": "WebTestLaunchRequest",
+      "source": "packages/web-test/web-test/src/launcher.ts"
+    },
+    {
+      "doc": "docs/subsystems/sidebar-right.md",
+      "symbol": "DesktopBrowserWorkspaceKey",
+      "source": "packages/client/ui-sidebar-browser/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/sidebar-right.md",
+      "symbol": "DesktopBrowserControlledTarget",
+      "source": "packages/client/ui-sidebar-browser/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/sidebar-right.md",
+      "symbol": "DesktopBrowserGroupId",
+      "source": "packages/client/ui-sidebar-browser/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/sidebar-right.md",
+      "symbol": "DesktopBrowserActivationId",
+      "source": "packages/client/ui-sidebar-browser/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/sidebar-right.md",
+      "symbol": "DesktopBrowserProjectId",
+      "source": "packages/client/ui-sidebar-browser/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/sidebar-right.md",
+      "symbol": "DesktopBrowserRunId",
+      "source": "packages/client/ui-sidebar-browser/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/sidebar-right.md",
+      "symbol": "DesktopBrowserRoleId",
+      "source": "packages/client/ui-sidebar-browser/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/sidebar-right.md",
+      "symbol": "DesktopBrowserRoleGrantId",
+      "source": "packages/client/ui-sidebar-browser/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/sidebar-right.md",
+      "symbol": "DesktopBrowserExecutionAuthority",
+      "source": "packages/client/ui-sidebar-browser/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/sidebar-right.md",
+      "symbol": "DesktopBrowserExecutionOwner",
+      "source": "packages/client/ui-sidebar-browser/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/sidebar-right.md",
+      "symbol": "DesktopBrowserExecutionRole",
+      "source": "packages/client/ui-sidebar-browser/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/sidebar-right.md",
+      "symbol": "DesktopBrowserRoleBinding",
+      "source": "packages/client/ui-sidebar-browser/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/sidebar-right.md",
+      "symbol": "DesktopBrowserGroupBindingRequest",
+      "source": "packages/client/ui-sidebar-browser/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/sidebar-right.md",
+      "symbol": "DesktopBrowserTargetId",
+      "source": "packages/client/ui-sidebar-browser/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/sidebar-right.md",
+      "symbol": "DesktopBrowserCommand",
+      "source": "packages/client/ui-sidebar-browser/src/types.ts"
+    },
+    {
+      "doc": "docs/subsystems/web-test.md",
+      "symbol": "PersistentActivitySnapshot",
+      "source": "packages/web-test/web-test-runtime/src/persistent-activity.ts"
+    },
+    {
+      "doc": "docs/subsystems/web-test.md",
+      "symbol": "PrototypeRunId",
+      "source": "packages/web-test/web-test-runtime/src/recovery-spec.ts"
+    },
+    {
+      "doc": "docs/subsystems/web-test.md",
+      "symbol": "PrototypeOperationId",
+      "source": "packages/web-test/web-test-runtime/src/recovery-spec.ts"
+    },
+    {
+      "doc": "docs/subsystems/web-test.md",
+      "symbol": "PrototypeBusinessIntent",
+      "source": "packages/web-test/web-test-runtime/src/recovery-spec.ts"
+    },
+    {
+      "doc": "docs/subsystems/web-test.md",
+      "symbol": "PrototypeOperation",
+      "source": "packages/web-test/web-test-runtime/src/recovery-spec.ts"
+    },
+    {
+      "doc": "docs/subsystems/web-test.md",
+      "symbol": "PrototypeNotExecutedReceipt",
+      "source": "packages/web-test/web-test-runtime/src/recovery-spec.ts"
+    },
+    {
+      "doc": "docs/subsystems/web-test.md",
+      "symbol": "PrototypeRunHead",
+      "source": "packages/web-test/web-test-runtime/src/recovery-spec.ts"
+    },
+    {
+      "doc": "docs/subsystems/web-test.md",
+      "symbol": "PrototypePauseReceipt",
+      "source": "packages/web-test/web-test-runtime/src/recovery.ts"
+    },
+    {
+      "doc": "docs/subsystems/web-test.md",
+      "symbol": "PrototypeActivityCut",
+      "source": "packages/web-test/web-test-runtime/src/recovery-spec.ts"
+    },
+    {
+      "doc": "docs/subsystems/web-test.md",
+      "symbol": "FrozenRunManifest",
+      "source": "packages/web-test/web-test-runtime/src/recovery-spec.ts"
+    },
+    {
+      "doc": "docs/subsystems/web-test.md",
+      "symbol": "RecoveryUpdateIntent",
+      "source": "packages/web-test/web-test-runtime/src/recovery-spec.ts"
+    },
+    {
+      "doc": "docs/subsystems/web-test.md",
+      "symbol": "PrototypeAuthority",
+      "source": "packages/web-test/web-test-runtime/src/recovery.ts"
+    },
+    {
+      "doc": "docs/subsystems/web-test.md",
+      "symbol": "RecoveryAuthority",
+      "source": "packages/web-test/web-test-runtime/src/recovery.ts"
     }
   ]
 }

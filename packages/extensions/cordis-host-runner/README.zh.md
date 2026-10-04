@@ -61,6 +61,10 @@ Client 查询在 `clientInspectTimeoutMs` 内接受首个有效页面响应。�
 
 沙箱隔离全局变量，但不是安全边界：Node 全局变量不存在，或重定向到 Cordis 服务（`ctx.fs`、`ctx.web`、`ctx.bash` 与定时器 helper），host 半收到的是不含框架内部机制的 façade，但它声明的服务仍会触达存活运行时。对待动态包要像对待 bash 访问一样，参见[自引用工具集 Agent Note](../../../.agents/notes/implemented/feature/2026-07-08-self-referential-cordis-toolset.zh.md)。
 
+注入服务及其方法返回的运行时对象都保留同一只读 façade，包括异步结果与数组成员。事件、effect、计时器及服务回调收到受保护的参数与接收对象，其 Agent 和 Fiber 对象不暴露 Context。读取 Context 会被拒绝；框架符号与原始实例属性描述符不对外开放。存活的 Map 和 Set 状态会被拒绝，消费方须使用服务公开方法。普通记录字段、数组与二进制值仍可读取。
+
+动态工具执行函数收到同样受保护的执行元数据，包括调用方 Agent。Service 的 `create`、`resume` 和 `createAgent` 调用不能提供受信任的 `setup` 回调；这些回调组合完整 scoped Context，归已安装 Host provider 使用。其他创建选项保留原值，包括 signal 和不透明权限对象。
+
 -----
 
 <a id="understand-the-implementation"></a>

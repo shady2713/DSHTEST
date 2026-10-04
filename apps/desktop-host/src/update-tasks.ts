@@ -4,6 +4,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-jobs'
 import type {} from '@deepseek-ai/dsh-client-connection'
+import { hasDesktopPersistentActivity } from './persistent-activity.ts'
 
 /**
  * Whether stopping the Host now would interrupt work: a generating or tool-running
@@ -57,6 +58,16 @@ export function installDesktopUpdateTaskControl(ctx: Context): (action: 'inspect
       if (stopped) throw new Error('desktop update: Host is stopping')
       if (generation !== lockGeneration) throw new Error('desktop update: admission lock was superseded')
     }
-    return hasDesktopActiveTasks(agents.list(), jobs)
+    const inspectedGeneration = lockGeneration
+    const persistentActive = await hasDesktopPersistentActivity(ctx)
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Disposal can run during the cold read.
+    if (stopped) throw new Error('desktop update: Host is stopping')
+    if (action === 'lock' && (!locked || inspectedGeneration !== lockGeneration)) {
+      throw new Error('desktop update: admission lock was superseded')
+    }
+    if (persistentActive && action === 'lock') {
+      throw new Error('desktop update: persistent work requires recovery admission')
+    }
+    return hasDesktopActiveTasks(agents.list(), jobs) || persistentActive
   }
 }

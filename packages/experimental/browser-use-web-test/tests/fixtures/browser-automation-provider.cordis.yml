@@ -1,0 +1,5 @@
+# The trusted driver supplies the Host service and owns its Session bindings.
+- id: web-test-browser-automation
+  name: ../../lib/index.js
+  config:
+    controlled: true

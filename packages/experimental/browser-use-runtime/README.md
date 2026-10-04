@@ -45,7 +45,7 @@ Browser tools and resource requests targeting this server use the same queue and
 <details>
 <summary>Implementation internals — click to expand</summary>
 
-The [resource manager](src/index.ts) keys ownership by live Agent identity and joins operation cancellation with owner disposal. Each resource has one acquisition promise and one operation queue. Failed acquisition releases its reservation only after the provider callback rolls back acquired resources.
+The [resource manager](src/index.ts) keys ownership by live Agent identity and joins operation cancellation with owner disposal. Each resource has one acquisition promise and one operation queue. Failed acquisition releases its reservation only after the provider callback rolls back acquired resources. Calls from inside the same owner's active `run()` callback reject immediately instead of entering that owner's queue again. Independent callers still queue normally; an execution group coordinates its roles directly inside one callback.
 
 Disposed-cause cancellation starts resource cleanup before AgentHandle waits for idle. Cleanup closes resources before waiting for running operations, allowing connection teardown to interrupt upstream APIs without abort support. A failed close rejects disposal and retains ownership. Agent-scoped cleanup prevents a resumed Session with the same durable id from inheriting a previous browser.
 

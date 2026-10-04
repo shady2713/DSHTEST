@@ -7,6 +7,8 @@
  */
 
 import { Context } from '@deepseek-ai/cordis'
+import { FileReferenceOwnerId } from '@deepseek-ai/dsh-attachment'
+import { bindFilePublisher, type FilePublisher } from '@deepseek-ai/dsh-attachment/file-publisher'
 import z from '@deepseek-ai/schemastery'
 import {
   createSessionFormatCatalogWithChildren,
@@ -23,7 +25,7 @@ import {
   SessionPersistence, SessionPersistenceRevision, SessionFormatUnsupportedError,
   SessionPersistenceCorruptionError,
   SessionAlreadyExistsError, SessionPersistenceNotFoundError,
-  assertStoredId, materializeCreateHeader, sessionFormatVersionRefusal, validateStoredEvents,
+  assertStoredId, fileAttachmentRefsInSessionEvents, materializeCreateHeader, sessionFormatVersionRefusal, validateStoredEvents,
   type SessionAccess, type SessionHandle,
   type SessionHandleReadResult,
   type SessionLocation, type SessionPersistenceCreateOptions,
@@ -55,6 +57,15 @@ import {
   type JsonlPhysicalIdentity,
   type PreparedJsonlMigration,
 } from './generation.ts'
+
+const filePublishers = new WeakMap<object, FilePublisher>()
+
+function filePublisherFor(service: object): FilePublisher {
+  const original: unknown = Reflect.get(service, Symbol.for('cordis.original'))
+  const publisher = filePublishers.get(typeof original === 'object' && original !== null ? original : service)
+  if (publisher === undefined) throw new Error('file publication authority is unavailable')
+  return publisher
+}
 
 export type { JsonlCompression } from './format.ts'
 
@@ -288,7 +299,7 @@ class JsonlSessionPersistence extends SessionPersistence {
         error instanceof SessionFormatUnsupportedMigrationError,
     }
     this.assertUsableRoot()
-    this.tracker.install(ctx)
+    filePublishers.set(this, bindFilePublisher(ctx, this.tracker.install(ctx)))
   }
 
   /**
@@ -861,6 +872,12 @@ class JsonlSessionPersistence extends SessionPersistence {
   ): Promise<void> {
     this.coldLogMemo.delete(header.id)
     await this.ensureRootEncoding()
+    const files = fileAttachmentRefsInSessionEvents(events)
+    if (files.length > 0) {
+      const attachments = this.ctx.get('attachments')
+      if (attachments === undefined) throw new Error('session-persistence-jsonl: file references require an attachment provider')
+      await filePublisherFor(this).commitFileReferences({ kind: 'session', id: FileReferenceOwnerId(header.id) }, files)
+    }
     if (isMaterialized) {
       await this.appendLines(header, events)
     } else {

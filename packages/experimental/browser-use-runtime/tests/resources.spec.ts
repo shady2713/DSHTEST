@@ -34,6 +34,18 @@ afterEach(async () => {
 })
 
 describe('Session browser resource ownership', () => {
+  it('rejects same-owner nested run instead of deadlocking disposal and still allows later work', async () => {
+    const { ctx, owner } = await fixture()
+    const a = await owner('nested')
+    const close = vi.fn(async () => {})
+    const resources = new SessionResources(ctx, { label: 'nested', exclusive: false, open: async () => ({ value: {}, close }) })
+    const signal = new AbortController().signal
+    await expect(resources.run(a.agent, signal, async () => resources.run(a.agent, signal, async () => 1))).rejects.toThrow('nested operations')
+    expect(await resources.run(a.agent, signal, async () => 2)).toBe(2)
+    await a.dispose()
+    await resources.dispose()
+    expect(close).toHaveBeenCalledTimes(1)
+  })
   it('acquires once across concurrent requests and gives another Session a different resource', async () => {
     const { ctx, owner } = await fixture()
     const a = await owner('a')

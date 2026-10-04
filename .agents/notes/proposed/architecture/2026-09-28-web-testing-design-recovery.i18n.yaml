@@ -1,0 +1,22 @@
+# Bilingual-pair consistency record for 2026-09-28-web-testing-design-recovery.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/proposed/architecture/2026-09-28-web-testing-design-recovery.md
+/agent-note-detailed-design-data-and-recovery:
+  en: 75df0c3d2f9f0cb8
+  zh: 7f1240e32f3f3526
+/agent-note-detailed-design-data-and-recovery/problem:
+  en: de8514a49d2fed43
+  zh: 1045123261f9a77a
+/agent-note-detailed-design-data-and-recovery/proposal:
+  en: bc33201cc17edf72
+  zh: ff864da0dfb0a30e
+/agent-note-detailed-design-data-and-recovery/alternatives-considered:
+  en: 7660ac879492a935
+  zh: e84bc34d29a4a030
+/agent-note-detailed-design-data-and-recovery/acceptance-criteria:
+  en: 56c0d1be6694e2f3
+  zh: c695d31384deec16
+/agent-note-detailed-design-data-and-recovery/risks:
+  en: cc0708c87edad038
+  zh: 9b2a0d763530f977

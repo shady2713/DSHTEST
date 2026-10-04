@@ -1,0 +1,43 @@
+# Bilingual-pair consistency record for 2026-09-28-web-testing-agent-guide.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/proposed/process/2026-09-28-web-testing-agent-guide.md
+/agent-note-agent-development-and-collaboration-guide:
+  en: f119ae0322a6f7e7
+  zh: 726a0d0f59c33307
+/agent-note-agent-development-and-collaboration-guide/problem:
+  en: 4f0faaa1fc70d585
+  zh: 5a15cb860d04d317
+/agent-note-agent-development-and-collaboration-guide/proposal:
+  en: 9988895ccda41be7
+  zh: caa757e8348c860a
+/agent-note-agent-development-and-collaboration-guide/taking-over-and-locating-authoritative-information:
+  en: 592362ef40c1db36
+  zh: efff1880fbaf4ac2
+/agent-note-agent-development-and-collaboration-guide/main-agent-and-subagents:
+  en: 8d60f2364d0ed63b
+  zh: 8653d5d61fa9d154
+/agent-note-agent-development-and-collaboration-guide/assignment-and-file-ownership:
+  en: f05520f5fa6964b9
+  zh: 0b36b1377181bb65
+/agent-note-agent-development-and-collaboration-guide/recommended-execution-waves:
+  en: 5cdb8130eecfcaae
+  zh: ce53e04f029bd974
+/agent-note-agent-development-and-collaboration-guide/fixtures-interfaces-and-handoff:
+  en: 744eae645604c174
+  zh: c223d4dfe20e5c0d
+/agent-note-agent-development-and-collaboration-guide/verification-and-stage-admission:
+  en: 0f7542e09e54f583
+  zh: bd1ca4c97a46c572
+/agent-note-agent-development-and-collaboration-guide/copyable-assignment-instructions:
+  en: 846d255c71105731
+  zh: b56a9687348bff43
+/agent-note-agent-development-and-collaboration-guide/alternatives-considered:
+  en: 025503c918148555
+  zh: 3f51cdbb54679294
+/agent-note-agent-development-and-collaboration-guide/acceptance-criteria:
+  en: 56c0d1be6694e2f3
+  zh: c695d31384deec16
+/agent-note-agent-development-and-collaboration-guide/risks:
+  en: 62e289cbcc7f2037
+  zh: 6a1d39b348d4ee84

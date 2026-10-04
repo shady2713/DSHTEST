@@ -194,6 +194,17 @@ export const PROFILE_TEMPLATES: Record<string, ProfileTemplate> = {
   },
 }
 
+/**
+ * Profiles another application owns, mapped to the owner. The owner's launcher
+ * writes the profile inside that application's own data root and applies that
+ * root to DSH_HOME before the boot, so a Harness home that never registered it
+ * has no profile to load and must refuse the name instead of auto-initializing
+ * one, which would boot that application on the official product's home.
+ */
+const APPLICATION_OWNED_PROFILES: Record<string, string> = {
+  'web-test': 'the Web testing application (@deepseek-ai/dsh-web-test), whose launcher registers it inside its own data root',
+}
+
 /** Installation-owned bundle tuples normalized to the shipped template. */
 const INSTALLATION_OWNED_PROFILE_TUPLES: Record<string, readonly string[]> = {
   headless: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', '@deepseek-ai/dsh-headless'],
@@ -692,6 +703,8 @@ export function loadProfileDirectory(
  * Load a profile: resolve every `dsh.profile.bundles` entry to its patch
  * layer and parse the profile's own patch file. Unreadable or incompatible bundles
  * are skipped and listed in `skippedBundles`; profile manifest and user patch errors still throw.
+ * A name another application owns is refused rather than auto-initialized, unless that
+ * application registered it in `home`.
  * @param binName - the diagnostic prefix on thrown errors.
  * @param name - the profile name.
  * @param installAnchor - absolute path of the dsh app's package.json (first resolution anchor).
@@ -707,6 +720,13 @@ export function loadProfile(
 ): Profile {
   const dir = resolveProfileDir(name, home)
   if (!existsSync(join(dir, 'package.json'))) {
+    const owner = APPLICATION_OWNED_PROFILES[name]
+    if (owner !== undefined) {
+      throw new Error(
+        `${binName}: profile ${JSON.stringify(name)} belongs to ${owner}; boot it through that application, which `
+        + `applies its own DSH_HOME first, not through the Harness home ${home} that holds no ${JSON.stringify(name)} profile`,
+      )
+    }
     const template = PROFILE_TEMPLATES[name]
     if (template === undefined) {
       throw new Error(

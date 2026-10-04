@@ -1,0 +1,22 @@
+# Bilingual-pair consistency record for 2026-09-28-web-testing-development-coverage.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/proposed/testing/2026-09-28-web-testing-development-coverage.md
+/agent-note-development-coverage-and-handoff:
+  en: e9f7c5116d1006fa
+  zh: df1692be5d204b7f
+/agent-note-development-coverage-and-handoff/problem:
+  en: 7ea9188d6e61d520
+  zh: b01d70fc61b66324
+/agent-note-development-coverage-and-handoff/proposal:
+  en: 7230399c5f073a5e
+  zh: 2579ff573fc7686e
+/agent-note-development-coverage-and-handoff/alternatives-considered:
+  en: fa4b0505c6645e7c
+  zh: 42b3540081bc7972
+/agent-note-development-coverage-and-handoff/acceptance-criteria:
+  en: 56c0d1be6694e2f3
+  zh: c695d31384deec16
+/agent-note-development-coverage-and-handoff/risks:
+  en: e6dede9016641e36
+  zh: 6fad09d05f4d4f4c

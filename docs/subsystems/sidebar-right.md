@@ -145,6 +145,129 @@ The Host `ctx.workspaceFiles` service and generated `workspaceFiles` Remote name
 - **`subagentchat`** — `builtin`, `dsh-resource://subagentchat/session/<child>?parent=<parent>&mode=<mode>`. An explicitly addressed subagent Conversation retained by the resource provider and rendered through the shared Conversation Factory ([README](../../packages/client/ui-subagent/README.md)).
 
 <a id="not-built"></a>
+## Desktop execution types
+
+[Browser control](../../packages/client/ui-sidebar-browser/README.md) defines these Main-owned targets and Runtime-owned execution identities. Its Service API is in [Web testing](web-test.md#cordis-surface).
+
+```ts type-equiv
+/** Browser storage account: a canonical workspace CWD or an ungrouped Session. */
+type DesktopBrowserWorkspaceKey = Branded<'DesktopBrowserWorkspaceKey'>
+```
+
+```ts type-equiv
+/** Main-owned guest identity and current URL, never supplied by a model tool. */
+interface DesktopBrowserControlledTarget {
+  readonly target: DesktopBrowserTargetId
+  readonly hostEpoch: number
+  readonly workspace: DesktopBrowserWorkspaceKey
+  readonly url: string
+  readonly executionRole?: DesktopBrowserExecutionRole
+}
+```
+
+```ts type-equiv
+/** Identity of one trusted runtime browser execution group. */
+type DesktopBrowserGroupId = Branded<'DesktopBrowserGroupId'>
+```
+
+```ts type-equiv
+/** Identity of the live activation that owns a browser execution group. */
+type DesktopBrowserActivationId = Branded<'DesktopBrowserActivationId'>
+```
+
+```ts type-equiv
+/** Project associated with a trusted browser execution group. */
+type DesktopBrowserProjectId = Branded<'DesktopBrowserProjectId'>
+```
+
+```ts type-equiv
+/** Runtime batch associated with a trusted browser execution group. */
+type DesktopBrowserRunId = Branded<'DesktopBrowserRunId'>
+```
+
+```ts type-equiv
+/** Role with an isolated login store inside one execution group. */
+type DesktopBrowserRoleId = Branded<'DesktopBrowserRoleId'>
+```
+
+```ts type-equiv
+/** Revocable Main-acknowledged authorization of one role target. */
+type DesktopBrowserRoleGrantId = Branded<'DesktopBrowserRoleGrantId'>
+```
+
+```ts type-equiv
+/** Opaque process-local authority; a copied literal does not grant execution-group access. */
+interface DesktopBrowserExecutionAuthority {
+  readonly kind: 'trusted-desktop-execution-authority'
+}
+```
+
+```ts type-equiv
+/** Trusted runtime identity; neither a page nor a model creates this owner. */
+interface DesktopBrowserExecutionOwner {
+  readonly group: DesktopBrowserGroupId
+  readonly activation: DesktopBrowserActivationId
+  readonly project: DesktopBrowserProjectId
+  readonly run: DesktopBrowserRunId
+  readonly sessionId: SessionId
+  readonly hostEpoch: number
+  readonly workspace: DesktopBrowserWorkspaceKey
+}
+```
+
+```ts type-equiv
+/** Main-issued role storage identity, separate from ordinary sidebar workspaces. */
+interface DesktopBrowserExecutionRole {
+  readonly owner: DesktopBrowserExecutionOwner
+  readonly role: DesktopBrowserRoleId
+}
+```
+
+```ts type-equiv
+/** One target's acknowledged permission within an execution group. */
+interface DesktopBrowserRoleBinding extends DesktopBrowserControlledTarget {
+  readonly executionRole: DesktopBrowserExecutionRole
+  readonly grant: DesktopBrowserRoleGrantId
+}
+```
+
+```ts type-equiv
+/** Private, atomic authorization or withdrawal of all targets in one group. */
+interface DesktopBrowserGroupBindingRequest {
+  readonly version: typeof DESKTOP_BROWSER_AUTOMATION_VERSION
+  readonly requestId: number
+  readonly revision: number
+  readonly kind: 'bind-group' | 'release-group'
+  readonly owner: DesktopBrowserExecutionOwner
+  readonly roles: readonly DesktopBrowserRoleBinding[]
+}
+```
+
+```ts type-equiv
+/**
+ * Main-issued identity of the guest one automation command addresses. A command
+ * naming a target the connected Host does not own is refused, so a target from a
+ * previous window, lease, or Host generation cannot act.
+ */
+type DesktopBrowserTargetId = Branded<'DesktopBrowserTargetId'>
+```
+
+```ts type-equiv
+/** One authenticated request from the connected Host to one owned target. */
+interface DesktopBrowserCommand {
+  readonly version: typeof DESKTOP_BROWSER_AUTOMATION_VERSION
+  /** Correlates the reply; the Host never treats an uncorrelated message as an answer. */
+  readonly requestId: number
+  /** Generation of the connected Host. The Main refuses a command from a Host it no longer serves. */
+  readonly hostEpoch: number
+  readonly target: DesktopBrowserTargetId
+  /** Session explicitly authorized by a trusted Host consumer for this target. */
+  readonly sessionId: SessionId
+  readonly role?: DesktopBrowserRoleBinding
+  readonly body: DesktopBrowserCommandBody
+}
+```
+
 ## Not built
 
 - Persistence: layout state is memory-only; a reload starts every session collapsed, and no session's tabs are visible from another.

@@ -3311,7 +3311,7 @@ Sources: [`packages/feedback/command-feedback/src/types.ts:27`](../packages/feed
 
 SHA-256: `f19bee84bf3d20904553cdcd57465232bc1c2a194f54c4d195292ba0487223a6`
 
-Sources: [`packages/attachment/attachment/src/types.ts:39`](../packages/attachment/attachment/src/types.ts)
+Sources: [`packages/attachment/attachment/src/types.ts:68`](../packages/attachment/attachment/src/types.ts)
 
 | Property | Presence | Type |
 |---|---|---|
@@ -3562,7 +3562,7 @@ One of:
 
 SHA-256: `b0b0eb1b16490f6bee135b2377e8f8c39227974c799ad7d49ff418af23ecbc35`
 
-Sources: [`packages/attachment/attachment/src/types.ts:11`](../packages/attachment/attachment/src/types.ts)
+Sources: [`packages/attachment/attachment/src/types.ts:40`](../packages/attachment/attachment/src/types.ts)
 
 | Property | Presence | Type |
 |---|---|---|
@@ -3602,7 +3602,7 @@ Sources: [`packages/llm/llm/src/types.ts:79`](../packages/llm/llm/src/types.ts)
 
 SHA-256: `2f1e6a7ebace43d727ae138ddcd352eb3813960009e5805b8c5ac84300c97716`
 
-Sources: [`packages/attachment/attachment/src/types.ts:8`](../packages/attachment/attachment/src/types.ts)
+Sources: [`packages/attachment/attachment/src/types.ts:37`](../packages/attachment/attachment/src/types.ts)
 
 One of:
 
@@ -6011,7 +6011,7 @@ Sources: [`packages/core/session/src/types.ts:311`](../packages/core/session/src
 
 SHA-256: `0f46153645c297846a3fad3911636659ca4717a5e7d71c9f50bffacd312115ef`
 
-Sources: [`packages/attachment/attachment/src/types.ts:28`](../packages/attachment/attachment/src/types.ts)
+Sources: [`packages/attachment/attachment/src/types.ts:57`](../packages/attachment/attachment/src/types.ts)
 
 | Property | Presence | Type |
 |---|---|---|

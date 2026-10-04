@@ -33,7 +33,7 @@ kind: "package-reference"
 
 ### 配置
 
-唯一的插件字段是 `root`，用于保存单元文件与目录。它是必填项，因为本后端不回退到 `process.cwd()`。后端按需以 `0o700` 模式创建根目录。领域规范选择其布局；本插件不提供布局覆盖项。
+唯一的必填插件字段是 `root`，用于保存单元文件与目录。它是必填项，因为本后端不回退到 `process.cwd()`。后端按需以 `0o700` 模式创建根目录。领域规范选择其布局；本插件不提供布局覆盖项。
 
 ```yaml
 - name: '@deepseek-ai/dsh-storage'
@@ -48,6 +48,7 @@ kind: "package-reference"
 | 字段 | 默认值 | 含义 |
 |---|---|---|
 | `root` | 必填 | 保存 `<unit>.json` 文件与 `<unit>/` 目录树的目录；按需以 `0o700` 创建 |
+| `windowsRenameDelaysMs` | `[20, 40, 80, 160]` | 发布被 Windows 以 `EACCES`、`EBUSY` 或 `EPERM` 拒绝后，每次重试前的等待；列表长度即重试预算，默认值提供四次重试、最多五次 rename 尝试。空列表关闭重试。 |
 
 生成的[配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-storage-json)是每个受支持字段及其 JSDoc 的穷尽式真源。
 
@@ -72,6 +73,7 @@ kind: "package-reference"
 - **`single` 以内存为权威状态。** 每次写入都会更改内存单元、序列化其完整状态，并以原子方式替换 `<unit>.json`。发布失败会恢复先前的内存值。
 - **`per-record` 以目录为权威状态。** 每次 put 或 delete 都会更改一个 `<unit>/<table>/<key>.json` 文档，`loadAll()` 则重新读取目录树。每份文档都带有单元版本戳与一条记录值。
 - **每次调用都持久发布。** 写入过程使用临时文件、fsync、原子 `rename()` 替换，并在 POSIX 上 fsync 父目录。领域层写入链负责安排跨调用的顺序。
+- **Windows 的 rename 拒绝会被重试，而不是失败。** 当病毒扫描仪、索引器或备份代理以不允许删除共享的方式持有目标文件时，Windows 会拒绝该替换，并把它报告为 `EACCES`、`EBUSY` 或 `EPERM` 而不说明是哪个原生原因。此时发布会等待并再次 rename 同一个临时文件；其他任何错误都是终止性的，预算耗尽时报告最后一次拒绝。该重试是 `@deepseek-ai/dsh-atomic-write` 的 [`renameAtomicTemp`](../../util/atomic-write/README.zh.md)。
 
 ### 文件格式
 
@@ -95,7 +97,7 @@ kind: "package-reference"
 | [`src/single-unit.ts`](src/single-unit.ts) | 一个 `single` 单元：权威内存、写入原语与发布回滚 |
 | [`src/per-record-unit.ts`](src/per-record-unit.ts) | 一个 `per-record` 单元：目录树读取、路径安全记录与单文档写入 |
 | [`src/format.ts`](src/format.ts) | 带版本校验的整单元与记录序列化 |
-| [`src/atomic.ts`](src/atomic.ts) | 原子文件替换：临时文件写入、fsync、rename、目录 fsync |
+| [`src/atomic.ts`](src/atomic.ts) | 原子文件替换：临时文件写入、fsync、共享的 Windows rename 重试、目录 fsync |
 | — | 不发布运行时不变式伴生入口；此处要求保证写入持久性及发布后重新解析的等价性，这两点需要通过介质往返测试（共享后端符合性测试套件）验证；本后端不公开任何可持续观察的进程内关系。 |
 
 </details>
@@ -141,6 +143,7 @@ kind: "package-reference"
 - **`single` 会重写整个单元**——每次写入都重新发布完整单元文件；当此成本过高时，使用 `per-record` 或把领域路由到 SQLite。
 - **没有跨进程写锁**——两个进程写入同一单元时可能交错执行替换；对同一文件的写入以最后完成者为准。
 - **Windows rename 没有显式 write-through**——持久性依赖 libuv 的 `rename()`（`MoveFileExW` 并启用替换）；`log` 分面落地时，计划把会话日志后端更严格的 Win32 write-through 发布辅助函数下移到此处。
+- **rename 重试由 `dsh-atomic-write` 拥有**——该重试步骤是 [`@deepseek-ai/dsh-atomic-write`](../../util/atomic-write/README.zh.md) 的 `renameAtomicTemp`：被重试的错误集合扩大到包含 `EACCES`，且 `windowsRenameDelaysMs` 耗尽时抛出最后一次拒绝而非第一次，因此始终无法清除的拒绝，会在发布失败前额外花费已配置延迟列表之和——默认 `[20, 40, 80, 160]` 下为 300 ms。这个和值限定的是重试步骤，而非整个发布的墙钟时间。它周围的持久化流程仍留在本包内：临时文件 fsync 与 POSIX 父目录 fsync。
 
 <a id="dev-note"></a>
 ### 开发备注

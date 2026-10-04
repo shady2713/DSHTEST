@@ -1,0 +1,68 @@
+{
+  "initial": [
+    {
+      "name": "web_browser_click",
+      "description": "Click one element of the test page this Session controls. Take the reference and the page generation from your most recent observation; a reference from an older generation is refused, because the page may have moved. Observe the page again afterwards to see what changed.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "ref": {
+            "type": "string",
+            "description": "Element reference from your most recent observation."
+          },
+          "generation": {
+            "type": "integer",
+            "description": "Page generation that observation reported."
+          }
+        },
+        "required": [
+          "ref",
+          "generation"
+        ]
+      }
+    },
+    {
+      "name": "web_browser_observe",
+      "description": "Read the test page this Session controls: its address, its title, and the elements you can act on, each with the reference a click or type command needs. Every observation starts a new page generation, so act only on references from the most recent one.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "web_browser_screenshot",
+      "description": "Capture the test page this Session controls as a PNG image, for reading a page whose elements the observation does not name.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "web_browser_type",
+      "description": "Type text into one element of the test page this Session controls. Take the reference and the page generation from your most recent observation; a reference from an older generation is refused, because the page may have moved. Observe the page again afterwards to see the result.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "ref": {
+            "type": "string",
+            "description": "Element reference from your most recent observation."
+          },
+          "generation": {
+            "type": "integer",
+            "description": "Page generation that observation reported."
+          },
+          "text": {
+            "type": "string",
+            "description": "Text to type into the element."
+          }
+        },
+        "required": [
+          "ref",
+          "generation",
+          "text"
+        ]
+      }
+    }
+  ],
+  "changes": []
+}

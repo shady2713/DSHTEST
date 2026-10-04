@@ -33,7 +33,7 @@ Choose the default `single` layout for small units that benefit from one complet
 
 ### Configuration
 
-The only plugin field is `root`, which holds the unit files and directories. It is required because the backend does not fall back to `process.cwd()`. The backend creates the root with mode `0o700` on demand. A domain specification selects its layout; this plugin has no layout override.
+The only required plugin field is `root`, which holds the unit files and directories. It is required because the backend does not fall back to `process.cwd()`. The backend creates the root with mode `0o700` on demand. A domain specification selects its layout; this plugin has no layout override.
 
 ```yaml
 - name: '@deepseek-ai/dsh-storage'
@@ -48,6 +48,7 @@ The only plugin field is `root`, which holds the unit files and directories. It 
 | Field | Default | Meaning |
 |---|---|---|
 | `root` | required | Directory holding `<unit>.json` files and `<unit>/` trees; created `0o700` on demand |
+| `windowsRenameDelaysMs` | `[20, 40, 80, 160]` | Delay before each retry of a publish Windows refused with `EACCES`, `EBUSY`, or `EPERM`; the list length is the retry budget, so the default buys four retries and at most five rename attempts. Empty disables the retry. |
 
 The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-storage-json) is the exhaustive source for every accepted field and its JSDoc.
 
@@ -72,6 +73,7 @@ The two layouts share atomic publication but assign state ownership differently.
 - **`single` keeps memory authoritative.** Each write changes the in-memory unit, serializes its complete state, and atomically replaces `<unit>.json`. A failed publish restores the prior in-memory value.
 - **`per-record` keeps the directory authoritative.** Each put or delete changes one `<unit>/<table>/<key>.json` document, and `loadAll()` rereads the tree. Each document stamps the unit version and carries one record value.
 - **Publication is durable per call.** A write uses a temporary file, fsync, atomic `rename()` replacement, and a parent-directory fsync on POSIX. The domain layer's write chain supplies ordering across calls.
+- **A Windows rename refusal is retried, not failed.** Windows refuses the replacement while a virus scanner, indexer, or backup agent holds the target without delete sharing, and reports that refusal as `EACCES`, `EBUSY`, or `EPERM` without saying which native cause produced it. The retry is [`renameAtomicTemp`](../../util/atomic-write/README.md) from `@deepseek-ai/dsh-atomic-write`, so the publish waits and renames the same temp file again; every other error is terminal, and an exhausted budget reports the last refusal.
 
 ### File formats
 
@@ -95,7 +97,7 @@ A `per-record` table document at `<root>/<unit>/<table>/<key>.json` has the form
 | [`src/single-unit.ts`](src/single-unit.ts) | One `single` unit: authoritative memory, write primitives, publish rollback |
 | [`src/per-record-unit.ts`](src/per-record-unit.ts) | One `per-record` unit: tree reads, path-safe records, and one-document writes |
 | [`src/format.ts`](src/format.ts) | Whole-unit and record serialization with version validation |
-| [`src/atomic.ts`](src/atomic.ts) | Atomic file replacement: temp write, fsync, rename, directory fsync |
+| [`src/atomic.ts`](src/atomic.ts) | Atomic file replacement: temp write, fsync, shared Windows rename retry, directory fsync |
 | — | No runtime invariant companion is published; correctness here is write-durability and publish-then-reparse equivalence, which require medium round-trip tests (the shared backend conformance suite); the backend exposes no continuously observable in-process relation. |
 
 </details>
@@ -141,6 +143,7 @@ These limits define when this backend is a poor fit or needs special operational
 - **`single` rewrites the whole unit** — each write republishes the complete unit file; use `per-record` or route the domain to SQLite when this cost is too high.
 - **No cross-process write locking** — two processes writing the same unit can interleave replacements; writes to the same file use last-completion wins.
 - **Windows rename without explicit write-through** — durability relies on libuv's `rename()` (`MoveFileExW` with replacement); the stricter Win32 write-through publish helper from the session-log backend is planned to move down here when the `log` facet lands.
+- **The rename retry is owned by `dsh-atomic-write`** — the retry step is `renameAtomicTemp` from [`@deepseek-ai/dsh-atomic-write`](../../util/atomic-write/README.md), which widens the retried set to include `EACCES` and throws the last refusal instead of the first once `windowsRenameDelaysMs` is spent, so a refusal that never clears costs the sum of the configured delay list — 300 ms under the default `[20, 40, 80, 160]` — before the publish fails. That sum bounds the retry step, not the publish's wall-clock time. The durable flow around it stays in this package: the temp file fsync and the POSIX parent-directory fsync.
 
 <a id="dev-note"></a>
 ### Dev Note

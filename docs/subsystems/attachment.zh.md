@@ -167,7 +167,96 @@ interface RequestImageAttachment {
 }
 ```
 
-`saveImage()` 准备并原子提交提供方无关的规范化附件，然后直接返回 `ImageAttachmentRef`。`saveImages()` 在发布批次前为每个成员各准备一次经过验证的附件，因此校验拒绝不会留下部分对象，发布也不会重复解码或选择质量。`admitPromptContent()` 在文件凭证解析后接收完整且有序的 Host prompt，把 base64 图片上传替换为持久引用，并让持久文件引用原样通过。`admitEncodedImages()` 支持其他 wire 入口，把张数、聚合字节和有序批量准入交给 `saveImages()`。`admitEncodedFile()` 让编码协议适配器使用服务拥有的规范 base64 准入，`isAttachmentError()` 让这些适配器无需导入实现辅助函数即可识别稳定的附件错误。`readImage()` 校验来自已授权会话路径的规范化附件。`imageHostPath()` 只公开提供方所持对象的宿主位置，不判断当前工具执行环境能否读取它。`readImageRequest()` 按确切的路由目标尺寸和编码字节目标派生并缓存确定性请求版本。该版本包含编码字节和元数据，不包含执行环境路径。新条目在发布前完整解码，缓存命中只做有界元数据探测。调用方需要有序批次时，对单数方法使用 `Promise.all`。本地实现按需编码首选候选、合并相同请求身份的并发任务、允许每个等待方单独取消、没有等待方时停止共享任务，并通过实例级限流器限制全部变换，默认同时执行两项。该服务不规定保留策略：恢复和 fork 后的会话可能共享对象，因此基于引用的垃圾回收会延期实现，不与单个会话的删除绑定。
+`saveImage()` 准备并原子提交提供方无关的规范化附件，然后直接返回 `ImageAttachmentRef`。`saveImages()` 在发布批次前为每个成员各准备一次经过验证的附件，因此校验拒绝不会留下部分对象，发布也不会重复解码或选择质量。`admitPromptContent()` 在文件凭证解析后接收完整且有序的 Host prompt，把 base64 图片上传替换为持久引用，并让持久文件引用原样通过。`admitEncodedImages()` 支持其他 wire 入口，把张数、聚合字节和有序批量准入交给 `saveImages()`。`admitEncodedFile()` 让编码协议适配器使用服务拥有的规范 base64 准入，`isAttachmentError()` 让这些适配器无需导入实现辅助函数即可识别稳定的附件错误。`readImage()` 校验来自已授权会话路径的规范化附件。`imageHostPath()` 只公开提供方所持对象的宿主位置，不判断当前工具执行环境能否读取它。`readImageRequest()` 按确切的路由目标尺寸和编码字节目标派生并缓存确定性请求版本。该版本包含编码字节和元数据，不包含执行环境路径。新条目在发布前完整解码，缓存命中只做有界元数据探测。调用方需要有序批次时，对单数方法使用 `Promise.all`。本地实现按需编码首选候选、合并相同请求身份的并发任务、允许每个等待方单独取消、没有等待方时停止共享任务，并通过实例级限流器限制全部变换，默认同时执行两项。
+
+## 通用文件保留
+
+暂存上传在引用拥有持久所有者之前保持受保护。生产者先提交所有权再发布引用，并且只有在这些引用持久地不可访问后才释放所有权。Session 所有者以每个分叉自己的 id 保留继承引用；关闭句柄不会改变所有权。读取租约在开始输出前保护导出的完整文件集合，并持续持有到每个读取方都关闭。删除会保留所有权未知的历史文件、阶段票据和读取方；字节计数表示移除的规范内容，而非可用磁盘空间。图片继续保留。本地提供方使用内核租约与版本化 storage domain 串行处理这些操作；失败发布仍被保守保护。
+
+Host 上传、持久化与导出功能将私有发布器或只读闭包绑定到真正拥有 Service 的 fiber。Web testing policy 消费一次特定提供方及参数的调用身份；复制 Service 注册或调用公开保留方法不能取得该权限。生产者销毁会先排空待处理发布、阶段清理或导出，再关闭附件提供方。
+
+```ts type-equiv
+/** Durable identity of a producer that publishes verbatim file references. */
+interface FileReferenceOwner {
+  /** Forks use their own session owner; exports use transient read leases. */
+  kind: 'session' | 'report' | 'snapshot' | 'baseline'
+  /** Stable identity in the producer's own namespace. */
+  id: FileReferenceOwnerId
+}
+```
+
+```ts type-equiv
+/** Stored file held durably until its stage ticket is explicitly released. */
+interface StagedFileAttachment {
+  file: FileAttachmentRef
+  ticket: FileStageTicket
+}
+```
+
+```ts type-equiv
+/** Transient protection acquired before readers or exporters publish output. */
+interface FileReadLease {
+  /** Release after every reader has closed; repeated calls share completion. @returns completion after protection ends. */
+  release(): Promise<void>
+}
+```
+
+```ts type-equiv
+/** Deletion admission outcome; sizes describe content, never free disk space. */
+type FileDeletionResult =
+  | { status: 'deleted'; canonicalBytesRemoved: number }
+  | { status: 'absent' }
+  | { status: 'retained'; owners: readonly FileReferenceOwner[]; stages: number }
+  | { status: 'reading' }
+  | { status: 'unknown' }
+```
+
+```ts type-equiv
+/**
+ * Durable, serializable reference to one verbatim stored file. Files are
+ * stored byte-for-byte with no normalization; `attachmentId` is the sha256
+ * digest of exactly those bytes.
+ */
+interface FileAttachmentRef {
+  /** Opaque content-addressed storage identifier; never a filesystem path or bearer URL. */
+  attachmentId: AttachmentId
+  /** Sanitized display filename, also the stored object's leaf name. */
+  name: string
+  /** Exact byte length. */
+  bytes: number
+}
+```
+
+```ts type-equiv
+/** Base64-encoded file upload accompanying one wire request. */
+interface EncodedFileAttachment {
+  /** Canonical base64 encoding of the file bytes. */
+  data: string
+  /** Optional display name; it is never interpreted as a path. */
+  name?: string
+}
+```
+
+```ts type-equiv
+/** Request to durably commit one file verbatim. */
+interface SaveFileAttachment {
+  data: Uint8Array
+  /** Optional browser/provider display name; it is never interpreted as a path. */
+  name?: string
+}
+```
+
+```ts type-equiv
+/** Request to durably commit one file from bounded byte chunks. */
+interface SaveFileStreamAttachment {
+  /** Exact file bytes in order; providers must not retain the complete sequence in memory. */
+  data: AsyncIterable<Uint8Array>
+  /** Optional cancellation for source reads and storage writes. */
+  signal?: AbortSignal
+  /** Optional browser/provider display name; it is never interpreted as a path. */
+  name?: string
+}
+```
 
 <!-- BEGIN GENERATED cordis-surface (gen-cordis-catalog.ts) — do not edit between markers -->
 
@@ -268,6 +357,66 @@ saveFile(input: SaveFileAttachment): Promise<FileAttachmentRef>
  * @returns the durable content-addressed file reference.
  */
 saveFileStream(input: SaveFileStreamAttachment): Promise<FileAttachmentRef>
+
+/**
+ * Store bytes with durable staging protection before publishing a producer reference.
+ * @param input - exact bytes and optional display name.
+ * @returns a file and a ticket retained across restarts until explicit release.
+ */
+stageFile(input: SaveFileAttachment): Promise<StagedFileAttachment>
+
+/**
+ * Validate a canonical base64 upload and preserve its staging ticket.
+ * @param input - encoded file bytes and optional display name.
+ * @returns the stored file and durable staging protection.
+ */
+stageEncodedFile(input: EncodedFileAttachment): Promise<StagedFileAttachment>
+
+/**
+ * Store streamed bytes with durable staging protection.
+ * @param input - bounded chunks, optional cancellation, and display name.
+ * @returns a file and a ticket retained across restarts until explicit release.
+ */
+stageFileStream(input: SaveFileStreamAttachment): Promise<StagedFileAttachment>
+
+/**
+ * Durably add references before their owner publishes them. Repeated additions are idempotent.
+ * Failed publication retains these references; release only after the owner is durably removed.
+ * @param owner - independent durable producer identity.
+ * @param refs - files the producer is about to publish.
+ * @returns completion after every reference is durably retained.
+ */
+commitFileReferences(owner: FileReferenceOwner, refs: readonly FileAttachmentRef[]): Promise<void>
+
+/**
+ * Release a producer only after its published references are durably inaccessible.
+ * @param owner - producer whose complete reference set may be released.
+ * @returns completion after release is durable; an absent owner is idempotent.
+ */
+releaseFileReferences(owner: FileReferenceOwner): Promise<void>
+
+/**
+ * Release staging protection after a durable owner commit or abandoned upload.
+ * @param ticket - provider-issued staging ticket.
+ * @returns completion after release is durable; an absent ticket is idempotent.
+ */
+releaseFileStage(ticket: FileStageTicket): Promise<void>
+
+/**
+ * Protect the complete file set before producing reader or export output.
+ * @param refs - exact references needed by the operation.
+ * @param signal - cancellation releases protection and prevents acquisition.
+ * @returns a lease held until explicit release or cancellation.
+ */
+acquireFileReadLease(refs: readonly FileAttachmentRef[], signal?: AbortSignal): Promise<FileReadLease>
+
+/**
+ * Delete one managed alias after durable owners, stages, and readers permit it.
+ * Images and files with unknown historical references remain retained.
+ * @param ref - exact managed file reference.
+ * @returns the deletion admission outcome; no result claims free disk space.
+ */
+deleteFile(ref: FileAttachmentRef): Promise<FileDeletionResult>
 
 /**
  * Read and verify one verbatim stored file as bounded chunks. Providers must

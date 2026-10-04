@@ -6,6 +6,8 @@
 
 源码：[`packages/session-query/session-query/src/types.ts`](../../packages/session-query/session-query/src/types.ts)
 
+[Session 日志导出](../../packages/session-query/session-log-export/README.zh.md) 负责已鉴权的归档下载、文件读取保护与拆卸时的取消。
+
 ## 逻辑记录
 
 `SessionRecord` 由全语料库列表返回。它除了克隆的、优先取自 live 源的 header 外，还单独公开各源的可用性。`SessionEventRecord` 是轻量的原始日志投影；分类使用与模型历史推导相同的 `foldSurface()` 状态转换。
@@ -369,6 +371,14 @@ type SessionQueryErrorCode =
 ## Cordis API
 
 Generated from source by `scripts/gen-cordis-catalog.ts` (verified fresh by `pnpm run verify-cordis-catalog` in doc-sync; regenerate with `pnpm run gen-cordis-catalog`) — the language sides differ only in locale-specific paired document paths. Signature blocks use a `ts cordis-catalog` fence and keep the original source JSDoc; dispatch modes are defined in the [primer](../cordis-primer.zh.md#dispatch-modes), and the framework-inherited `ctx` API lives in [cordis-api/inherited.md](../cordis-api/inherited.md).
+
+<a id="ctxsessionlogexports--sessionlogexports"></a>
+
+### `ctx.sessionLogExports` — `SessionLogExports`
+
+Owns the download route and drains its protected file readers before teardown.
+
+Source: [`packages/session-query/session-log-export/src/index.ts`](../../packages/session-query/session-log-export/src/index.ts)
 
 <a id="ctxsessionquery--sessionqueryengine-abstract-seam"></a>
 

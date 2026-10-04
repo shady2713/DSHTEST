@@ -1,0 +1,22 @@
+# Bilingual-pair consistency record for 2026-09-28-web-testing-acceptance.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/proposed/testing/2026-09-28-web-testing-acceptance.md
+/agent-note-acceptance-criteria-and-traceability:
+  en: b375b2d465c06c37
+  zh: e274289a663e0cef
+/agent-note-acceptance-criteria-and-traceability/problem:
+  en: 02651402eb5d4ae8
+  zh: 36740d4e7843de81
+/agent-note-acceptance-criteria-and-traceability/proposal:
+  en: 73248aa6c455ae16
+  zh: 6dcd5faad6f6cf1e
+/agent-note-acceptance-criteria-and-traceability/alternatives-considered:
+  en: 9235e40b59fdef7f
+  zh: 01bf2254c7dd20b2
+/agent-note-acceptance-criteria-and-traceability/acceptance-criteria:
+  en: e70bdb75874502d1
+  zh: 8809bf9043af4154
+/agent-note-acceptance-criteria-and-traceability/risks:
+  en: 50fe6eccf09504e2
+  zh: 9c48dba471439d05

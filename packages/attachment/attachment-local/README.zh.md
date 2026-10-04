@@ -89,6 +89,10 @@ kind: "package-reference"
 
 通用文件字节的唯一规范对象位于 `<DSH_HOME>/attachments/v1/file-objects/<digest-prefix>/<digest>`。每条引用路径 `<DSH_HOME>/attachments/v1/files/<digest-prefix>/<digest>/<name>` 都是只读硬链接，所以名称不同但字节相同的文件不会重复占用磁盘。`readFileStream` 以有界分块读取引用路径，并在消费方成功结束前校验完整摘要与记录的字节数。对象缺失、被改写或截断时，消费方会失败，不会得到字节已经变化的完整导出。
 
+通用文件保留使用按规范附件根目录索引的版本化存储 domain。内核租约排除其他活动提供方：POSIX 使用 `flock`，Windows 持有禁止共享的文件 HANDLE。进程终止会释放内核所有权。提供方串行处理暂存、所有者发布、租约获取和删除；持久阶段票据以及独立的 Session、报告、快照、基线所有者在重启后仍有效。旧式保存与缺少完整清单的历史对象仍属未知所有权，不能回收。
+
+`deleteFile` 仅在没有阶段票据或读取方需要时移除所有权已知且为零的别名，最后一个别名移除后才删除规范对象字节。返回的逻辑字节数不代表物理可用空间。持久删除意图支持在 unlink 或最终索引写入失败后重试。读取保护实际流句柄，取消会释放租约；提供方撤出会先排空依赖生产者，再关闭读取方、domain 和内核所有权。暂存与删除需要 storage domain 服务；没有该服务的部署可以保守保留旧式文件。
+
 ### 源码地图
 
 | 文件 | 职责 |
@@ -96,6 +100,7 @@ kind: "package-reference"
 | [`src/index.ts`](src/index.ts) | 插件入口：`LocalAttachmentStore`、`Config` schema、默认值 |
 | [`src/store.ts`](src/store.ts) | 内容寻址写入与校验读取：暂存、硬链接发布、fsync 链、摘要校验 |
 | [`src/file-store.ts`](src/file-store.ts) | 原样文件的流式写入、校验式流式读取与安全存储文件名 |
+| [`src/file-lifecycle.ts`](src/file-lifecycle.ts) + [`src/file-lease.ts`](src/file-lease.ts) | 持久所有者与阶段票据、读取保护、删除准入及内核提供方所有权 |
 | [`src/normalization.ts`](src/normalization.ts) + [`src/encoding.ts`](src/encoding.ts) | 提供方无关的规范化与有界格式／质量候选 |
 | [`src/request-image.ts`](src/request-image.ts) | 路由专用请求变换、缓存身份与 singleflight |
 | [`src/image.ts`](src/image.ts) | 完整光栅解码与元数据校验 |
@@ -148,6 +153,6 @@ kind: "package-reference"
 
 #### 未来：保留与远程存储
 
-保留与垃圾回收被推迟，因为恢复和 fork 后的会话可能共享不可变对象；服务于远程运行时或共享存储的后端则需要自己的持久性证明。两个方向都尚未决定；本地存储当前在 `DSH_HOME` 下保留所有对象。
+自动回收与遗留阶段票据的恢复仍未决定。服务于远程运行时或共享存储的后端还需要自己的持久性与读取协调机制。
 
 </details>

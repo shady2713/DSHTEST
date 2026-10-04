@@ -4,17 +4,19 @@
  * both tools; the binary ships inside the npm dependency, so no system `rg`
  * install and no shell layer is involved.
  *
- * ## Spawn-backed, not a `ctx.fs` provider method
+ * ## Structured read-only search
  *
  * Local workspace discovery is a process-backed `rg` workflow, so these tools
- * execute through `ctx.subprocess.spawn()` with fixed ripgrep argv templates —
+ * consume `ctx.fsSearch`, whose packaged provider constructs fixed ripgrep argv
+ * and executes through `ctx.subprocess.spawn()` —
  * never `ctx.shell`, never `ctx.shell.start()`, never a model-visible background
  * task. The tool layer owns schemas, argument validation, argv construction
  * ({@link module:@deepseek-ai/dsh-tool-fs-search/glob} /
  * {@link module:@deepseek-ai/dsh-tool-fs-search/grep}), result parsing,
  * retention, formatted-result spill, and timeout declaration; the subprocess
- * seam owns spawn execution, process-tree termination, environment scrubbing,
- * and raw output capture. The package injects `tools`, `systemPrompt`, and
+ * seam owns spawn execution, process-tree termination,
+ * and raw output capture. Search removes inherited environment entries except
+ * Windows SystemRoot and fixes LC_ALL. The package injects `tools`, `systemPrompt`, and
  * `subprocess` — deliberately NOT `fs`, and `ctx.spillStore` is read
  * opportunistically with `ctx.get()` because formatted-result spill is optional.
  *
@@ -32,6 +34,12 @@ import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
 import { GLOB_MAX_RESULTS, applyGlobTool } from './glob.ts'
 import { GREP_MAX_LINE_BYTES, GREP_MAX_MATCHES, applyGrepTool } from './grep.ts'
 import { RAW_OUTPUT_MAX_BYTES, SEARCH_GRACE_MS, SEARCH_META_MAX_BYTES, SEARCH_STDERR_MAX_BYTES, SEARCH_TIMEOUT_MS } from './search-core.ts'
+import { PackagedReadonlySearch } from './search-service.ts'
+
+export { PackagedReadonlySearch, ReadonlySearch } from './search-service.ts'
+export type { ReadonlySearchRequest, SearchExecution, SearchInvocation, SearchProcessCaps } from './search-service.ts'
+export { consumeReadonlySearchSpawn } from './search-core.ts'
+export type { ReadonlySearchSpawn } from './search-core.ts'
 
 export { GLOB_MAX_RESULTS, GLOB_VCS_EXCLUDES, applyGlobTool, buildGlobCommand, formatGlobOutput, parseGlobArgs, presentGlobCall, presentGlobResult, sampleAcrossTopLevel } from './glob.ts'
 export type { GlobInput, GlobSample, GlobToolCaps } from './glob.ts'
@@ -120,11 +128,12 @@ function assertPositiveInteger(name: string, value: number): void {
  * Register the `glob`/`grep` filesystem discovery tool suite. The packaged
  * ripgrep binary is always available (an npm dependency), so registration is
  * unconditional.
+ * An Agent preset row must isolate `fsSearch`; its provider belongs to that
+ * preset revision rather than the shared Host service realm.
  *
  * @param ctx - plugin context; registrations are effects scoped to this plugin.
  * @param config - resolved plugin configuration from schemastery.
  */
-// oxlint-disable-next-line typescript/require-await -- async keeps a load-time config rejection a rejection, not a synchronous throw
 export async function apply(ctx: Context, config: Config): Promise<void> {
   // schemastery (Config) has already filled every defaulted field.
   const resolved = config as ResolvedConfig
@@ -139,22 +148,29 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   }
   assertPositiveInteger('stderrMaxBytes', resolved.stderrMaxBytes)
   assertPositiveInteger('timeoutMs', resolved.timeoutMs)
-  applyGlobTool(ctx, {
-    sampleOverCapGlobResults: resolved.sampleOverCapGlobResults,
-    maxResults: resolved.globMaxResults,
-    maxMetaBytes: resolved.searchMetaMaxBytes,
-    rawOutputMaxBytes: resolved.rawOutputMaxBytes,
-    graceMs: resolved.graceMs,
-    stderrMaxBytes: resolved.stderrMaxBytes,
-    timeoutMs: resolved.timeoutMs,
-  })
-  applyGrepTool(ctx, {
-    maxMatches: resolved.grepMaxMatches,
-    maxLineBytes: resolved.grepMaxLineBytes,
-    maxMetaBytes: resolved.searchMetaMaxBytes,
-    rawOutputMaxBytes: resolved.rawOutputMaxBytes,
-    graceMs: resolved.graceMs,
-    stderrMaxBytes: resolved.stderrMaxBytes,
-    timeoutMs: resolved.timeoutMs,
+  await ctx.plugin(PackagedReadonlySearch)
+  await ctx.plugin({
+    name: 'fs-search-consumers',
+    inject: ['fsSearch', 'tools', 'systemPrompt'],
+    apply(inner: Context) {
+      applyGlobTool(inner, {
+        sampleOverCapGlobResults: resolved.sampleOverCapGlobResults,
+        maxResults: resolved.globMaxResults,
+        maxMetaBytes: resolved.searchMetaMaxBytes,
+        rawOutputMaxBytes: resolved.rawOutputMaxBytes,
+        graceMs: resolved.graceMs,
+        stderrMaxBytes: resolved.stderrMaxBytes,
+        timeoutMs: resolved.timeoutMs,
+      })
+      applyGrepTool(inner, {
+        maxMatches: resolved.grepMaxMatches,
+        maxLineBytes: resolved.grepMaxLineBytes,
+        maxMetaBytes: resolved.searchMetaMaxBytes,
+        rawOutputMaxBytes: resolved.rawOutputMaxBytes,
+        graceMs: resolved.graceMs,
+        stderrMaxBytes: resolved.stderrMaxBytes,
+        timeoutMs: resolved.timeoutMs,
+      })
+    },
   })
 }

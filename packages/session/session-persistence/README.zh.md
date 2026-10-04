@@ -29,6 +29,8 @@ kind: "package-reference"
 
 ### 选择后端
 
+`fileAttachmentRefsInSessionEvents` 仅读取第一方声明的内容字段中的文件引用，包括失败 Assistant attempt 的已完成块及 fork 继承事件。无效或矛盾的文件元数据会拒绝收集。扩展事件与无关字段保持不透明，不能据此证明历史引用所有者已完整盘点。
+
 seam 随产品交付 [JSONL](../session-persistence-jsonl/README.zh.md) 后端。它为每个会话存储一份仅追加的 `.jsonl.zstd` 日志。第三方后端可以直接实现该服务；必须遵守的[后端约定](#understand-the-implementation)见下文。
 
 ### 服务提供什么

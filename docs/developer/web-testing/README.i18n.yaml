@@ -1,0 +1,31 @@
+# Bilingual-pair consistency record for README.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write docs/developer/web-testing/README.md
+/:
+  en: 548071bd69f8b2ef
+  zh: 494c5e775c33eccc
+/web-testing-application-development-handoff:
+  en: f3b775af16abf67c
+  zh: 392afe14d7a2fe49
+/web-testing-application-development-handoff/summary:
+  en: b9d393a0468427dd
+  zh: ba5c2ec92d837a59
+/web-testing-application-development-handoff/table-of-contents:
+  en: fed30432d8484be3
+  zh: a86e7844f0fb7584
+/web-testing-application-development-handoff/reading-order:
+  en: 7439be2a7e69457f
+  zh: 817c2f8b480208f5
+/web-testing-application-development-handoff/specification-owners:
+  en: 7bff864403e4cb92
+  zh: fc18177dc62aecba
+/web-testing-application-development-handoff/development-tasks:
+  en: 1ad7ef43e713eb48
+  zh: f724cbd0f1819b3a
+/web-testing-application-development-handoff/repository-locations:
+  en: a01446ea7cdfda4b
+  zh: 7d3cfef7e37db268
+/web-testing-application-development-handoff/dev-note:
+  en: b75c8458928b72b9
+  zh: 003ba4e17b4b5269

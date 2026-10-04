@@ -15,8 +15,8 @@
   en: d152484eb41ac6b4
   zh: 09388d293f9be9cb
 /deepseek-ai-dsh-tool-fs-search/use-this-package:
-  en: aebe9494cf6e8f3a
-  zh: 8ae2ebd6be7c3484
+  en: 5649664640e932b9
+  zh: 6d0b620509f7850b
 /deepseek-ai-dsh-tool-fs-search/use-this-package/minimal-composition:
   en: a5a01d14e0bec814
   zh: 409298cfafd91b05
@@ -36,14 +36,14 @@
   en: 7546db09c46181e0
   zh: 3aae6dc6a773511c
 /deepseek-ai-dsh-tool-fs-search/understand-the-implementation/design-concept:
-  en: 03bde21e022e845a
-  zh: 9c9e8b9a9713dda5
+  en: 1bb620175859becb
+  zh: 225b690780712199
 /deepseek-ai-dsh-tool-fs-search/understand-the-implementation/source-map:
-  en: 5a30f023dd86c345
-  zh: 558b6e80c62648ba
+  en: e35beadc2ddd9c38
+  zh: a8f00f4dab4cfcda
 /deepseek-ai-dsh-tool-fs-search/understand-the-implementation/how-a-search-runs:
-  en: 8443370c1f347d0c
-  zh: 5f5c6fa8cdb97cba
+  en: 7a6e68e364abaa85
+  zh: 97feda237d641c0e
 /deepseek-ai-dsh-tool-fs-search/understand-the-implementation/two-budgets-two-artifacts:
   en: b7e8c2191f8227dc
   zh: a064e2e03761bfd5

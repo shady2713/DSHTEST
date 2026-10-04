@@ -1,10 +1,11 @@
 /** Session-log download command and Host-owned streaming route. */
 
-import type { Context } from '@deepseek-ai/cordis'
+import { Context, Service } from '@deepseek-ai/cordis'
 import type { CommandDefinitionId } from '@deepseek-ai/dsh-commands/brand'
 import Schema from '@deepseek-ai/schemastery'
 import { brandString } from '@deepseek-ai/dsh-brand'
 import type {} from '@deepseek-ai/dsh-attachment'
+import { bindFileReader, type FileReader } from '@deepseek-ai/dsh-attachment/file-publisher'
 import type { CommandResult } from '@deepseek-ai/dsh-commands'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import {
@@ -38,7 +39,14 @@ export type {
 } from './archive.ts'
 
 export const name = 'session-log-download'
-export const inject = ['commands', 'connection']
+export const inject = ['commands', 'connection', 'attachments']
+
+declare module '@deepseek-ai/cordis' {
+  interface Context {
+    /** Host owner of authenticated Session archive downloads. */
+    sessionLogExports: SessionLogExports
+  }
+}
 
 export { SESSION_LOG_EXPORT_PATH } from './routes.ts'
 
@@ -76,29 +84,71 @@ const REQUESTED: CommandResult = {
  * @param config - resolved compression policy.
  */
 export function apply(ctx: Context, config: Config = {}): void {
-  ctx.effect(() => ctx.commands.register({
-    definitionId: brandString<CommandDefinitionId>('@deepseek-ai/dsh-session-log-export'),
-    name: 'export',
-    description: 'Download this Session log as a ZIP archive',
-    handler: invocation => Promise.resolve(invocation.rawInput.trim() === ''
-      ? REQUESTED
-      : { kind: 'error', text: 'The Web /export command does not accept a path.' }),
-  }), 'session-log-download: command')
-  connectionOf(ctx).fetch.register({
-    path: SESSION_LOG_EXPORT_PATH,
-    methods: ['GET', 'HEAD'],
-    requestBody: 'buffered',
-    fetch: async (request) => {
-      const response = await sessionLogExportResponse(
-        ctx,
-        request,
-        config.compressionLevel ?? DEFAULT_SESSION_LOG_COMPRESSION_LEVEL,
-      )
-      if (request.method === 'GET') return response
-      await response.body?.cancel()
-      return new Response(null, { status: response.status, headers: response.headers })
-    },
-  })
+  new SessionLogExports(ctx, config)
+}
+
+/** Owns the download route and drains its protected file readers before teardown. */
+export class SessionLogExports extends Service {
+  /**
+   * @param ctx - Host context carrying the command and authenticated Fetch registries.
+   * @param config - resolved archive compression policy.
+   */
+  constructor(ctx: Context, config: Config) {
+    super(ctx, 'sessionLogExports')
+    const active = new Map<AbortController, Promise<void>>()
+    const releaseFailures: Error[] = []
+    let closing = false
+    let draining: Promise<void> | undefined
+    const drain = async (): Promise<void> => {
+      closing = true
+      for (const controller of active.keys()) controller.abort(new Error('session log exporter is closing'))
+      await Promise.allSettled([...active.values()])
+      if (releaseFailures.length > 0) throw new AggregateError(releaseFailures, 'Session log export read protection cleanup failed.')
+    }
+    const reader = bindFileReader(ctx, () => draining ??= drain())
+    ctx.effect(() => ctx.commands.register({
+      definitionId: brandString<CommandDefinitionId>('@deepseek-ai/dsh-session-log-export'),
+      name: 'export',
+      description: 'Download this Session log as a ZIP archive',
+      handler: invocation => Promise.resolve(invocation.rawInput.trim() === ''
+        ? REQUESTED
+        : { kind: 'error', text: 'The Web /export command does not accept a path.' }),
+    }), 'session-log-download: command')
+    ctx.effect(() => connectionOf(ctx).fetch.register({
+      path: SESSION_LOG_EXPORT_PATH,
+      methods: ['GET', 'HEAD'],
+      requestBody: 'buffered',
+      fetch: async (request) => {
+        if (closing) return new Response('session log exporter is closing', { status: 503 })
+        const controller = new AbortController()
+        let finish: (cleanupError?: Error) => void = () => {}
+        const completed = new Promise<void>((resolve) => {
+          finish = (cleanupError) => {
+            if (cleanupError !== undefined) releaseFailures.push(cleanupError)
+            active.delete(controller)
+            resolve()
+          }
+        })
+        active.set(controller, completed)
+        let streaming = false
+        try {
+          const response = await sessionLogExportResponse(
+            ctx,
+            new Request(request, { signal: AbortSignal.any([request.signal, controller.signal]) }),
+            config.compressionLevel ?? DEFAULT_SESSION_LOG_COMPRESSION_LEVEL,
+            reader,
+            finish,
+          )
+          streaming = response.headers.get('content-type') === 'application/zip'
+          if (request.method === 'GET') return response
+          await response.body?.cancel()
+          return new Response(null, { status: response.status, headers: response.headers })
+        } finally {
+          if (!streaming) finish()
+        }
+      },
+    }), 'session-log-download: route')
+  }
 }
 
 function connectionOf(ctx: Context): SessionLogConnection {
@@ -109,6 +159,8 @@ async function sessionLogExportResponse(
   ctx: Context,
   request: Request,
   compressionLevel: SessionLogCompressionLevel,
+  fileReader: FileReader,
+  onFinished: (cleanupError?: Error) => void,
 ): Promise<Response> {
   const url = new URL(request.url)
   const query = Object.fromEntries(url.searchParams)
@@ -133,6 +185,7 @@ async function sessionLogExportResponse(
     sessionPersistence: deps.sessionPersistence,
     attachments: deps.attachments,
     sessions: deps.sessions,
+    fileReader,
   }
   let rootContent: string | undefined
   try {
@@ -157,6 +210,7 @@ async function sessionLogExportResponse(
       descendantsValue === 'true',
       compressionLevel,
       request.signal,
+      onFinished,
     ),
     {
       headers: {

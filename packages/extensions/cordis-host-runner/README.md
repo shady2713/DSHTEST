@@ -61,6 +61,10 @@ Definitions are session-scoped and process-local: other sessions read them as ab
 
 The sandbox isolates globals but is not a security boundary: Node globals are absent or redirect to Cordis services (`ctx.fs`, `ctx.web`, `ctx.bash`, the timer helpers), and a host half receives a façade without framework internals, yet the services it declares reach the live runtime. Treat a dynamic package like bash access — see the [self-referential toolset Agent Note](../../../.agents/notes/implemented/feature/2026-07-08-self-referential-cordis-toolset.md).
 
+Injected services and the runtime handles their methods return keep the same read-only façade, including asynchronous results and array members. Event, effect, timer and service callbacks receive guarded arguments and receivers; their Agent and Fiber objects do not expose a Context. Reading a Context is refused; framework symbols and raw instance descriptors are withheld. Live Map and Set state is refused, so consumers use the service's public methods. Ordinary record fields, arrays, and binary values remain readable.
+
+Dynamic tool bodies receive the same guarded execution metadata, including the calling Agent. Service `create`, `resume` and `createAgent` calls cannot supply a trusted `setup` callback; these callbacks compose full scoped contexts and belong to installed Host providers. Other creation options retain their values, including signals and opaque authorities.
+
 -----
 
 <a id="understand-the-implementation"></a>

@@ -25,13 +25,39 @@ export async function downloadPrimaryRuntimeAsset(url: string, sha256: string, c
   let bytes: Buffer
   try { bytes = readFileSync(destination) } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
-    const response = await fetch(url)
+    let response: Response
+    try {
+      // Name the asset before the transfer: a long download with no output is
+      // indistinguishable from a hung one.
+      console.error(`primary runtime: downloading ${url}`)
+      // Without a deadline a stalled transfer leaves the whole preparation hanging
+      // with no name attached to it, which is indistinguishable from a slow host.
+      response = await fetch(url, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) })
+    } catch (error) {
+      // Node reports a failed request as a bare `fetch failed`, naming neither the URL
+      // nor the reason. The cause carries the real one — refused, unresolved host, a
+      // rejected certificate, or the deadline above — and this is its only place.
+      const cause = (error as { cause?: unknown }).cause
+      const reason = cause instanceof Error
+        ? `${cause.message}${codeOf(cause) === undefined ? '' : ` (${codeOf(cause) ?? ''})`}`
+        : String(cause ?? error)
+      throw new Error(`primary runtime download: ${url} failed: ${reason}`, { cause: error })
+    }
     if (!response.ok) throw new Error(`primary runtime download: ${String(response.status)} ${url}`)
     bytes = Buffer.from(await response.arrayBuffer())
   }
   if (createHash('sha256').update(bytes).digest('hex') !== sha256) throw new Error(`primary runtime download: checksum mismatch for ${url}`)
   writeFileSync(destination, bytes)
   return destination
+}
+
+/** Deadline for one archive transfer; a slower host should fail loudly rather than hang. */
+const DOWNLOAD_TIMEOUT_MS = 15 * 60 * 1000
+
+/** @param error - inspected error. @returns its `code` when it carries one. */
+function codeOf(error: Error): string | undefined {
+  const code = (error as NodeJS.ErrnoException).code
+  return typeof code === 'string' ? code : undefined
 }
 
 async function pythonArchive(target: keyof typeof lock.targets, cache: string): Promise<string> {

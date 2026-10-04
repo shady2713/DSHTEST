@@ -130,7 +130,7 @@ function readManifest(path: string): PackageManifest {
   return JSON.parse(readFileSync(path, 'utf8')) as PackageManifest
 }
 
-/** Resolve package manifests to real paths so linked bundles use their own dependency directories. */
+/** Search dependency directories before Node package self-resolution; return the real manifest path. */
 function locateManifest(anchors: readonly string[], name: string): string | undefined {
   const paths = anchors.map(anchor => createRequire(anchor).resolve.paths(name) ?? [])
   for (let depth = 0; depth < Math.max(...paths.map(search => search.length)); depth++) {
@@ -139,6 +139,14 @@ function locateManifest(anchors: readonly string[], name: string): string | unde
       if (directory === undefined) continue
       const candidate = join(directory, name, 'package.json')
       if (existsSync(candidate)) return realpathSync(candidate)
+    }
+  }
+  for (const anchor of anchors) {
+    try {
+      return realpathSync(createRequire(anchor).resolve(name + '/package.json'))
+    } catch (error) {
+      if (!(error instanceof Error && 'code' in error
+        && (error.code === 'MODULE_NOT_FOUND' || error.code === 'ERR_PACKAGE_PATH_NOT_EXPORTED'))) throw error
     }
   }
   return undefined

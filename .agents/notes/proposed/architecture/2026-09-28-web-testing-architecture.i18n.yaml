@@ -1,0 +1,22 @@
+# Bilingual-pair consistency record for 2026-09-28-web-testing-architecture.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/proposed/architecture/2026-09-28-web-testing-architecture.md
+/agent-note-technical-architecture:
+  en: 3f9f4d741d149422
+  zh: c9205151e319c193
+/agent-note-technical-architecture/problem:
+  en: 3a7295080132e0ad
+  zh: 042bed29cc5e347f
+/agent-note-technical-architecture/proposal:
+  en: 9a2f54e1f57a97b6
+  zh: dcb424ef0b59795c
+/agent-note-technical-architecture/alternatives-considered:
+  en: 63f1008e42cbcbde
+  zh: d4761e9f28954a92
+/agent-note-technical-architecture/acceptance-criteria:
+  en: 56c0d1be6694e2f3
+  zh: c695d31384deec16
+/agent-note-technical-architecture/risks:
+  en: 596dd55cc1c0d475
+  zh: 2e5ac48c1d917ae1

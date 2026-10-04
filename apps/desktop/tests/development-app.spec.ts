@@ -21,3 +21,27 @@ it.skipIf(process.platform === 'win32')('passes literal workspace paths and cold
   expect(result.trimEnd().split('\n')).toEqual([home, '1', '0', '--inspect=127.0.0.1:9229',
     '--remote-debugging-port=9222', `--user-data-dir=${join(root, 'browser data')}`, root, '--test-launch-argument'])
 })
+
+it('omits every debug port when the launch chose none', () => {
+  const launcher = developmentLauncher({ electron: '/x/Electron', appRoot: '/x/app', directory: '/x',
+    home: '/x/home', userData: '/x/data', openDevtools: '0' }, '/x/bundle')
+
+  // A no-debug launch must not leave an inspector or a remote debugging port behind,
+  // whether they come from an argument or from an inherited environment variable.
+  expect(launcher).not.toContain('--inspect=')
+  expect(launcher).not.toContain('--remote-debugging-port=')
+  expect(launcher).not.toContain('DSH_DESKTOP_HOST_INSPECT_PORT')
+  expect(launcher).toContain('--user-data-dir=/x/data')
+  expect(launcher).toContain("'/x/app'")
+})
+
+it('keeps the chosen ports when the launch did choose them', () => {
+  const launcher = developmentLauncher({ electron: '/x/Electron', appRoot: '/x/app', directory: '/x',
+    home: '/x/home', userData: '/x/data', mainPort: 9229, rendererPort: 9222, hostPort: 9230,
+    openDevtools: '1' }, '/x/bundle')
+
+  expect(launcher).toContain('--inspect=127.0.0.1:9229')
+  expect(launcher).toContain('--remote-debugging-port=9222')
+  // The launcher quotes every value it exports, so the port appears quoted.
+  expect(launcher).toContain("DSH_DESKTOP_HOST_INSPECT_PORT='9230'")
+})

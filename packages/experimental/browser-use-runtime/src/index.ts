@@ -4,6 +4,7 @@
  * @module
  */
 
+import { AsyncLocalStorage } from 'node:async_hooks'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 
@@ -62,6 +63,7 @@ export class SessionResources<T> {
   private readonly ownerCleanups = new Map<Agent, () => Promise<void>>()
   private readonly disposedOwners = new WeakSet<Agent>()
   private disposing: Promise<void> | undefined
+  private readonly operationOwner = new AsyncLocalStorage<Agent>()
 
   /**
    * @param ctx - provider context with the live Agent registry.
@@ -106,6 +108,9 @@ export class SessionResources<T> {
    */
   run<R>(agent: Agent, signal: AbortSignal, operation: (resource: T, signal: AbortSignal) => Promise<R>): Promise<R> {
     signal.throwIfAborted()
+    if (this.operationOwner.getStore() === agent) {
+      throw new Error(`${this.options.label}: nested operations for the same browser owner are not allowed`)
+    }
     const entry = this.entry(agent)
     const combined = AbortSignal.any([signal, entry.controller.signal])
     const releaseDisposed = () => {
@@ -122,7 +127,7 @@ export class SessionResources<T> {
       combined.throwIfAborted()
       const resource = await awaitOperation(entry.ready, combined)
       combined.throwIfAborted()
-      const result = await operation(resource.value, combined)
+      const result = await this.operationOwner.run(agent, () => operation(resource.value, combined))
       combined.throwIfAborted()
       return result
     }).finally(() => { signal.removeEventListener('abort', releaseDisposed) })

@@ -11,7 +11,7 @@ import { randomBytes } from 'node:crypto'
 import { describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { unzipSync, strFromU8 } from 'fflate'
-import type { FileAttachmentRef, ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
+import type { FileAttachmentRef, FileReadLease, ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import type { SessionEvent, SessionHeader, SessionId, ToolResultMessage, UserMessage } from '@deepseek-ai/dsh-session'
 import type { SessionLineageNode } from '@deepseek-ai/dsh-session-query'
 import { SessionPersistenceNotFoundError } from '@deepseek-ai/dsh-session-persistence'
@@ -110,6 +110,7 @@ async function buildApi(
     persistence?: boolean | 'throw'
     attachments?: boolean | ((ref: ImageAttachmentRef, signal?: AbortSignal) => Promise<ReturnType<typeof storedImage>>)
     readFileStream?: (ref: FileAttachmentRef, signal?: AbortSignal) => AsyncIterable<Uint8Array>
+    acquireFileReadLease?: (refs: readonly FileAttachmentRef[], signal?: AbortSignal) => Promise<FileReadLease>
     sessions?: {
       get(id: SessionId): { readonly id: SessionId } | undefined
       flush(session: { readonly id: SessionId }): Promise<boolean>
@@ -126,6 +127,8 @@ async function buildApi(
   } = {},
 ) {
   const ctx = new Context()
+  const cleanupReport = vi.spyOn(ctx.logger, 'error')
+  let replaceAttachments = async (): Promise<void> => { throw new Error('fixture has no attachment provider') }
   ctx.provide('commands', { register: () => () => {} } as never)
   const query = services.query ?? true
   const persistence = services.persistence ?? true
@@ -160,15 +163,22 @@ async function buildApi(
     const readImage = typeof services.attachments === 'function'
       ? services.attachments
       : async (ref: ImageAttachmentRef) => storedImage(String(ref.attachmentId), ref.mediaType)
-    ctx.provide('attachments', {
+    const provider = { name: 'export-test-attachments', apply(inner: Context) { inner.provide('attachments', {
       imageLimits: {} as never,
       validateImage: async () => {},
       saveImage: async () => { throw new Error('export never saves images') },
       readImage,
+      acquireFileReadLease: services.acquireFileReadLease ?? (async () => ({ release: async () => {} })),
       readFileStream: services.readFileStream ?? (async function* () {
         throw new Error('fixture has no files')
       }),
-    } as never)
+    } as never) } }
+    let attachmentFiber = await ctx.plugin(provider)
+    replaceAttachments = async () => {
+      await attachmentFiber.dispose()
+      attachmentFiber = await ctx.plugin(provider)
+      await fiber.await()
+    }
   }
   if (services.sessions !== undefined) ctx.provide('sessions', services.sessions as never)
   const connection = new HostConnectionService(ctx, [], {} as BrowserAuth)
@@ -180,6 +190,9 @@ async function buildApi(
   await fiber.await()
   const handler = connection.createSharedFetchHandler('/api')
   return {
+    cleanupReport,
+    replaceAttachments,
+    dispose: async () => { await ctx.fiber.dispose() },
     fetch: handler,
     downloads: {
       sessionLog: (
@@ -796,6 +809,110 @@ describe('session.export download endpoint', () => {
     expect(reads[0]?.signal).toBeInstanceOf(AbortSignal)
   })
 
+  it('withholds ZIP output until all root file references are protected', async () => {
+    const root = log('session-root', undefined, [fileEvent(`sha256:${'a'.repeat(64)}`)])
+    let accept: (lease: FileReadLease) => void = () => {}
+    const release = vi.fn(async () => {})
+    const acquireFileReadLease = vi.fn(() => new Promise<FileReadLease>((resolve) => { accept = resolve }))
+    const readFileStream = vi.fn(async function* () { yield Uint8Array.of(1) })
+    const api = await buildApi({ 'session-root': root }, [], { acquireFileReadLease, readFileStream })
+    const response = await toFetchHandler(api).fetch(new Request('http://host/api/session.export?sessionId=session-root'))
+    const reader = response.body!.getReader()
+    let produced = false
+    const first = reader.read().then((value) => { produced = true; return value })
+    await vi.waitFor(() => { expect(acquireFileReadLease).toHaveBeenCalledOnce() })
+    await new Promise<void>((resolve) => { setImmediate(resolve) })
+    expect(produced).toBe(false)
+    expect(readFileStream).not.toHaveBeenCalled()
+    accept({ release })
+    expect((await first).done).toBe(false)
+    await reader.cancel()
+    await vi.waitFor(() => { expect(release).toHaveBeenCalledOnce() })
+  })
+
+  it('releases file protection when a later file read fails', async () => {
+    const release = vi.fn(async () => {})
+    const acquireFileReadLease = vi.fn(async () => ({ release }))
+    const api = await buildApi({ 'session-root': log('session-root', undefined, [fileEvent(`sha256:${'a'.repeat(64)}`)]) }, [], {
+      acquireFileReadLease,
+      readFileStream: async function* () { throw new Error('protected read failed') },
+    })
+    const response = await toFetchHandler(api).fetch(new Request('http://host/api/session.export?sessionId=session-root'))
+    await expect(response.arrayBuffer()).rejects.toThrow('protected read failed')
+    expect(acquireFileReadLease).toHaveBeenCalledOnce()
+    expect(release).toHaveBeenCalledOnce()
+  })
+
+  it('cancels an active file reader and releases its lease before exporter teardown finishes', async () => {
+    const entered = Promise.withResolvers<undefined>()
+    const release = vi.fn(async () => {})
+    const api = await buildApi({ 'session-root': log('session-root', undefined, [fileEvent(`sha256:${'a'.repeat(64)}`)]) }, [], {
+      acquireFileReadLease: async () => ({ release }),
+      readFileStream: async function* (_ref, signal) {
+        if (signal === undefined) throw new Error('export reader requires cancellation')
+        entered.resolve(undefined)
+        await new Promise<void>((resolve) => { signal.addEventListener('abort', () => { resolve() }, { once: true }) })
+        signal.throwIfAborted()
+        yield Uint8Array.of(1)
+      },
+    })
+    const response = await toFetchHandler(api).fetch(new Request('http://host/api/session.export?sessionId=session-root'))
+    const failed = expect(response.arrayBuffer()).rejects.toThrow('session log exporter is closing')
+    await entered.promise
+    await api.dispose()
+    await failed
+    expect(release).toHaveBeenCalledOnce()
+  })
+
+  it('releases every export lease even if one release fails', async () => {
+    const releaseRoot = vi.fn(async () => { throw new Error('release failed') })
+    const releaseChild = vi.fn(async () => {})
+    const event = fileEvent(`sha256:${'a'.repeat(64)}`)
+    const acquireFileReadLease = vi.fn().mockResolvedValueOnce({ release: releaseRoot }).mockResolvedValueOnce({ release: releaseChild })
+    const api = await buildApi({ 'session-root': log('session-root', undefined, [event]), 'child': log('child', sid('session-root'), [event]) }, [node('child')], {
+      acquireFileReadLease,
+      readFileStream: async function* () { yield Uint8Array.of(1) },
+    })
+    const response = await toFetchHandler(api).fetch(new Request('http://host/api/session.export?sessionId=session-root&includeDescendants=true'))
+    await expect(response.arrayBuffer()).rejects.toThrow('file read protection could not be released')
+    expect(releaseRoot).toHaveBeenCalledOnce()
+    expect(releaseChild).toHaveBeenCalledOnce()
+  })
+
+  it('reports failed file protection release when teardown cancels the reader', async () => {
+    const entered = Promise.withResolvers<undefined>()
+    const release = vi.fn(async () => { throw new Error('release unavailable') })
+    const api = await buildApi({ 'session-root': log('session-root', undefined, [fileEvent(`sha256:${'a'.repeat(64)}`)]) }, [], {
+      acquireFileReadLease: async () => ({ release }),
+      readFileStream: async function* (_ref, signal) {
+        if (signal === undefined) throw new Error('export reader requires cancellation')
+        entered.resolve(undefined)
+        await new Promise<void>((resolve) => { signal.addEventListener('abort', () => { resolve() }, { once: true }) })
+        signal.throwIfAborted()
+        yield Uint8Array.of(1)
+      },
+    })
+    const response = await toFetchHandler(api).fetch(new Request('http://host/api/session.export?sessionId=session-root'))
+    const failed = expect(response.arrayBuffer()).rejects.toThrow('session log exporter is closing')
+    await entered.promise
+    await api.dispose()
+    await failed
+    expect(release).toHaveBeenCalledOnce()
+    expect(api.cleanupReport).toHaveBeenCalled()
+  })
+
+  it('registers a fresh export route after the attachment provider is replaced', async () => {
+    const api = await buildApi({ 'session-root': log('session-root') })
+    const request = (): Request => new Request('http://host/api/session.export?sessionId=session-root')
+    expect((await api.fetch.fetch(request())).status).toBe(200)
+    await api.replaceAttachments()
+    const after = await api.fetch.fetch(request())
+    expect(after.status).toBe(200)
+    expect(Object.keys(unzipSync(await responseBytes(after)))).toEqual([exportLogName])
+    await api.dispose()
+    expect(api.cleanupReport).not.toHaveBeenCalled()
+  })
+
   it('fails the whole export when a referenced file stream fails', async () => {
     const digest = 'b'.repeat(64)
     const id = `sha256:${digest}`
@@ -979,12 +1096,11 @@ describe('session.export download endpoint', () => {
     await expect(response.arrayBuffer()).rejects.toThrow('attachment bytes missing')
   })
 
-  it('answers 500 when the deployment mounts no attachments service', async () => {
+  it('does not register the export route without its attachment dependency', async () => {
     const api = await buildApi({ 'session-root': log('session-root') }, [], { attachments: false })
     const response = await toFetchHandler(api).fetch(
       new Request('http://host/api/session.export?sessionId=session-root'),
     )
-    expect(response.status).toBe(500)
-    expect(await response.text()).toContain('attachments')
+    expect(response.status).toBe(404)
   })
 })

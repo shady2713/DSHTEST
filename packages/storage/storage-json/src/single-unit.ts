@@ -14,6 +14,7 @@ import { join } from 'node:path'
 import { StorageError } from '@deepseek-ai/dsh-storage'
 import type { KvUnit, KvUnitDescriptor } from '@deepseek-ai/dsh-storage'
 import { writeAtomic } from './atomic.ts'
+import type { AtomicWritePolicy } from './atomic.ts'
 import { parse, serialize } from './format.ts'
 import type { UnitState } from './format.ts'
 
@@ -23,12 +24,14 @@ import type { UnitState } from './format.ts'
  * @param descriptor - Static identity and shape of the unit.
  * @param root - Absolute backend root directory.
  * @param onClose - Backend callback releasing the unit's open-slot.
+ * @param policy - Windows rename retry cadence for every publish.
  * @returns the opened unit.
  */
 export async function openSingleUnit(
   descriptor: KvUnitDescriptor,
   root: string,
   onClose: () => void,
+  policy: AtomicWritePolicy,
 ): Promise<KvUnit> {
   const path = join(root, `${descriptor.name}.json`)
   let text: string | undefined
@@ -46,7 +49,7 @@ export async function openSingleUnit(
         tables: new Map(descriptor.tables.map(table => [table, new Map<string, unknown>()])),
       }
       : parse(text, descriptor)
-  return new SingleJsonUnit(descriptor, path, state, onClose)
+  return new SingleJsonUnit(descriptor, path, state, onClose, policy)
 }
 
 class SingleJsonUnit implements KvUnit {
@@ -59,6 +62,7 @@ class SingleJsonUnit implements KvUnit {
     private readonly path: string,
     private readonly state: UnitState,
     private readonly onClose: () => void,
+    private readonly policy: AtomicWritePolicy,
   ) {}
 
   // oxlint-disable-next-line typescript/require-await -- async keeps the closed guard a rejection, not a synchronous throw
@@ -138,7 +142,7 @@ class SingleJsonUnit implements KvUnit {
   }
 
   private publish(): Promise<void> {
-    const write = writeAtomic(this.path, serialize(this.descriptor.name, this.state))
+    const write = writeAtomic(this.path, serialize(this.descriptor.name, this.state), this.policy)
     this.inFlight.add(write)
     // Swallow only on the tracking branch: the caller still awaits `write`
     // itself, so rejections stay observed exactly once.

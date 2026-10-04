@@ -46,6 +46,8 @@ The Client plugin provides `ctx.fileUpload`. Its `upload()` method receives the 
 
 The Host plugin provides `ctx.fileUploads`. It owns the authenticated streaming route, encoded Remote fallback, command receipt resolver, and staged-receipt lifecycle; encoded admission, attachment-error recognition, and byte storage stay behind `ctx.attachments`. Receipt tables use the receiving Agent's Session object as their key. The Session Controller registers the resolver that can resume a cold ordinary Agent and consumes receipts during prompt admission. Prompt delivery holds each receipt binding in a disposable transaction: disposal restores the previous binding until successful delivery commits it, and queue or history observation then retires the committed receipt.
 
+Upload stages retain durable provider tickets privately on Host. Retiring a prompt receipt releases its ticket only after the Session's durability listeners finish successfully; observers finish routing the event before that flush starts. Missing durability listeners, failed flushes and disposed unconfirmed bindings keep their tickets. Session disposal releases unused stages, and plugin teardown drains in-flight uploads and pending releases before completing. Tickets are absent from Client receipts.
+
 | File | Role |
 |---|---|
 | [`src/index.ts`](src/index.ts) | Host streaming route, attachment-service admission, and Agent-scoped receipt lifecycle |

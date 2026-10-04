@@ -1,0 +1,37 @@
+# Bilingual-pair consistency record for README.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write packages/ptc-runtime/ptc-runtime-quickjs/README.md
+/:
+  en: 39ce220698de83ff
+  zh: de1dab7493e1bce3
+/deepseek-ai-dsh-ptc-runtime-quickjs:
+  en: b05feff921c466c4
+  zh: 98676e55a2ad3fb0
+/deepseek-ai-dsh-ptc-runtime-quickjs/summary:
+  en: 728717899a6b83bb
+  zh: ce628837bd4c0fee
+/deepseek-ai-dsh-ptc-runtime-quickjs/table-of-contents:
+  en: 23386452a66b2fbd
+  zh: aec5cdd4a4586503
+/deepseek-ai-dsh-ptc-runtime-quickjs/use-this-package:
+  en: 616996cb8a1d48f1
+  zh: e0866efbd8f4f7aa
+/deepseek-ai-dsh-ptc-runtime-quickjs/understand-the-implementation:
+  en: 054e0afde8c6b1de
+  zh: fce3fc00d538e289
+/deepseek-ai-dsh-ptc-runtime-quickjs/further-exploration:
+  en: 2dd264f6d75a7a0b
+  zh: df5c90c68a30ee4c
+/deepseek-ai-dsh-ptc-runtime-quickjs/model-experience:
+  en: 1b1db09d73240984
+  zh: ba5c38eea51a0994
+/deepseek-ai-dsh-ptc-runtime-quickjs/model-experience/kv-cache-effect:
+  en: d1b2fd8ab4eb123f
+  zh: 9e146c78d451ca7b
+/deepseek-ai-dsh-ptc-runtime-quickjs/known-limitations-and-deferred-work:
+  en: 9f7ce50b3e7a8bfb
+  zh: 0e6d0d37e6a160fa
+/deepseek-ai-dsh-ptc-runtime-quickjs/known-limitations-and-deferred-work/dev-note:
+  en: c168a8ad5e15326c
+  zh: 861d48ba139986df

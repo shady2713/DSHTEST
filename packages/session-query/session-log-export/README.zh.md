@@ -61,6 +61,8 @@ Web bundle 将本包与 Connection、`dsh-commands`、`dsh-client-ui-commands` �
 
 附件收集读取内置 Session 事件声明的内容字段与已完成的 assistant 流块，包括扁平的 V4 tool 角色消息。未知事件载荷与无关字段在导出日志中保持不变，但不会触发附件读取。
 
+每份日志的普通文件在该日志进入 ZIP 流之前取得读取保护。保护持续覆盖附件读取，并在导出完成、失败或取消时释放。声明的文件引用无效或取得保护失败时，导出拒绝；释放失败会在所有已取得的保护都已释放或尝试释放后继续报错。
+
 ### 失败
 
 当 ZIP 流式传输开始前的预检失败时——例如 Host 端点不可达或配置错误——弹窗显示准备阶段错误。浏览器接受 GET 后发生的子会话或附件读取失败由浏览器下载管理器报告，不通过弹窗报告。
@@ -76,6 +78,8 @@ Web bundle 将本包与 Connection、`dsh-commands`、`dsh-client-ui-commands` �
 本节解释本包如何接入导出控件，并指出实现它的代码位置；可观察行为已在[使用本包](#use-this-package)中完整说明。
 
 ### 设计拆分
+
+`ctx.sessionLogExports` 持有已鉴权的下载路由及其活动读取器。其私有读取器不能修改文件持有者或暂存票据。附件依赖会在提供方变化时卸载并重建该持有者；缺少该依赖时路由不存在。拆卸会取消导出、等待读取保护释放，并在附件提供方关闭前报告释放失败。
 
 本包分为两部分。Host 半包（[`src/index.ts`](src/index.ts)）注册 `/export` 命令，并向 Connection 贡献精确的 `GET`/`HEAD /api/session.export` Fetch 路由；[`src/archive.ts`](src/archive.ts) 构建有界 ZIP 流。浏览器半包（[`src/client/index.ts`](src/client/index.ts)）提供共享下载控制器和 UI，并观察 `command/executed`，因此只有提交命令的浏览器会启动下载。
 

@@ -1,0 +1,58 @@
+# Bilingual-pair consistency record for 2026-10-04-web-testing-installable-plugin-plan.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/proposed/architecture/2026-10-04-web-testing-installable-plugin-plan.md
+/agent-note-installable-web-testing-plugin-plan:
+  en: dce9109e822cda89
+  zh: a97952cebb70d439
+/agent-note-installable-web-testing-plugin-plan/problem:
+  en: 690049902d57d90c
+  zh: ae988cb7c394d445
+/agent-note-installable-web-testing-plugin-plan/proposal:
+  en: caaf45fce07fcbb0
+  zh: 72e8485e90624ed3
+/agent-note-installable-web-testing-plugin-plan/proposal/1-delivery-and-interaction:
+  en: 87f5505039fd452b
+  zh: 7b2af315bf15a318
+/agent-note-installable-web-testing-plugin-plan/proposal/2-existing-requirements-and-partial-supersession:
+  en: eaa26eb3e0401bbe
+  zh: 4c3f9a37525386b9
+/agent-note-installable-web-testing-plugin-plan/proposal/3-reuse-and-ownership:
+  en: c7b4acfe494f7b9d
+  zh: ac2ada38cf4faa99
+/agent-note-installable-web-testing-plugin-plan/proposal/4-package-and-module-layout:
+  en: 054d7f4a3f1a868f
+  zh: 01e121388cd321d7
+/agent-note-installable-web-testing-plugin-plan/proposal/5-settings-sessions-and-normal-dsh-behavior:
+  en: 9742343e61ccf7db
+  zh: 847e3e1688bfaf6a
+/agent-note-installable-web-testing-plugin-plan/proposal/6-browser-integration-and-compatibility:
+  en: b8e777f4db44cbfa
+  zh: b77d4bbd56d45a55
+/agent-note-installable-web-testing-plugin-plan/proposal/7-business-data-and-evidence:
+  en: d4ddd9580108d248
+  zh: 07773713d391016b
+/agent-note-installable-web-testing-plugin-plan/proposal/8-test-execution-and-recovery:
+  en: b62297f8dd8e1b58
+  zh: 0d6665882df7e31f
+/agent-note-installable-web-testing-plugin-plan/proposal/9-enable-disable-uninstall-and-upgrade:
+  en: b5d85455822fb88f
+  zh: 8842280b514bd66a
+/agent-note-installable-web-testing-plugin-plan/proposal/10-migration-inventory:
+  en: 62ba10a6f1c57bd6
+  zh: 33a99d2be0ea0685
+/agent-note-installable-web-testing-plugin-plan/proposal/11-implementation-stages:
+  en: 86f3c24098c27838
+  zh: 49e1090cdeecd604
+/agent-note-installable-web-testing-plugin-plan/proposal/12-verification-and-release-evidence:
+  en: c188bf195f4b6bc7
+  zh: def111a9548dcb00
+/agent-note-installable-web-testing-plugin-plan/alternatives-considered:
+  en: a55e3d7cab6dd32d
+  zh: 63b01767c4fc31b5
+/agent-note-installable-web-testing-plugin-plan/acceptance-criteria:
+  en: d3a9dd5262e47ac2
+  zh: dad4083c5bc90644
+/agent-note-installable-web-testing-plugin-plan/risks:
+  en: c50e3784494faa58
+  zh: 0de64d207c712086

@@ -1,0 +1,13 @@
+version: 1
+scenario: web-test-quickjs
+profile: headless
+composition: web-test-quickjs
+recording: authored
+permission: read-only
+header:
+  class: web-test-quickjs
+  pin: true
+replay:
+  override: true
+workspace:
+  final: true

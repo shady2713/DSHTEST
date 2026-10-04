@@ -86,6 +86,13 @@ const windowsOnlyCoverageExclusions = process.platform !== 'win32'
       // executes only on win32; its decision logic is unit-pinned on every
       // host through the injected-internals suites.
       'packages/subprocess/subprocess-local/src/windows-inspector.ts',
+      // The Web testing writer's two win32-only faces. win32-control-semaphore
+      // is Koffi bindings over kernel32/advapi32; index.ts opens the domain only
+      // after claiming the control root's kernel object, so the service refuses
+      // to run at all off Windows and no suite can drive it. Both stay under the
+      // gate on Windows, where the whole package's suites run natively.
+      'packages/web-test/web-test-runtime/src/win32-control-semaphore.ts',
+      'packages/web-test/web-test-runtime/src/index.ts',
     ]
   : []
 
@@ -316,6 +323,10 @@ export default defineConfig({
         // The speech entry also imports generated Remote definitions; voice-input.e2e.ts
         // exercises the built entry, while source tests cover mountVoiceInput.
         'packages/experimental/client-ui-voice-input/src/client/index.ts',
+        // The first-run model-configuration entry mounts its own generated Remote
+        // contribution, which likewise exists only in lib; mountWebTestPresentation
+        // and RouteStatus carry the source-covered behaviour.
+        'packages/web-test/web-test-presentation/src/client/index.ts',
         // Slash/command/input round: per-file gaps deferred with the same
         // client-lane debt. TODO(gui): cover and remove with the lane above.
         'packages/client/ui-commands/src/index.ts',

@@ -1,0 +1,22 @@
+# Bilingual-pair consistency record for 2026-09-28-web-testing-design-models-release.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/proposed/architecture/2026-09-28-web-testing-design-models-release.md
+/agent-note-detailed-design-models-and-release:
+  en: 909ccf550a3e93d6
+  zh: ebbeca36734e45a7
+/agent-note-detailed-design-models-and-release/problem:
+  en: 601bf41fc8e61f7a
+  zh: 28bba223f443eea7
+/agent-note-detailed-design-models-and-release/proposal:
+  en: ba77440f282dd2af
+  zh: 6e19b62c82efbac6
+/agent-note-detailed-design-models-and-release/alternatives-considered:
+  en: d93a7eb29ba9182e
+  zh: 37c1cce103f6fa2b
+/agent-note-detailed-design-models-and-release/acceptance-criteria:
+  en: 56c0d1be6694e2f3
+  zh: c695d31384deec16
+/agent-note-detailed-design-models-and-release/risks:
+  en: 658df7e08be3034c
+  zh: ae531c78274fb8df

@@ -108,6 +108,57 @@ const GROUP_ORDER = [
 
 const SERVICE_ROLES: ServiceRole[] = [
   {
+    key: 'desktopBrowserControl', pkg: 'client-ui-sidebar-browser', title: 'Explicit Session browser control', mode: 'seam',
+    implementations: ['desktop-host'], consumers: ['browser-use-web-test'],
+    note: 'Trusted consumers bind existing Sessions to Main targets; model-facing tools submit bounded commands for acknowledged ownership.',
+  },
+  {
+    key: 'fsSearch', pkg: 'tool-fs-search', title: 'Read-only source discovery', mode: 'service', consumers: ['web-test-policy'],
+    note: 'Structured glob and grep requests use a fixed packaged search provider; the policy validates the one-time process invocation.',
+  },
+  {
+    key: 'webTestClock', pkg: 'web-test-policy', title: 'Policy validity clock', mode: 'seam', implementations: ['web-test-policy'],
+    note: 'The system clock supplies the time read for confirmation expiry and flow authorization.',
+  },
+  {
+    key: 'webTestScopeSource', pkg: 'web-test-policy', title: 'Published project scope', mode: 'seam',
+    implementations: ['web-test'], consumers: ['web-test-policy'],
+    note: 'The application reads committed Runtime metadata for policy decisions without a second durable project store.',
+  },
+  {
+    key: 'webTestContracts', pkg: 'web-test-contracts', title: 'Web testing request validation', mode: 'service',
+    consumers: ['web-test-runtime', 'web-test-policy', 'web-test-conversation'],
+    note: 'Configuration, project, environment and submission inputs share the same validators and branded identities.',
+  },
+  {
+    key: 'webTestRuntime', pkg: 'web-test-runtime', title: 'Web testing durable writer', mode: 'service', consumers: ['web-test', 'web-test-conversation'],
+    note: 'Owns generation locking, project publication, Session association, environment facts and explicit URL observations.',
+  },
+  {
+    key: 'webTestRecovery', pkg: 'web-test', title: 'Read-only generation recovery', mode: 'service',
+    note: 'Owns recovery-only candidate activation and retains paused, unknown and archived records without mounting an executor.',
+  },
+  {
+    key: 'webTestPrototypeOwner', pkg: 'web-test-runtime', title: 'Bounded prototype dispatch owner', mode: 'service', consumers: ['web-test'],
+    note: 'Registers bounded runs and records admissions, unknown outcomes and revocation only for its exact trusted owning Context.',
+  },
+  {
+    key: 'webTestPolicy', pkg: 'web-test-policy', title: 'Web testing authorization', mode: 'service', consumers: ['web-test', 'web-test-conversation'],
+    note: 'Checks declared scope and bounded grants at tool and executor entry points; reopening facts grants no permission.',
+  },
+  {
+    key: 'webTestModels', pkg: 'web-test-models', title: 'Model route configuration', mode: 'service', consumers: ['web-test', 'web-test-presentation'],
+    note: 'Verifies exact provider and model choices, persists selections, and returns closed refusal reasons.',
+  },
+  {
+    key: 'webTestConversation', pkg: 'web-test-conversation', title: 'Scoped conversation entry', mode: 'service', consumers: ['web-test-conversation'],
+    note: 'Associates official root conversations with published projects and withdraws governed tool visibility after revisions change.',
+  },
+  {
+    key: 'webTestCommands', pkg: 'web-test-conversation', title: 'Shared project command Remote', mode: 'service', consumers: ['web-test'],
+    note: 'Cards and conversation tools share project registration, environment declaration, read-only status and explicit URL checking.',
+  },
+  {
     key: 'hmr',
     pkg: 'hmr',
     title: 'Serialized module and configuration reloads',
@@ -353,6 +404,14 @@ const SERVICE_ROLES: ServiceRole[] = [
     implementations: ['session-persistence-jsonl'],
     consumers: ['agent-loop', 'tool-bash', 'hooks-claude-code', 'hooks-codex', 'session-query', 'session-query-sqlite', 'message-feedback'],
     note: 'The JSONL backend persists the SessionEvent vocabulary as one artifact per Session.',
+  },
+  {
+    key: 'sessionLogExports',
+    pkg: 'session-log-export',
+    title: 'Authenticated Session archive downloads',
+    mode: 'service',
+    consumers: ['connection', 'commands'],
+    note: 'Owns the registered download route, read protection and exporter cancellation during teardown.',
   },
   {
     key: 'configEditor',
@@ -773,6 +832,13 @@ const SERVICE_ROLES: ServiceRole[] = [
     implementations: ['web-search-exa', 'web-search-perplexity', 'web-search-deepseek', 'web-fetch-http'],
     consumers: ['tool-web'],
     note: 'Search and fetch providers register into one ctx.web seam; tool-web owns the stable model-facing names.',
+  },
+  {
+    key: 'webTest',
+    pkg: 'web-test',
+    title: 'Web testing application metadata',
+    mode: 'service',
+    note: 'Exposes configured identity labels and declared entry metadata; it does not select a profile, change the data root, or provide entry capabilities.',
   },
   {
     key: 'spillStore',

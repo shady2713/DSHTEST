@@ -36,7 +36,7 @@ export async function runCli(options: RunCliOptions = {}): Promise<void> {
           environment: loadLayeredEnv('dsh'),
           profile: invocation.profile,
           fromDefaultProfile: invocation.fromDefaultProfile,
-          patchFiles: invocation.patches,
+          applicationPatchFiles: [], patchFiles: invocation.patches,
           args: invocation.args,
           ...profileOptions,
         })

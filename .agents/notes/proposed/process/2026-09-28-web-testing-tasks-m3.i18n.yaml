@@ -1,0 +1,22 @@
+# Bilingual-pair consistency record for 2026-09-28-web-testing-tasks-m3.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/proposed/process/2026-09-28-web-testing-tasks-m3.md
+/agent-note-development-tasks-m3-durable-tasks:
+  en: 5f6dcf1ca4950019
+  zh: b6f324e63c327389
+/agent-note-development-tasks-m3-durable-tasks/problem:
+  en: 077eafb90fe0a43c
+  zh: 70488f871826d740
+/agent-note-development-tasks-m3-durable-tasks/proposal:
+  en: 0cb57ca6840dc85c
+  zh: 7ac8a89ee8ace84f
+/agent-note-development-tasks-m3-durable-tasks/alternatives-considered:
+  en: 52a4513a1a8489e9
+  zh: 3f69f2630edaf480
+/agent-note-development-tasks-m3-durable-tasks/acceptance-criteria:
+  en: 56c0d1be6694e2f3
+  zh: c695d31384deec16
+/agent-note-development-tasks-m3-durable-tasks/risks:
+  en: 140edb9baada0434
+  zh: 94070b8e0efb0c7a

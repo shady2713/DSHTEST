@@ -1,0 +1,9 @@
+version: 1
+scenario: web-test-browser-outcomes
+profile: headless
+composition: web-test-browser-outcomes
+recording: authored
+permission: read-only
+header:
+  class: web-test-browser-outcomes
+  pin: true

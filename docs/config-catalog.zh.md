@@ -350,7 +350,7 @@ export interface Config {
 
 ## `@deepseek-ai/dsh-attachment-local`
 
-- `source`: [`packages/attachment/attachment-local/src/index.ts:61`](../packages/attachment/attachment-local/src/index.ts)
+- `source`: [`packages/attachment/attachment-local/src/index.ts:65`](../packages/attachment/attachment-local/src/index.ts)
 
 ```ts config-catalog
 /** Local attachment backend configuration. */
@@ -940,6 +940,23 @@ export interface StagehandModelConfig {
 }
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-experimental-browser-use-stagehand-native -->
+
+<!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-experimental-browser-use-web-test -->
+<a id="deepseek-aidsh-experimental-browser-use-web-test"></a>
+
+## `@deepseek-ai/dsh-experimental-browser-use-web-test`
+
+- `inject`: `browserUse` · `agents` · `tools` · `webTest`
+- `source`: [`packages/experimental/browser-use-web-test/src/types.ts:4`](../packages/experimental/browser-use-web-test/src/types.ts)
+
+```ts config-catalog
+/** Browser tools are unavailable unless explicitly enabled beside the Desktop Host service. */
+export interface WebTestBrowserAutomationConfig {
+  /** Enable tools backed by acknowledged Session bindings on ctx.desktopBrowserControl. Defaults to false. */
+  controlled?: boolean
+}
+```
+<!-- END GENERATED config-catalog:@deepseek-ai/dsh-experimental-browser-use-web-test -->
 
 <!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-experimental-computer-use-cua-driver-mcp -->
 <a id="deepseek-aidsh-experimental-computer-use-cua-driver-mcp"></a>
@@ -2333,6 +2350,42 @@ export interface LaunchConfig {
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-ptc-runtime-node -->
 
+<!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-ptc-runtime-quickjs -->
+<a id="deepseek-aidsh-ptc-runtime-quickjs"></a>
+
+## `@deepseek-ai/dsh-ptc-runtime-quickjs`
+
+- `source`: [`packages/ptc-runtime/ptc-runtime-quickjs/src/protocol.ts:6`](../packages/ptc-runtime/ptc-runtime-quickjs/src/protocol.ts)
+
+```ts config-catalog
+/** Deployment limits shared with the worker; every field is resolved before run. */
+export interface Config {
+  /** Default elapsed milliseconds, including setup and Host binding waits. */
+  timeoutMs?: number
+  /** Maximum finite elapsed budget accepted by resolve. */
+  maxTimeoutMs?: number
+  /** QuickJS allocator byte ceiling; excludes Worker V8 and WASM module overhead. */
+  memoryLimitBytes?: number
+  /** QuickJS guest stack ceiling in bytes. */
+  maxStackBytes?: number
+  /** Combined serialized logs, value and failure envelope ceiling in bytes. */
+  maxOutputBytes?: number
+  /** Maximum console messages admitted before output failure. */
+  maxLogMessages?: number
+  /** Per-binding JSON argument or response ceiling in UTF-8 bytes. */
+  maxMessageBytes?: number
+  /** Maximum concurrent Host binding calls. */
+  maxPendingCalls?: number
+  /** Program source ceiling in UTF-8 bytes, before type stripping. */
+  maxSourceBytes?: number
+  /** Guest Promise jobs processed per Worker event-loop yield. */
+  maxJobsPerTick?: number
+  /** Worker V8 old-generation ceiling in MiB; excludes WASM allocations. */
+  workerHeapMb?: number
+}
+```
+<!-- END GENERATED config-catalog:@deepseek-ai/dsh-ptc-runtime-quickjs -->
+
 <!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-pwsh-local -->
 <a id="deepseek-aidsh-pwsh-local"></a>
 
@@ -2584,8 +2637,8 @@ export interface Config {
 
 ## `@deepseek-ai/dsh-session-log-export`
 
-- `inject`: `commands` · `connection`
-- `source`: [`packages/session-query/session-log-export/src/index.ts:46`](../packages/session-query/session-log-export/src/index.ts)
+- `inject`: `commands` · `connection` · `attachments`
+- `source`: [`packages/session-query/session-log-export/src/index.ts:54`](../packages/session-query/session-log-export/src/index.ts)
 
 ```ts config-catalog
 /** Session-log archive policy. */
@@ -2604,7 +2657,7 @@ export type SessionLogCompressionLevel = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9
 
 ## `@deepseek-ai/dsh-session-persistence-jsonl`
 
-- `source`: [`packages/session/session-persistence-jsonl/src/index.ts:90`](../packages/session/session-persistence-jsonl/src/index.ts)
+- `source`: [`packages/session/session-persistence-jsonl/src/index.ts:101`](../packages/session/session-persistence-jsonl/src/index.ts)
 
 ```ts config-catalog
 /** Plugin config for the JSONL backend's root and physical encoding. */
@@ -3024,7 +3077,7 @@ export interface Config {
 ## `@deepseek-ai/dsh-storage-json`
 
 - `inject`: `storage`
-- `source`: [`packages/storage/storage-json/src/index.ts:28`](../packages/storage/storage-json/src/index.ts)
+- `source`: [`packages/storage/storage-json/src/index.ts:30`](../packages/storage/storage-json/src/index.ts)
 
 ```ts config-catalog
 /**
@@ -3036,6 +3089,15 @@ export interface Config {
 export interface Config {
   /** Directory holding one `<unit>.json` file (or `<unit>/` tree) per unit. */
   root: string
+  /**
+   * Delay in milliseconds before each retry of an atomic publish that Windows
+   * refused with `EACCES`, `EBUSY`, or `EPERM` (default `[20, 40, 80, 160]`).
+   * The list's length is the retry budget, so four entries buy four retries and
+   * at most five rename attempts. Lengthen it for a medium where a virus
+   * scanner, indexer, or backup agent holds unit files for a while; empty
+   * disables the retry.
+   */
+  windowsRenameDelaysMs?: number[]
 }
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-storage-json -->
@@ -3560,7 +3622,7 @@ export interface Config {
 ## `@deepseek-ai/dsh-tool-fs-search`
 
 - `inject`: `tools` · `systemPrompt` · `subprocess`
-- `source`: [`packages/fs/tool-fs-search/src/index.ts:73`](../packages/fs/tool-fs-search/src/index.ts)
+- `source`: [`packages/fs/tool-fs-search/src/index.ts:81`](../packages/fs/tool-fs-search/src/index.ts)
 
 ```ts config-catalog
 /** Plugin config; over-cap glob sampling is an explicit deployment choice and the remaining fields have defaults. */
@@ -4248,6 +4310,215 @@ export interface Config {
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-web-search-perplexity -->
 
+<!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-web-test -->
+<a id="deepseek-aidsh-web-test"></a>
+
+## `@deepseek-ai/dsh-web-test`
+
+- `source`: [`packages/web-test/web-test/src/types.ts:23`](../packages/web-test/web-test/src/types.ts)
+
+```ts config-catalog
+/** Configuration for {@link WebTest}; every field has a default. */
+export interface WebTestConfig {
+  /** Application identity; distinct from the official product so both may be installed. */
+  applicationId: string
+  /** Intended data-root name; this field does not change `DSH_HOME`. */
+  dataRootName: string
+  /** Intended profile label; the launcher selects the running profile. */
+  profileName: string
+}
+```
+<!-- END GENERATED config-catalog:@deepseek-ai/dsh-web-test -->
+
+<!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-web-test-conversation -->
+<a id="deepseek-aidsh-web-test-conversation"></a>
+
+## `@deepseek-ai/dsh-web-test-conversation`
+
+- `inject`: `agents` · `tools` · `userQuestions` · `webTestPolicy` · `webTestRuntime`
+- `source`: [`packages/web-test/web-test-conversation/src/index.ts:112`](../packages/web-test/web-test-conversation/src/index.ts)
+
+```ts config-catalog
+/**
+ * Plugin config. The question-tool row is the only deployment choice here, and
+ * every other value follows from the services this entry already consumes.
+ */
+export interface Config {
+  /** Which `ask_user_question` definition to register; an omitted mode is the blocking one. */
+  askUserMode?: AskUserMode
+  /** Foreground wait a `timed` row holds for, in whole seconds; refused by `legacy`. */
+  askUserTimeoutSeconds?: number
+}
+
+/** Which `ask_user_question` definition the composition selected. */
+export type AskUserMode = 'legacy' | 'timed'
+```
+<!-- END GENERATED config-catalog:@deepseek-ai/dsh-web-test-conversation -->
+
+<!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-web-test-models -->
+<a id="deepseek-aidsh-web-test-models"></a>
+
+## `@deepseek-ai/dsh-web-test-models`
+
+- `inject`: `llm` · `credentials`
+- `source`: [`packages/web-test/web-test-models/src/index.ts:75`](../packages/web-test/web-test-models/src/index.ts)
+
+```ts config-catalog
+/** How the service reads its one deployment-varying choice: the verification window. */
+export interface WebTestModelsConfig {
+  /** Milliseconds a stored selection stays verifiable after its recorded instant. */
+  verificationTtlMs: number
+  /** Persisted JSON records, parsed strictly before use. */
+  selections?: import('@deepseek-ai/cordis').Volatile<Record<string, unknown>>
+  /** Append-only policy revisions, parsed strictly before use. */
+  policies?: import('@deepseek-ai/cordis').Volatile<Record<string, unknown>>
+}
+```
+<!-- END GENERATED config-catalog:@deepseek-ai/dsh-web-test-models -->
+
+<!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-web-test-policy -->
+<a id="deepseek-aidsh-web-test-policy"></a>
+
+## `@deepseek-ai/dsh-web-test-policy`
+
+- `inject`: `tools` · `webTestClock` · `webTestContracts` · `webTestScopeSource`
+- `source`: [`packages/web-test/web-test-policy/src/index.ts:97`](../packages/web-test/web-test-policy/src/index.ts)
+
+```ts config-catalog
+/**
+ * Plugin config. Every field is a deployment-varying choice the composition
+ * states, and each default is the conservative reading of its field: no
+ * protected directory, no confirmation requirement, and the shortest validities.
+ */
+export interface Config {
+  /** Directories holding upload, download, or temporary material, by role. */
+  protectedPaths: ProtectedPathDeclaration[]
+  /** Effect kinds that require a business confirmation before they may act. */
+  confirmationRequiredFor: WebTestEffectKind[]
+  /** Milliseconds a business confirmation stays answerable. */
+  confirmationTtlMs: number
+  /** Milliseconds one granted authorization stays valid. */
+  authorizationValidityMs: number
+  /** Most actions one granted authorization may cover. */
+  maxActionsPerFlow: number
+}
+
+/** One protected directory as the composition declares it, before resolution. */
+export interface ProtectedPathDeclaration {
+  /** Absolute directory path holding material of `role`. */
+  path: string
+  /** What the directory holds. */
+  role: ProtectedPathRole
+}
+
+/** The closed set of effect kinds, as configuration and reports name them. */
+export type WebTestEffectKind = WebTestEffect['kind']
+
+/** What one protected directory holds, which is why a test run may not read it. */
+export type ProtectedPathRole =
+  /** Material the user uploaded into the product. */
+  | 'upload'
+  /** Material the product retrieved from a tested environment. */
+  | 'download'
+  /** Staging material a write has not published yet. */
+  | 'temporary-material'
+
+/** What one entry path would do, reduced to the facts a decision reads. */
+export type WebTestEffect =
+  /** Read a file's content under the tested code root. */
+  | {
+    /** Always `'read-source'` on this branch. */
+    readonly kind: 'read-source'
+    /** Absolute path the read would open. */
+    readonly path: string
+  }
+  /** Enumerate names under the tested code root without reading content. */
+  | {
+    /** Always `'list-source'` on this branch. */
+    readonly kind: 'list-source'
+    /** Absolute path the listing would enumerate. */
+    readonly path: string
+  }
+  /** Create or replace a file under the tested code root. */
+  | {
+    /** Always `'write-source'` on this branch. */
+    readonly kind: 'write-source'
+    /** Absolute path the write would create or replace. */
+    readonly path: string
+  }
+  /** Change part of a file under the tested code root. */
+  | {
+    /** Always `'edit-source'` on this branch. */
+    readonly kind: 'edit-source'
+    /** Absolute path the edit would change. */
+    readonly path: string
+  }
+  /** Retrieve one URL through the web capability. */
+  | {
+    /** Always `'fetch-web'` on this branch. */
+    readonly kind: 'fetch-web'
+    /** Absolute URL the fetch would retrieve. */
+    readonly url: string
+  }
+  /** Send a query to a search provider. */
+  | {
+    /** Always `'search-web'` on this branch. */
+    readonly kind: 'search-web'
+    /** Search terms the request would send. */
+    readonly queries: readonly string[]
+  }
+  /** Store material the user uploaded into the protected material directories. */
+  | {
+    /** Always `'write-upload'` on this branch; the target directory is the effect. */
+    readonly kind: 'write-upload'
+  }
+  /** Read material the protected material directories hold. */
+  | {
+    /** Always `'read-upload'` on this branch; the source directory is the effect. */
+    readonly kind: 'read-upload'
+  }
+  /** Derive a process. */
+  | {
+    /** Always `'spawn-process'` on this branch. */
+    readonly kind: 'spawn-process'
+    /** Command line the spawn would run. */
+    readonly command: string
+  }
+  /** Use the persistent terminal capability in any of its operations. */
+  | {
+    /** Always `'use-terminal'` on this branch; every terminal operation carries it. */
+    readonly kind: 'use-terminal'
+  }
+```
+<!-- END GENERATED config-catalog:@deepseek-ai/dsh-web-test-policy -->
+
+<!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-web-test-runtime -->
+<a id="deepseek-aidsh-web-test-runtime"></a>
+
+## `@deepseek-ai/dsh-web-test-runtime`
+
+- `inject`: `storageDomain` · `storage`
+- `source`: [`packages/web-test/web-test-runtime/src/index.ts:130`](../packages/web-test/web-test-runtime/src/index.ts)
+
+```ts config-catalog
+/**
+ * Plugin config. The control root is stated by the composition rather than defaulted: a
+ * `process.cwd()`-relative fallback would put two installations' writers on the
+ * same object, or an installed copy's writer somewhere the user cannot see.
+ */
+export interface Config {
+  /** Stable directory holding the data-generation pointer; its resolved identity decides the write lock. */
+  controlRoot: string
+  /** Use the composition's domain route or a dedicated backend under the locked data generation. */
+  storageMode?: 'configured' | 'generation-json'
+  /** Complete deadline for each registered entry URL's HEAD request, in milliseconds. */
+  entryUrlProbeTimeoutMs?: number
+  /** Delays before atomic publication retries on Windows; [] permits one rename attempt. */
+  windowsRenameDelaysMs?: number[]
+}
+```
+<!-- END GENERATED config-catalog:@deepseek-ai/dsh-web-test-runtime -->
+
 <!-- BEGIN GENERATED config-catalog:@deepseek-ai/dsh-webhook-github -->
 <a id="deepseek-aidsh-webhook-github"></a>
 
@@ -4337,7 +4608,7 @@ export interface Config {
 | `@deepseek-ai/dsh-api-remotes` | `typertGateway` | [`packages/api/remotes/src/index.ts`](../packages/api/remotes/src/index.ts) |
 | `@deepseek-ai/dsh-authorization` | `credentials` | [`packages/credentials/authorization/src/index.ts`](../packages/credentials/authorization/src/index.ts) |
 | `@deepseek-ai/dsh-browser-use` | — | [`packages/browser-use/browser-use/src/index.ts`](../packages/browser-use/browser-use/src/index.ts) |
-| `@deepseek-ai/dsh-client-file-upload` | `agents` · `attachments` · `commands` · `connection` | [`packages/client/file-upload/src/index.ts`](../packages/client/file-upload/src/index.ts) |
+| `@deepseek-ai/dsh-client-file-upload` | `agents` · `attachments` · `commands` · `connection` · `sessions` | [`packages/client/file-upload/src/index.ts`](../packages/client/file-upload/src/index.ts) |
 | `@deepseek-ai/dsh-client-locale` | — | [`packages/client/locale/src/index.ts`](../packages/client/locale/src/index.ts) |
 | `@deepseek-ai/dsh-client-modules` | `loader` | [`packages/client/modules/src/index.ts`](../packages/client/modules/src/index.ts) |
 | `@deepseek-ai/dsh-client-resources` | — | [`packages/client/resources/src/index.ts`](../packages/client/resources/src/index.ts) |
@@ -4426,6 +4697,8 @@ export interface Config {
 | `@deepseek-ai/dsh-tool-cordis` | `tools` · `cordisInspect` | [`packages/extensions/tool-cordis/src/index.ts`](../packages/extensions/tool-cordis/src/index.ts) |
 | `@deepseek-ai/dsh-tool-subagent-control` | `tools` · `subagents` | [`packages/subagent/tool-subagent-control/src/index.ts`](../packages/subagent/tool-subagent-control/src/index.ts) |
 | `@deepseek-ai/dsh-user-questions` | — | [`packages/interaction/user-questions/src/index.ts`](../packages/interaction/user-questions/src/index.ts) |
+| `@deepseek-ai/dsh-web-test-contracts` | — | [`packages/web-test/web-test-contracts/src/index.ts`](../packages/web-test/web-test-contracts/src/index.ts) |
+| `@deepseek-ai/dsh-web-test-presentation` | `webTestModels` | [`packages/web-test/web-test-presentation/src/index.ts`](../packages/web-test/web-test-presentation/src/index.ts) |
 | `@deepseek-ai/dsh-webhook` | `agents` · `agentDefaultModel` · `agentPresets` · `permissionPresets` · `sessionTitle` · `workspaceRegistry` | [`packages/webhook/webhook/src/index.ts`](../packages/webhook/webhook/src/index.ts) |
 | `@deepseek-ai/dsh-workspace` | `storageDomain` · `sessionPersistence` | [`packages/workspace/workspace/src/index.ts`](../packages/workspace/workspace/src/index.ts) |
 <!-- END GENERATED config-catalog:no-config -->

@@ -100,6 +100,10 @@ The application preload exposes boot readiness, fatal startup reporting, native 
 
 Only the main application window enables `<webview>`. Guest attachment must match a main-issued lease and partition; guests keep sandbox, context isolation and Web security without Node integration or guest preload. Browser IPC listeners are created only for the application document. [Sidebar Browser](../../packages/client/ui-sidebar-browser/README.md) describes storage grouping and guest limitations; Host authentication remains required independently of URL filtering.
 
+The private Host connection publishes Main-owned browser targets and installs `ctx.desktopBrowserControl` after the profile boots. Guest attachment reads the connected Host generation, so a window created before Host startup does not retain its initial epoch. Host replacement withdraws previous targets; the application reload releases their guests and attaches fresh leases without inheriting Session ownership. A trusted consumer selects an existing Session and user guest and awaits Main acknowledgement before tools can submit commands; shipped profiles do not bind targets or enable the experimental provider automatically. [Sidebar Browser](../../packages/client/ui-sidebar-browser/README.md#understand-the-implementation) owns the binding and navigation rules.
+
+Native browser input requires a visible, focused owning window and a visible current document. Element revalidation refuses a hidden document in a focused window before sending input; a background owner may first restore its window, then revalidate. An `unknown` navigation outcome ends that action; consumers must retain uncertainty and stop further input on that document. Electron 44 can leave a replacement document hidden after canceled navigation despite window focus. A trusted owner may need to rebuild its guest or window explicitly; the controlled channel does not claim automatic recovery.
+
 The `dsh-app://shell/` origin serves packaged update documents, scripts, and styles without contacting the Host. Static requests retain GET/HEAD, path-containment, and MIME handling; each update document keeps its isolated preload and owned-window IPC checks.
 
 The product UI retains Web actions, including "Open In..." through the shared authenticated HTTP routes. Desktop uses Web's automatic directory-picker selection and initializes new profiles with the shared Web template's bundles.
@@ -157,6 +161,14 @@ pnpm run start:desktop
 ```
 
 The Web counterparts are `pnpm run dev:web` and `pnpm run start:web`, documented in the [development guide](../../docs/development.md). Workspace development runs the current CLI and private Desktop Host packages under Electron RunAsNode. Plugin management and recovery use `$DSH_HOME/profiles/desktop`, separate from the disposable workspace runtime. The Host uses runtime module resolution in both development and packaged builds without creating official-package fallback links; developer-installed packages, including links, retain native priority. Use an unpacked application to exercise Electron RunAsNode, bundled pnpm, bundled dsh resources, plugin installation and repair paths.
+
+`dev:web-test` runs the same launch as the [Web testing application](../../packages/web-test/web-test/README.md) instead of the official product. From `apps/desktop`:
+
+```sh
+pnpm run dev:web-test
+```
+
+The launcher reads the official `DSH_HOME` while it still names the official Harness home, applies the Web testing launch environment, registers the install under `~/.dsh-web-test` — the data root, the `web-test` profile with its bundle list, the browser `userData` directory, and the release identity — and opens Electron with that environment, so the shell sets its own `userData`, composes the Web testing profile, and hands the Host the composition layer and entry to mount. The layer is an absolute path resolved from the Web testing package's own install, because the main bundle inlines that package: a relative handoff would be applied against the Host child's working directory instead, so the Host refuses one rather than reading a file from a directory no application registered. Both products may then run side by side because the data roots differ. The Host refuses to report ready unless the booted tree resolved that data root and mounted the `web-test` entry. `start:web-test` skips the build, as `start:desktop` does. A launch that ends leaves the registered install in place; a `DSH_HOME` already naming `~/.dsh-web-test` is refused rather than reused.
 
 The [native/renderer keyboard tests](tests/keyboard.spec.ts) compile as part of the repository Client typecheck. Their Desktop imports are limited to Cordis-free input, persistence, IPC, browser-guest, and overlay modules.
 

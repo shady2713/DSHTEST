@@ -67,8 +67,30 @@ export async function admitEncodedFile(
   attachments: AttachmentStore,
   file: EncodedFileAttachment,
 ): Promise<FileAttachmentRef> {
-  return attachments.saveFile({
+  return attachments.saveFile(decodedFileInput(file))
+}
+
+/**
+ * Decode one canonical base64 upload for file storage.
+ * @param file - encoded file upload.
+ * @returns exact decoded bytes and the optional display name.
+ */
+export function decodedFileInput(file: EncodedFileAttachment): import('./types.ts').SaveFileAttachment {
+  return {
     data: decodeCanonicalBase64(file.data, 'accept', 'INVALID_FILE_BASE64'),
     ...file.name === undefined ? {} : { name: file.name },
-  })
+  }
+}
+
+/**
+ * Admit a canonical base64 upload with durable staging protection.
+ * @param attachments - provider owning storage and file-reference admission.
+ * @param file - encoded upload and optional display name.
+ * @returns a staged file and its provider-issued retention ticket.
+ */
+export async function stageEncodedFile(
+  attachments: AttachmentStore,
+  file: EncodedFileAttachment,
+): Promise<import('./types.ts').StagedFileAttachment> {
+  return attachments.stageFile(decodedFileInput(file))
 }

@@ -523,15 +523,16 @@ export class JsonlBackendTracker {
   }
 
   /**
-   * Install the backend's live session routing and teardown. Persistence
+   * Install the backend's live session routing and return its teardown. Persistence
    * enforces one active write handle per id, so the listeners route published
    * sessions' events by id; the teardown effect closes every open handle —
    * close drains the routed buffer — and aggregates failures. This provider
    * owns no separate storage connection, so closing handles is the complete
    * teardown. Registrations are effects of the current fiber.
    * @param ctx - the backend's context.
+   * @returns idempotent handle drain for the backend's owned teardown registration.
    */
-  install(ctx: Context): void {
+  install(ctx: Context): () => Promise<void> {
     ctx.on('session/event', (session: Session, event) => {
       this.writers.get(session.id)?.enqueueLive(event, (error) => {
         ctx.logger.warn(`session-persistence: background write for session "${session.id}" failed (buffered events retained): ${String(error)}`)
@@ -552,7 +553,8 @@ export class JsonlBackendTracker {
         ctx.logger.warn(`session-persistence: final drain for session "${session.id}" failed: ${String(error)}`)
       })
     })
-    ctx.effect(() => async () => {
+    let draining: Promise<void> | undefined
+    const drain = async (): Promise<void> => {
       const errors: unknown[] = []
       for (const handle of [...this.openHandles]) {
         try {
@@ -562,6 +564,7 @@ export class JsonlBackendTracker {
         }
       }
       if (errors.length > 0) throw new AggregateError(errors, `${this.name} dispose failed`)
-    }, `${this.name} open handles`)
+    }
+    return () => draining ??= drain()
   }
 }

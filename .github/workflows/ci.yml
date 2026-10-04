@@ -650,6 +650,10 @@ jobs:
           || 'dsh-windows-2025-16core' }}
     name: windows node 24 / native tests
     timeout-minutes: 60
+    # Apply the same 90 s budget to cases, hooks and polling in inline projects;
+    # the CLI testTimeout override does not cover teardown or poll defaults.
+    env:
+      DSH_COVERAGE_TEST_TIMEOUT_MS: '90000'
     steps:
       - uses: actions/checkout@v6
         with:
@@ -688,6 +692,7 @@ jobs:
           packages/workflow/workflow-ptc/tests/workflow-ptc.spec.ts
           packages/workflow/tool-ralph/tests/integration.spec.ts
           packages/subprocess/subprocess-local/tests/process-exit.spec.ts
+          packages/storage/storage-json/tests/atomic.spec.ts
 
   # Single stable required check for branch protection: require "all checks
   # passed" instead of enumerating matrix legs whose names change as lanes and

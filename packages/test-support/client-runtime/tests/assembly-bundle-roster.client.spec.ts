@@ -1,7 +1,8 @@
 /** bundleRoster: the real web profile read from its bundles, and every reader decision on a scratch installation. */
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { getStaticModules } from '@deepseek-ai/dsh-client-web/src/seed.ts'
 import { afterAll, describe, expect, it, onTestFinished } from 'vitest'
 import { MODULES_PACKAGE } from '../src/assembly/modules.ts'
@@ -65,6 +66,20 @@ class Scratch {
     this.pkg(name, { dsh: { client: { platform: 'web', ...client } } })
   }
 
+  selfBundle(name: string, client?: Record<string, unknown>): string {
+    const directory = join(this.root, 'workspace', name)
+    mkdirSync(directory, { recursive: true })
+    const anchor = join(directory, 'package.json')
+    writeFileSync(anchor, JSON.stringify({ name, exports: { './package.json': './package.json' },
+      dsh: { bundle: { patch: './cordis.patch.yml' }, ...(client === undefined ? {} : { client }) },
+    }))
+    writeFileSync(join(directory, 'cordis.patch.yml'), "- insert:\n    - id: self\n      name: '" + name + "'\n")
+    const link = join(this.root, 'app', 'node_modules', name)
+    mkdirSync(dirname(link), { recursive: true })
+    symlinkSync(directory, link, 'junction')
+    return anchor
+  }
+
   roster(bundles: readonly string[]): readonly string[] {
     return bundleRoster(bundles, this.anchor).rows.map(row => row.name)
   }
@@ -87,6 +102,60 @@ describe('bundleRoster on a scratch installation', () => {
     symlinkSync(bundle, join(linked.root, 'app', 'node_modules', '@t', 'linked'), 'junction')
     linked.bundle('@t/base', '- insert: []\n')
     expect(linked.roster(['@t/base', '@t/linked'])).toEqual(['@t/theme'])
+  })
+
+  it('omits a linked bundle own Host row without a self dependency link', () => {
+    const linked = new Scratch()
+    onTestFinished(() => { rmSync(linked.root, { recursive: true, force: true }) })
+    const anchor = linked.selfBundle('@t/self-host')
+    expect(createRequire(anchor).resolve('@t/self-host/package.json')).toBe(anchor)
+    expect(linked.roster(['@t/self-host'])).toEqual([])
+  })
+
+  it('reads a bundle anchored inside itself and retains its browser declaration', () => {
+    const linked = new Scratch()
+    onTestFinished(() => { rmSync(linked.root, { recursive: true, force: true }) })
+    const anchor = linked.selfBundle('@t/self-web', { platform: 'web', immediately: true })
+    expect(bundleRoster(['@t/self-web'], anchor).rows).toEqual([
+      { name: '@t/self-web', inject: [], immediately: true },
+    ])
+  })
+
+  it('keeps a bundle local dependency ahead of its self manifest', () => {
+    const linked = new Scratch()
+    onTestFinished(() => { rmSync(linked.root, { recursive: true, force: true }) })
+    const anchor = linked.selfBundle('@t/self-shadowed')
+    const dependency = join(dirname(anchor), 'node_modules', '@t', 'self-shadowed')
+    mkdirSync(dependency, { recursive: true })
+    writeFileSync(join(dependency, 'package.json'), JSON.stringify({ name: '@t/self-shadowed',
+      dsh: { client: { platform: 'web', immediately: true } },
+    }))
+    expect(linked.roster(['@t/self-shadowed'])).toEqual(['@t/self-shadowed'])
+  })
+
+  it('rejects a self row whose package manifest is not exported', () => {
+    const linked = new Scratch()
+    onTestFinished(() => { rmSync(linked.root, { recursive: true, force: true }) })
+    const anchor = linked.selfBundle('@t/self-private')
+    writeFileSync(anchor, JSON.stringify({ name: '@t/self-private', exports: {},
+      dsh: { bundle: { patch: './cordis.patch.yml' } },
+    }))
+    expect(() => linked.roster(['@t/self-private'])).toThrow('cannot resolve plugin package @t/self-private')
+  })
+
+  it('propagates an invalid self manifest export target', () => {
+    const linked = new Scratch()
+    onTestFinished(() => { rmSync(linked.root, { recursive: true, force: true }) })
+    const anchor = linked.selfBundle('@t/self-invalid-export')
+    writeFileSync(anchor, JSON.stringify({ name: '@t/self-invalid-export', exports: { './package.json': '../outside.json' },
+      dsh: { bundle: { patch: './cordis.patch.yml' } },
+    }))
+    expect.assertions(1)
+    try {
+      linked.roster(['@t/self-invalid-export'])
+    } catch (error) {
+      expect(error).toHaveProperty('code', 'ERR_INVALID_PACKAGE_TARGET')
+    }
   })
 
   it('applies the layers in order and keeps enabled browser rows once, with their dsh.client declaration', () => {

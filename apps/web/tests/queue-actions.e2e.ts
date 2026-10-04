@@ -7,11 +7,11 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
-import type { Browser, Page } from 'playwright'
+import type { Browser, Page, Response as PlaywrightResponse } from 'playwright'
 import { chromium } from 'playwright'
 import { afterEach, describe, expect, it, onTestFailed, vi } from 'vitest'
 import { deriveReplayScript, parseSessionLog, type ReplayEntry } from '@deepseek-ai/dsh-llm-replay'
-import type { SessionEvent } from '@deepseek-ai/dsh-session'
+import type { SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
 import {
   assertFixtureInventory, captureExpandedTurnProcessAria, captureStableAria, compareOrRefreshGolden,
   launchWebScaffold, watchConsole, webSnapshotMode, type WebScaffold,
@@ -78,6 +78,37 @@ describe('web e2e: queue row actions', () => {
     const row = page.locator('[data-queue-dock] li', { hasText: remainingText })
     await expect.poll(() => row.getByRole('button', { name: 'Edit queued message' }).isEnabled()).toBe(true)
     await expect.poll(() => row.getByRole('button', { name: 'Remove queued message' }).isEnabled()).toBe(true)
+  }
+
+  /**
+   * Prove the Stop gesture crossed real HTTP as the generic cancel RPC aimed at
+   * the session under test, and that the reply answers that same request. The
+   * caller registers `waitForResponse` before the gesture, so the request read
+   * here is the gesture's own: its `args.request.sessionId` names the session
+   * the scenario drives, and the reply repeats its `rpcId`.
+   * @param pending - `waitForResponse` promise registered before the Stop gesture.
+   * @param sessionId - id of the root session the scenario drives.
+   */
+  async function expectRootSessionCancel(pending: Promise<PlaywrightResponse>, sessionId: SessionId): Promise<void> {
+    const response = await pending
+    expect(response.request().method()).toBe('POST')
+    const request = response.request().postDataJSON() as {
+      type: string
+      rpcId: string
+      method: string
+      payload: { args: { request: { sessionId: SessionId } } }
+    }
+    expect(request.type).toBe('client-request')
+    expect(request.method).toBe('session/cancel')
+    expect(request.payload.args.request.sessionId).toBe(sessionId)
+    const reply = await response.json() as {
+      type: string
+      rpcId: string
+      result: { ok: boolean; value?: { accepted: boolean } }
+    }
+    expect(reply.type).toBe('server-response')
+    expect(reply.rpcId).toBe(request.rpcId)
+    expect(reply.result).toEqual({ ok: true, value: { accepted: true } })
   }
 
   it.skipIf(MODE === 'record').each(['button', 'keyboard'] as const)('edits and removes exact occurrences and preserves Queue across %s stop', async (method) => {
@@ -288,6 +319,14 @@ describe('web e2e: queue row actions', () => {
       { timeout: 10_000 },
     ).toBe(2)
 
+    // Register before the gesture: a root session carries no subagent address,
+    // so Stop must reach the Host as the generic cancel RPC over real HTTP. The
+    // `aborted` turn end below is the effect; this is the wire that caused it.
+    const attached = scaffold.ctx.sessions.list()
+    expect(attached).toHaveLength(1)
+    const cancelResponse = page.waitForResponse(response =>
+      new URL(response.url()).pathname === '/api/session/cancel'
+      && response.request().method() === 'POST')
     const stopButton = page.getByRole('button', { name: 'Stop generating' })
     await stopButton.hover()
     await page.getByRole('tooltip', { name: 'Stop generating Esc Esc', exact: true }).waitFor()
@@ -297,6 +336,7 @@ describe('web e2e: queue row actions', () => {
       await page.keyboard.press('Escape')
       await page.keyboard.press('Escape')
     }
+    await expectRootSessionCancel(cancelResponse, attached[0]!.id)
     await firstSettled
     await expect.poll(() => page.getByRole('button', { name: 'Stop generating' }).count())
       .toBe(0)
@@ -413,7 +453,13 @@ describe('web e2e: queue row actions', () => {
     await expect.poll(() => page.locator('[data-queue-dock]').count(), { timeout: 10_000 }).toBe(0)
     await page.getByRole('button', { name: 'Clear goal' }).click()
     await expect.poll(() => page.locator('[data-goal-bar]').count(), { timeout: 10_000 }).toBe(0)
+    // Same positive transport evidence on the bare Stop control, whose session
+    // never carried a subagent address.
+    const cancelResponse = page.waitForResponse(response =>
+      new URL(response.url()).pathname === '/api/session/cancel'
+      && response.request().method() === 'POST')
     await page.getByRole('button', { name: 'Stop generating' }).click()
+    await expectRootSessionCancel(cancelResponse, sessions[0]!.id)
     await settled
 
     expect(turnEndReasons(sessionEvents)).toEqual(['aborted'])

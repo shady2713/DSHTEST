@@ -24,14 +24,15 @@
 import { Zip, ZipDeflate } from 'fflate'
 import type { Context } from '@deepseek-ai/cordis'
 import type {
-  AttachmentStore, FileAttachmentRef, ImageAttachmentRef,
+  AttachmentStore, FileAttachmentRef, FileReadLease, ImageAttachmentRef,
 } from '@deepseek-ai/dsh-attachment'
+import type { FileReader } from '@deepseek-ai/dsh-attachment/file-publisher'
 import type { SessionLineageNode, SessionQueryEngine } from '@deepseek-ai/dsh-session-query'
 import { SESSION_FORMAT_VERSION } from '@deepseek-ai/dsh-session'
 import { sessionFormatLogFilename } from '@deepseek-ai/dsh-session-format'
 import type { SessionEvent, SessionHeader, SessionId, SessionStore } from '@deepseek-ai/dsh-session'
 import type { SessionHandle, SessionPersistence } from '@deepseek-ai/dsh-session-persistence'
-import { SessionPersistenceNotFoundError } from '@deepseek-ai/dsh-session-persistence'
+import { fileAttachmentRefsInSessionEvents, SessionPersistenceNotFoundError } from '@deepseek-ai/dsh-session-persistence'
 
 /** Valid fflate DEFLATE levels accepted by session-log export. */
 export type SessionLogCompressionLevel = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9
@@ -53,6 +54,8 @@ export interface SessionLogExportReady {
   readonly sessionPersistence: SessionPersistence
   readonly attachments: AttachmentStore
   readonly sessions: SessionStore | undefined
+  /** Feature-owned read authority for the authenticated download route. */
+  readonly fileReader?: FileReader
 }
 
 /**
@@ -196,15 +199,13 @@ function fileEntryPath(ref: FileAttachmentRef): string {
 }
 
 /**
- * Collect direct attachment blocks from one declared V4 content array.
+ * Collect direct image blocks from one declared V4 content array.
  * @param content - an event or message content array.
  * @param images - image dedupe map keyed by attachment id.
- * @param files - file dedupe map keyed by attachment id and stored name.
  */
 function collectAttachmentRefs(
   content: unknown,
   images: Map<string, ImageAttachmentRef>,
-  files: Map<string, FileAttachmentRef>,
 ): void {
   if (!Array.isArray(content)) return
   for (const value of content) {
@@ -214,24 +215,18 @@ function collectAttachmentRefs(
       const ref = block.attachment as ImageAttachmentRef
       images.set(String(ref.attachmentId), ref)
     }
-    if (block.type === 'file' && typeof block.attachment === 'object' && block.attachment !== null) {
-      const ref = block.attachment as FileAttachmentRef
-      files.set(`${String(ref.attachmentId)}\u0000${ref.name}`, ref)
-    }
   }
 }
 
 /**
- * Collect references only from declared first-party content fields and completed
+ * Collect images only from declared first-party content fields and completed
  * Assistant blocks. Unknown events and unrelated payload fields remain opaque.
  * @param event - one parsed JSONL event object.
  * @param images - image dedupe map keyed by attachment id.
- * @param files - file dedupe map keyed by attachment id and stored name.
  */
 function collectEventAttachmentRefs(
   event: unknown,
   images: Map<string, ImageAttachmentRef>,
-  files: Map<string, FileAttachmentRef>,
 ): void {
   if (typeof event !== 'object' || event === null || Array.isArray(event)) return
   const row = event as { type?: unknown; data?: unknown }
@@ -247,26 +242,26 @@ function collectEventAttachmentRefs(
   }
   switch (row.type) {
     case 'user/message': case 'tool/ptc-dispatch':
-      collectAttachmentRefs(carrier.content, images, files)
+      collectAttachmentRefs(carrier.content, images)
       return
     case 'system/message': case 'developer/message': case 'tool/result': case 'team/message/queued':
-      collectAttachmentRefs(carrier.message?.content, images, files)
+      collectAttachmentRefs(carrier.message?.content, images)
       return
     case 'agent/inbox/spliced': {
       const messages = carrier.inserted
       if (!Array.isArray(messages)) return
       for (const message of messages as readonly unknown[]) {
         if (typeof message !== 'object' || message === null || Array.isArray(message)) continue
-        collectAttachmentRefs((message as { readonly content?: unknown }).content, images, files)
+        collectAttachmentRefs((message as { readonly content?: unknown }).content, images)
       }
       return
     }
     case 'compaction/summary':
-      collectAttachmentRefs(carrier.summary, images, files)
-      collectAttachmentRefs(carrier.rawOutput, images, files)
+      collectAttachmentRefs(carrier.summary, images)
+      collectAttachmentRefs(carrier.rawOutput, images)
       return
     case 'assistant/message':
-      collectAttachmentRefs(carrier.message?.content, images, files)
+      collectAttachmentRefs(carrier.message?.content, images)
       break
     case 'assistant/attempt': break
     default: return
@@ -274,7 +269,7 @@ function collectEventAttachmentRefs(
   if (carrier.stream !== undefined) {
     for (const record of carrier.stream) {
       if (record.type === 'chunk' && record.chunk?.type === 'block-end') {
-        collectAttachmentRefs([record.chunk.block], images, files)
+        collectAttachmentRefs([record.chunk.block], images)
       }
     }
   }
@@ -292,17 +287,21 @@ function attachmentRefsInArtifact(content: string): {
   readonly files: Map<string, FileAttachmentRef>
 } {
   const images = new Map<string, ImageAttachmentRef>()
-  const files = new Map<string, FileAttachmentRef>()
-  for (const line of content.split('\n')) {
-    if (line === '') continue
-    let event: unknown
-    try {
-      event = JSON.parse(line)
-    } catch {
-      continue
+  const events = function* (): Generator<unknown, void, void> {
+    for (const line of content.split('\n')) {
+      if (line === '') continue
+      let event: unknown
+      try {
+        event = JSON.parse(line)
+      } catch (_error: unknown) {
+        // The exported artifact retains the original line even when no event can be decoded.
+        continue
+      }
+      collectEventAttachmentRefs(event, images)
+      yield event
     }
-    collectEventAttachmentRefs(event, images, files)
   }
+  const files = new Map(fileAttachmentRefsInSessionEvents(events()).map(ref => [`${ref.attachmentId}\u0000${ref.name}`, ref] as const))
   return { images, files }
 }
 
@@ -342,6 +341,7 @@ export function sessionLogZipFilename(sessionId: string): string {
  * @param sessionId - the root session id.
  * @param includeDescendants - whether to include every subagent descendant.
  * @param signal - optional cancellation forwarded to lineage, persistence, and attachment reads.
+ * @param onReleaseFailure - file-protection cleanup failure, including during cancellation.
  * @returns the export entries in zip order.
  */
 export async function* sessionLogZipEntries(
@@ -350,57 +350,73 @@ export async function* sessionLogZipEntries(
   sessionId: SessionId,
   includeDescendants: boolean,
   signal?: AbortSignal,
+  onReleaseFailure?: (error: Error) => void,
 ): AsyncGenerator<SessionLogZipEntry> {
   const media = new Map<string, ImageAttachmentRef>()
   const files = new Map<string, FileAttachmentRef>()
-  const rememberAttachments = (content: string): void => {
+  const leases: FileReadLease[] = []
+  const rememberAttachments = async (content: string): Promise<void> => {
     const refs = attachmentRefsInArtifact(content)
+    if (refs.files.size > 0) leases.push(await (deps.fileReader ?? deps.attachments).acquireFileReadLease([...refs.files.values()], signal))
     for (const [id, ref] of refs.images) media.set(id, ref)
     for (const [id, ref] of refs.files) files.set(id, ref)
   }
-  rememberAttachments(rootContent)
-  yield { path: SESSION_LOG_FILENAME, content: rootContent }
-  if (includeDescendants) {
-    const seen = new Set<SessionId>([sessionId])
-    const collect = async function* (
-      nodes: readonly SessionLineageNode[],
-    ): AsyncGenerator<SessionLogZipEntry> {
-      for (const node of nodes) {
-        signal?.throwIfAborted()
-        const id = node.session.header.id
-        if (seen.has(id)) continue
-        seen.add(id)
-        await flushLiveSessionLog(deps, id, signal)
-        const content = await readSessionLogText(deps.sessionPersistence, id, signal)
-        signal?.throwIfAborted()
-        if (content === undefined) {
-          throw new Error(`subagent "${id}" has no stored log`)
+  try {
+    await rememberAttachments(rootContent)
+    yield { path: SESSION_LOG_FILENAME, content: rootContent }
+    if (includeDescendants) {
+      const seen = new Set<SessionId>([sessionId])
+      const collect = async function* (
+        nodes: readonly SessionLineageNode[],
+      ): AsyncGenerator<SessionLogZipEntry> {
+        for (const node of nodes) {
+          signal?.throwIfAborted()
+          const id = node.session.header.id
+          if (seen.has(id)) continue
+          seen.add(id)
+          await flushLiveSessionLog(deps, id, signal)
+          const content = await readSessionLogText(deps.sessionPersistence, id, signal)
+          signal?.throwIfAborted()
+          if (content === undefined) {
+            throw new Error(`subagent "${id}" has no stored log`)
+          }
+          await rememberAttachments(content)
+          yield {
+            path: `subagents/${safeSessionIdSegment(id)}/${SESSION_LOG_FILENAME}`,
+            content,
+          }
+          yield* collect(node.descendants)
         }
-        rememberAttachments(content)
-        yield {
-          path: `subagents/${safeSessionIdSegment(id)}/${SESSION_LOG_FILENAME}`,
-          content,
-        }
-        yield* collect(node.descendants)
+      }
+      const lineage = await deps.sessionQuery.traceSession(sessionId, signal)
+      signal?.throwIfAborted()
+      yield* collect(lineage.descendants)
+    }
+    for (const ref of media.values()) {
+      signal?.throwIfAborted()
+      const stored = await deps.attachments.readImage(ref, signal)
+      signal?.throwIfAborted()
+      yield { path: mediaEntryPath(ref), data: stored.data }
+    }
+    for (const ref of files.values()) {
+      signal?.throwIfAborted()
+      yield {
+        path: fileEntryPath(ref),
+        chunks: (deps.fileReader ?? deps.attachments).readFileStream(ref, signal),
       }
     }
-    const lineage = await deps.sessionQuery.traceSession(sessionId, signal)
-    signal?.throwIfAborted()
-    yield* collect(lineage.descendants)
-  }
-  for (const ref of media.values()) {
-    signal?.throwIfAborted()
-    const stored = await deps.attachments.readImage(ref, signal)
-    signal?.throwIfAborted()
-    yield { path: mediaEntryPath(ref), data: stored.data }
-  }
-  for (const ref of files.values()) {
-    signal?.throwIfAborted()
-    yield {
-      path: fileEntryPath(ref),
-      chunks: deps.attachments.readFileStream(ref, signal),
+  } finally {
+    const released = await Promise.allSettled(leases.map(lease => lease.release()))
+    if (released.some(result => result.status === 'rejected')) {
+      const error = new FileReadProtectionReleaseError()
+      onReleaseFailure?.(error)
+      throw error
     }
   }
+}
+
+class FileReadProtectionReleaseError extends Error {
+  constructor() { super('session-log-export: file read protection could not be released') }
 }
 
 /** How many code units of Session-log text one zip push carries (bounded encode memory). */
@@ -540,6 +556,7 @@ async function pushArtifactChunks(
  * @param includeDescendants - whether to include every subagent descendant.
  * @param compressionLevel - validated fflate DEFLATE level for every ZIP entry.
  * @param signal - request cancellation combined with response-consumer cancellation.
+ * @param onFinished - completion notification carrying any file-protection release failure.
  * @returns the zip byte stream.
  */
 export function streamSessionLogZip(
@@ -549,6 +566,7 @@ export function streamSessionLogZip(
   includeDescendants: boolean,
   compressionLevel: SessionLogCompressionLevel,
   signal: AbortSignal,
+  onFinished?: (cleanupError?: Error) => void,
 ): ReadableStream<Uint8Array> {
   const consumerAbort = new AbortController()
   const producerSignal = AbortSignal.any([signal, consumerAbort.signal])
@@ -578,8 +596,12 @@ export function streamSessionLogZip(
       })
       zip = archive
       void (async () => {
+        let cleanupError: Error | undefined
         try {
-          for await (const entry of sessionLogZipEntries(deps, rootContent, sessionId, includeDescendants, producerSignal)) {
+          const entries = sessionLogZipEntries(
+            deps, rootContent, sessionId, includeDescendants, producerSignal, (error) => { cleanupError = error },
+          )
+          for await (const entry of entries) {
             const deflate = new ZipDeflate(entry.path, { level: compressionLevel })
             archive.add(deflate)
             if ('content' in entry) {
@@ -592,11 +614,14 @@ export function streamSessionLogZip(
           }
           archive.end()
         } catch (error) {
+          if (error instanceof FileReadProtectionReleaseError) cleanupError = error
           // A mid-stream failure (missing descendant, cancellation, read
           // error) must fail the download rather than ship a truncated archive.
           /* v8 ignore next -- typed backends reject with Error, and DOMException is one in Node */
           terminateZip()
           controller.error(error instanceof Error ? error : new Error(String(error)))
+        } finally {
+          onFinished?.(cleanupError)
         }
       })()
     },

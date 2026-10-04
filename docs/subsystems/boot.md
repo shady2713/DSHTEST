@@ -18,6 +18,75 @@ The [boot package group](../../packages/boot/README.md) owns launcher-provided p
 
 `ChangeResult.changed` reports a disk edit independently of `application`: `applied`, `restart-required`, `overridden` or `failed`. Optional `error` carries a localizable code and external diagnostic. `packageResult` records the pnpm exit code, bounded output, truncation flag and complete diagnostic log path, plus `timedOut` when the manager terminated a run that stopped printing. A terminated run is classified `timeout` whatever exit status the signal left behind, so installation and removal report failure instead of success and no further registry is asked. `pendingBuilds` lists undecided packages across the profile; `approvedBuilds` records the names granted permission by this operation; `registries` lists the registries an installation asked, in order; `failedAt` says whether the last failed run could not reach the registry it asked or the host a git or tarball spec is fetched from.
 
+## Launch composition
+
+Launchers supply application patches before editable profile patches. The configuration editor preserves home and command-line overrides. These declarations name the launcher inputs.
+
+```ts type-equiv
+/** Application-owned package manager executable; environment applies only to package operations. */
+interface ProfilePnpmInvocation {
+  readonly command: string
+  readonly args: readonly string[]
+  readonly env: Readonly<Record<string, string>>
+}
+```
+
+```ts type-equiv
+/** Current profile facts; scheduling and mutation belong to their callers. */
+interface ProfileContext {
+  readonly name: string
+  /** Packaged applications supply their bundled runtime instead of a PATH executable. */
+  readonly packageManager?: ProfilePnpmInvocation
+  readonly dir: string
+  readonly patchPath: string
+  readonly installAnchor: string
+  readonly cwd: string
+  readonly home: string
+  /** Bundle packages used to start this process, before any persisted edits. */
+  readonly startedBundles: readonly string[]
+  /** Application composition, applied after bundles and before user patches. */
+  readonly applicationPatches: readonly PatchOptions[]
+  /** Parsed command-line overlays, applied above profile and home patches. */
+  readonly overlays: readonly PatchOptions[]
+  /** Launch-time DSH_TELEMETRY_DISABLED value; any non-empty value opts out. */
+  readonly telemetryDisabledEnv: string | undefined
+}
+```
+
+```ts type-equiv
+/** Options for {@link runProfile}. */
+interface RunProfileOptions {
+  /** This run's frozen environment snapshot, provided before any entry mounts. */
+  environment: LaunchEnvironmentSnapshot
+  /** The profile name to boot. */
+  profile: string
+  /** Loaded application profile; bypasses named profile initialization when supplied. */
+  resolvedProfile?: ResolvedProfileRuntime | undefined
+  /** Shipped template used once to initialize a missing profile. */
+  fromDefaultProfile?: string | undefined
+  /** `--patch` overlay paths, in argv order. */
+  patchFiles: readonly string[]
+  /** Application composition paths, applied after bundles and before user patches. */
+  applicationPatchFiles: readonly string[]
+  /** The invocation's inner arguments, handed to the tree through `ctx.cmdlineArgs`. */
+  args: readonly string[]
+  /** Application-owned package runtime, scoped to plugin package operations. */
+  packageManager?: ProfileContext['packageManager']
+}
+```
+
+```ts type-equiv
+/** The profile boot this Host issues: the composition layers and the profile-context name. */
+interface DesktopHostBootRequest {
+  /** Profile-context name; the web-app bundle's product rows gate on it. */
+  readonly profile: string
+  /** Command-line overlays above user patches. */
+  readonly patchFiles: readonly string[]
+  /** Application composition applied before user patches. */
+  readonly applicationPatchFiles: readonly string[]
+}
+```
+
 <!-- BEGIN GENERATED cordis-surface (gen-cordis-catalog.ts) — do not edit between markers -->
 
 <a id="cordis-surface"></a>

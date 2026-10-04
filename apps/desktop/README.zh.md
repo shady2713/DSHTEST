@@ -86,6 +86,8 @@ Node 准备内置解释器和 Python 库，无需系统 Python 或 pip。[下载
 
 Welcome 加载共享 Toast 的配色和阴影变量，挂载在 body 下的通知使用系统字体。
 
+<a id="bundled-command-runtime"></a>
+
 ## 内置命令运行时
 
 安装后的 `resources/runtime/cli/bin/dsh` shell 脚本（Windows 为 `dsh.cmd`）使用 Desktop 的 Electron 可执行文件和内置 pnpm 运行普通 CLI 分派入口。Desktop 关闭时也可使用，并保留 [Electron 运行时限制](../../.agents/notes/implemented/architecture/2026-09-11-desktop-electron-node-runtime.zh.md)。普通 profile、配置和插件命令与 npm dsh 使用相同实现；该命令不会打开 Desktop。
@@ -101,6 +103,10 @@ Electron 拥有 `$DSH_HOME/profiles/desktop`。其 `dependencies` 包含 pnpm �
 应用 preload 只向 `dsh-app://app` 文档暴露启动就绪、致命启动失败上报、原生目录选择、用于 composer 路径引用的 `__DSH_HOST_PATHS__` 桥接和租约范围内的 Browser 桥接。同一个 preload 通过 `dshDesktop.deviceInfo()` 转发主进程采集的机器描述，按 `name=value` 字段以 `; ` 分隔：`platform`、`os`、`app_arch`（应用二进制实际运行的架构，模拟运行时与硬件架构不同）、`cpu` 和 `memory_gib`（物理内存总量，GiB，保留一位小数）。取值不可用时省略对应字段。该描述不包含主机名、用户名或序列号。产品页面还获得 Desktop 标记、更新展示数据和打开原生确认的操作，不能选择安装产物或授权安装。插件管理使用 Web 应用经过认证的 HTTP API；Electron 在 `dsh-app://shell/` 本地提供更新弹窗文档和资源，不依赖 Host 就绪。Electron 不提供插件管理 IPC 或独立管理页面。任何渲染进程都不会获得文件系统访问、原始 Electron IPC、shell 或任意 pnpm 参数。
 
 只有主应用窗口启用 `<webview>`。guest 挂载必须匹配主进程签发的租约和分区；guest 保持 sandbox、context isolation 和 Web security，不启用 Node integration 或 guest preload。Browser IPC 监听只为应用文档创建。[Sidebar Browser](../../packages/client/ui-sidebar-browser/README.zh.md) 说明存储分组和 guest 限制；Host 鉴权仍独立于 URL 过滤而必需。
+
+私有 Host 连接公布 Main 拥有的浏览器目标，并在 profile 启动后安装 `ctx.desktopBrowserControl`。guest 挂载时读取已连接 Host 的世代，避免在 Host 启动前创建的窗口保留初始 epoch。Host 替换会撤回旧目标；应用重载会释放其 guest，再挂载不继承 Session 所有权的新租约。可信 consumer 选择已有 Session 和用户 guest，并等待 Main 确认，工具才能提交命令；已发布 profile 不会自动绑定目标或启用实验性 provider。[Sidebar Browser](../../packages/client/ui-sidebar-browser/README.zh.md#understand-the-implementation) 定义绑定和导航规则。
+
+原生浏览器输入要求所属窗口可见且已聚焦，当前文档也必须可见。元素重新验证在发送输入前拒绝已聚焦窗口中的隐藏文档；后台 owner 可以先恢复窗口，再重新验证。`unknown` 导航结果结束该动作；消费者必须保留不确定状态，停止对该文档继续输入。Electron 44 在导航被取消后可能让替换文档保持隐藏，即使窗口已聚焦。可信 owner 可能需要显式重建 guest 或窗口；受控通道不承诺自动恢复。
 
 `dsh-app://shell/` 无需联系 Host 即可提供打包的更新文档、脚本和样式。静态请求保留 GET/HEAD、路径范围和 MIME 处理；每个更新文档继续使用隔离 preload 和所属窗口的 IPC 校验。
 
@@ -159,6 +165,14 @@ pnpm run start:desktop
 ```
 
 Web 侧的对应命令是 `pnpm run dev:web` 与 `pnpm run start:web`，见[开发指南](../../docs/development.zh.md)。Workspace 开发使用 Electron RunAsNode 运行当前 CLI 与私有 Desktop Host 包，插件管理和恢复使用 `$DSH_HOME/profiles/desktop`，与一次性工作区运行时分离。Host 在开发与打包构建中都使用 runtime 模块解析，不创建官方包的 fallback 链接；开发者安装的包（包括链接）保留原生优先级。需要验证 Electron RunAsNode、内置 pnpm、内置 dsh 资源、插件安装和修复时，应运行未封装安装器的应用目录。
+
+`dev:web-test` 走同一条启动路径，但以 [Web testing 应用](../../packages/web-test/web-test/README.zh.md) 而不是官方产品的身份运行。在 `apps/desktop` 目录下执行：
+
+```sh
+pnpm run dev:web-test
+```
+
+启动器在官方 `DSH_HOME` 仍指向官方 Harness home 时先读取它，应用 Web testing 的启动环境，在 `~/.dsh-web-test` 下注册安装（数据根、带 bundle 列表的 `web-test` profile、浏览器 `userData` 目录以及发布身份），并以该环境打开 Electron；于是 shell 设置自己的 `userData`、装配 Web testing profile，并把装配层与待挂载的入口交给 Host。装配层是从 Web testing 包自身安装位置解析出的绝对路径，因为主 bundle 会内联该包：相对路径会改为按 Host 子进程的工作目录应用，因此 Host 直接拒绝它，而不是从任何应用都未注册的目录里读文件。数据根不同，因此两个产品可以并存运行。只有当已启动的树解析出该数据根并挂载了 `web-test` 入口时，Host 才报告就绪。`start:web-test` 与 `start:desktop` 一样跳过构建。启动结束后保留已注册的安装；若 `DSH_HOME` 已经指向 `~/.dsh-web-test`，启动器会拒绝而不是复用它。
 
 [原生输入与渲染进程键盘测试](tests/keyboard.spec.ts)直接纳入仓库 Client 类型检查。它只导入不依赖 Cordis 的 Desktop 输入、持久化、IPC、浏览器 guest 和蒙层模块。
 

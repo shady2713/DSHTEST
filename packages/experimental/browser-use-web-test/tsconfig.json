@@ -1,0 +1,38 @@
+{
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "lib/types"
+  },
+  "include": [
+    "src"
+  ],
+  "references": [
+    { "path": "../../attachment/attachment" },
+    { "path": "../../web-test/web-test-policy" },
+    {
+      "path": "../../../vendor/cordis"
+    },
+    {
+      "path": "../../../vendor/schemastery"
+    },
+    {
+      "path": "../../core/agent"
+    },
+    {
+      "path": "../../core/tools"
+    },
+    {
+      "path": "../../browser-use/browser-use"
+    },
+    {
+      "path": "../../client/ui-sidebar-browser/tsconfig.host.json"
+    },
+    {
+      "path": "../browser-use-runtime"
+    },
+    {
+      "path": "../../web-test/web-test"
+    }
+  ]
+}

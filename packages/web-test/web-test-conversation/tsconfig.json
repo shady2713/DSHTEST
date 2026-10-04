@@ -1,0 +1,48 @@
+{
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "lib/types"
+  },
+  "include": [
+    "src"
+  ],
+  "references": [
+    {
+      "path": "../../../vendor/cosmokit"
+    },
+    {
+      "path": "../../../vendor/cordis"
+    },
+    {
+      "path": "../../../vendor/schemastery"
+    },
+    {
+      "path": "../../core/agent"
+    },
+    {
+      "path": "../../core/scope"
+    },
+    {
+      "path": "../../core/tools"
+    },
+    {
+      "path": "../../interaction/tool-ask-user"
+    },
+    {
+      "path": "../../interaction/user-questions"
+    },
+    {
+      "path": "../../typert/protocol"
+    },
+    {
+      "path": "../web-test-contracts"
+    },
+    {
+      "path": "../web-test-policy"
+    },
+    {
+      "path": "../web-test-runtime"
+    }
+  ]
+}

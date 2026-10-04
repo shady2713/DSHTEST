@@ -61,6 +61,8 @@ The dialog reports three phases: preparing, download started, or failed. Closing
 
 Attachment collection reads declared content fields of built-in Session events and completed assistant stream blocks, including flat V4 tool-role messages. Unknown event payloads and unrelated fields remain unchanged in the exported log but do not cause attachment reads.
 
+Each log's generic files acquire read protection before that log enters the ZIP stream. Protection stays active through attachment reads and is released when the export finishes, fails, or is cancelled. Invalid declared file references or a failed protection acquisition reject the export; a release failure remains an error after all acquired protections have been released or attempted.
+
 ### Failures
 
 The dialog shows a preparation error when the preflight fails before ZIP streaming starts — for example an unreachable or misconfigured host endpoint. A descendant or attachment read failure after the browser accepts the GET is reported by the browser download manager, not by the dialog.
@@ -76,6 +78,8 @@ The dialog shows a preparation error when the preflight fails before ZIP streami
 This section explains how the package wires the export control and points at the code that realizes it; the observable behavior is fully covered in [Use this package](#use-this-package).
 
 ### Design split
+
+`ctx.sessionLogExports` owns the authenticated download route and its active readers. Its private reader cannot change file owners or staging tickets. The attachment dependency unloads and recreates this owner when its provider changes; without that dependency the route is absent. Teardown cancels exports, waits for their read protections to release, and reports release failures before the attachment provider closes.
 
 The package has two halves. The Host half ([`src/index.ts`](src/index.ts)) registers the `/export` command and contributes the exact `GET`/`HEAD /api/session.export` Fetch route to Connection; [`src/archive.ts`](src/archive.ts) builds the bounded ZIP stream. The browser half ([`src/client/index.ts`](src/client/index.ts)) provides the shared download controller and UI, and observes `command/executed` so only the submitting browser starts a download.
 

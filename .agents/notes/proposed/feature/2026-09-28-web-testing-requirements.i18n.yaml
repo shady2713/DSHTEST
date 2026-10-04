@@ -1,0 +1,22 @@
+# Bilingual-pair consistency record for 2026-09-28-web-testing-requirements.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/proposed/feature/2026-09-28-web-testing-requirements.md
+/agent-note-product-requirements:
+  en: f7b797e2c34ec0c1
+  zh: fd20abd8c278cb9d
+/agent-note-product-requirements/problem:
+  en: e5230664f329cd90
+  zh: 80c55eba2d5e0e2f
+/agent-note-product-requirements/proposal:
+  en: d81a3c192aa9965b
+  zh: 5b92e2b244a8a67d
+/agent-note-product-requirements/alternatives-considered:
+  en: 19c89fbce3e0e857
+  zh: c8a7299b96e84bba
+/agent-note-product-requirements/acceptance-criteria:
+  en: 56c0d1be6694e2f3
+  zh: c695d31384deec16
+/agent-note-product-requirements/risks:
+  en: cebc193ca73d993f
+  zh: 337081a92a0fb632

@@ -67,8 +67,9 @@ describe('local attachment service', () => {
 
   it('saves and reads through the service boundary', async () => {
     const dshHome = await mkdtemp(join(tmpdir(), 'dsh-attachment-service-'))
+    const ctx = new Context()
     try {
-      const service = new LocalAttachmentStore(new Context(), { dshHome })
+      const service = new LocalAttachmentStore(ctx, { dshHome })
       const data = Uint8Array.from(Buffer.from(
         'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAADElEQVQImWNgZGIGAAAOAAeCcsnOAAAAAElFTkSuQmCC',
         'base64',
@@ -103,6 +104,7 @@ describe('local attachment service', () => {
       for await (const chunk of service.readFileStream(streamRef)) streamed.push(chunk)
       expect(Buffer.concat(streamed)).toEqual(Buffer.from(fileData))
     } finally {
+      await ctx.fiber.dispose()
       await rm(dshHome, { recursive: true, force: true })
     }
   })

@@ -7,10 +7,18 @@
   },
   "files": [
     "src/index.ts",
-    "src/types.ts"
+    "src/types.ts",
+    "src/control.ts"
   ],
   "references": [
-    { "path": "../../../vendor/cordis" },
-    { "path": "../../util/brand" }
+    {
+      "path": "../../../vendor/cordis"
+    },
+    {
+      "path": "../../util/brand"
+    },
+    {
+      "path": "../../core/session"
+    }
   ]
 }

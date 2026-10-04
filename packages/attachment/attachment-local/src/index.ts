@@ -6,6 +6,11 @@ import z from '@deepseek-ai/schemastery'
 import { AttachmentStore } from '@deepseek-ai/dsh-attachment'
 import type {
   FileAttachmentRef,
+  FileDeletionResult,
+  FileReadLease,
+  FileReferenceOwner,
+  FileStageTicket,
+  StagedFileAttachment,
   ImageAttachmentLimits,
   ImageAttachmentRef,
   ImageRequestTarget,
@@ -19,9 +24,8 @@ import { dshCachePath, resolveDshHome } from '@deepseek-ai/dsh-home-paths'
 import type { NormalizationPolicy } from './normalization.ts'
 import { CompressionLimiter, compressionFailure } from './compression-limiter.ts'
 import { commitPreparedImageFile, normalizedImagePath, prepareImageFile, readImageFile, validateImageFile } from './store.ts'
-import {
-  readFileStreamVerbatim, saveFileStreamVerbatim, saveFileVerbatim, storedFilePath,
-} from './file-store.ts'
+import { storedFilePath } from './file-store.ts'
+import { FileLifecycle } from './file-lifecycle.ts'
 import { readRequestImageFile, requestImageVariantId } from './request-image.ts'
 
 export { canPassThroughNormalization, normalizeImage } from './normalization.ts'
@@ -169,11 +173,15 @@ export class LocalAttachmentStore extends AttachmentStore {
   private readonly cacheRoot: string
   private readonly compression: CompressionLimiter
   private readonly requestInflight = new Map<string, SharedRequest<RequestImageAttachment>>()
+  private readonly files: FileLifecycle
 
   constructor(ctx: Context, config: Config) {
     super(ctx)
     const dshHome = resolveDshHome(config.dshHome)
-    this.root = join(dshHome, 'attachments', 'v1')
+    const root = join(dshHome, 'attachments', 'v1')
+    const files = new FileLifecycle(ctx, root)
+    this.root = root
+    this.files = files
     this.cacheRoot = dshCachePath({ dshHome }, 'attachments')
     this.imageLimits = Object.freeze({
       maxImageBytes: config.maxImageBytes ?? DEFAULT_MAX_IMAGE_BYTES,
@@ -230,15 +238,43 @@ export class LocalAttachmentStore extends AttachmentStore {
   }
 
   override async saveFile(input: SaveFileAttachment): Promise<FileAttachmentRef> {
-    return saveFileVerbatim(this.root, input)
+    return this.files.saveLegacy(input)
   }
 
   override async saveFileStream(input: SaveFileStreamAttachment): Promise<FileAttachmentRef> {
-    return saveFileStreamVerbatim(this.root, input)
+    return this.files.saveLegacy(input)
   }
 
   override readFileStream(ref: FileAttachmentRef, signal?: AbortSignal): AsyncIterable<Uint8Array> {
-    return readFileStreamVerbatim(this.root, ref, signal)
+    return this.files.read(ref, signal)
+  }
+
+  override stageFile(input: SaveFileAttachment): Promise<StagedFileAttachment> {
+    return this.files.stageFile(input)
+  }
+
+  override stageFileStream(input: SaveFileStreamAttachment): Promise<StagedFileAttachment> {
+    return this.files.stageFileStream(input)
+  }
+
+  override commitFileReferences(owner: FileReferenceOwner, refs: readonly FileAttachmentRef[]): Promise<void> {
+    return this.files.commit(owner, refs)
+  }
+
+  override releaseFileReferences(owner: FileReferenceOwner): Promise<void> {
+    return this.files.releaseOwner(owner)
+  }
+
+  override releaseFileStage(ticket: FileStageTicket): Promise<void> {
+    return this.files.releaseStage(ticket)
+  }
+
+  override acquireFileReadLease(refs: readonly FileAttachmentRef[], signal?: AbortSignal): Promise<FileReadLease> {
+    return this.files.acquire(refs, signal)
+  }
+
+  override deleteFile(ref: FileAttachmentRef): Promise<FileDeletionResult> {
+    return this.files.delete(ref)
   }
 
   override fileHostPath(ref: FileAttachmentRef): string {

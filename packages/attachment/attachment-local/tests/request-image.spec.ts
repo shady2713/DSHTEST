@@ -50,10 +50,11 @@ afterEach(async () => {
 describe('local request-image cache', () => {
   it('rebuilds a cleared cache without moving or losing durable attachments', async () => {
     const fallbackHome = await home()
+    const ctx = new Context()
     vi.stubEnv('DSH_HOME', fallbackHome)
     try {
       const dshHome = await home()
-      const attachments = new LocalAttachmentStore(new Context(), { dshHome })
+      const attachments = new LocalAttachmentStore(ctx, { dshHome })
       const attachment = await attachments.saveImage({ data: await image(64, 32), mediaType: 'image/png' })
       const stored = await attachments.readImage(attachment)
       const fileData = Uint8Array.of(0, 1, 2, 255)
@@ -77,6 +78,7 @@ describe('local request-image cache', () => {
       await expect(readFile(path)).resolves.toEqual(Buffer.from(initial.data))
       await expect(readdir(fallbackHome)).resolves.toEqual([])
     } finally {
+      await ctx.fiber.dispose()
       vi.unstubAllEnvs()
     }
   })

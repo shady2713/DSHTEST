@@ -66,7 +66,7 @@ describe('runProfile with an application-owned profile', () => {
     }
     try {
       const application = runProfile({
-        environment: createLaunchEnvironmentSnapshot([]), profile: 'desktop', patchFiles: [], args: ['--no-open'],
+        environment: createLaunchEnvironmentSnapshot([]), profile: 'desktop', applicationPatchFiles: [], patchFiles: [], args: ['--no-open'],
         resolvedProfile: { profile, installAnchor: join(home, 'runtime/package.json') },
       })
       if (stage === 'both-cleanups') {
@@ -117,6 +117,8 @@ describe('runProfile with an application-owned profile', () => {
     const homePatch = join(home, 'cordis.patch.yml')
     const profilePatch = join(home, 'profile.patch.yml')
     const overlay = join(home, 'desktop.patch.yml')
+    const applicationLayer = join(home, 'application.patch.yml')
+    writeFileSync(applicationLayer, '- id: target\n  config: { application: true, priority: application }\n')
     writeFileSync(homePatch, '- id: target\n  config: { home: true, priority: home }\n')
     writeFileSync(profilePatch, '- id: target\n  config: { profile: true, priority: profile }\n')
     writeFileSync(overlay, '- id: target\n  config: { overlay: true, priority: overlay }\n')
@@ -137,7 +139,7 @@ describe('runProfile with an application-owned profile', () => {
     try {
       const { shutdown } = await runProfile({
         environment, profile: 'desktop', resolvedProfile: runtime,
-        patchFiles: [overlay], args: ['--port', '0', '--no-open'],
+        applicationPatchFiles: [applicationLayer], patchFiles: [overlay], args: ['--port', '0', '--no-open'],
       })
       expect(installProxyFromEnvironment).toHaveBeenCalledWith(environment, expect.any(Function))
       const resolution = vi.mocked(createRuntimeResolution).mock.settledResults
@@ -156,7 +158,8 @@ describe('runProfile with an application-owned profile', () => {
       expect(ready).toHaveBeenCalledOnce()
       const patches = vi.mocked(boot).mock.calls[0]![2]!
       const rows = composeEntries([patches])
-      expect(patches.slice(1, 4)).toEqual([
+      expect(patches.slice(1, 5)).toEqual([
+        { id: 'target', config: { application: true, priority: 'application' } },
         { id: 'target', config: { profile: true, priority: 'profile' } },
         { id: 'target', config: { home: true, priority: 'home' } },
         { id: 'target', config: { overlay: true, priority: 'overlay' } },
