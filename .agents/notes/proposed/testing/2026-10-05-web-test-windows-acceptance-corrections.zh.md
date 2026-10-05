@@ -1116,3 +1116,42 @@ tsdown，tsdown 依赖 tsc 写出的 `lib/types/`，于是报
 `Cannot resolve entry module lib/types/role-browser.js`，宿主侧只显示
 `web-test: failed to import` 和预设 `never started`——两个都不指向真正原因。以后不要在
 同一轮里既删 `lib/` 又跳过 tsc。
+
+### 0.6.12：跨角色协作在本宿主上被单提供方槽位挡住（实测）
+
+第七节场景 3/4 要求 A/B 两个角色各自登录、Cookie 不串、A 建单 B 处理。实测路径：
+
+会话 1 跑 buyer：`run-A` 核验成功（`acts as buyer`，令牌
+`ccf1054b-…`）→ `finish_run` 关闭为 `completed`。
+
+会话 2 跑 seller：直接失败——
+
+```
+Error: browser use provider "playwright-role-buyer" is already registered
+```
+
+这与 0.3.x 记录的硬约束一致，且现在是在"运行已正常关闭"之后仍然成立：**运行关闭并不释放
+提供方**。`releaseRole` 只能处置我自己包的那层 effect（0.4.x 的结论），`mountSessionMcp`
+在它自己 ctx 上登记的 effect 拿不到句柄。
+
+因此在**一个宿主进程内**只能存在一个角色浏览器，跨角色协作必须跨进程。宿主重启后能拿到
+新的槽位，但本轮第二次尝试没有走完：旧 `resuming` 运行先堵住了浏览器动作（见下条修复），
+修复后模型只调了 `start_run` 和 `status` 就停了，两次 prompt 都没有推进到登录。这一条
+**未测成**，不记为通过。
+
+### 0.6.13：被持有的运行只在它是会话唯一运行时才挡路
+
+`holdForSession` 原来是无条件的：`resuming` 的旧运行会挡住该会话**所有**浏览器动作，
+包括新运行刚启动后自己的登录。实测里 run-S 已经是 `running`，浏览器动作仍被
+
+```
+web-test: run run-B is resuming and refuses new test actions.
+```
+
+拦住。这和 0.6.1 修的 `start_run` 是同一类问题，只是发生在浏览器动作上。
+
+修法：被持有的运行**仅在它是该会话唯一运行时**挡路；一旦有别的运行处于 `running`，
+被持有运行的边界仍由 `requireAuthority`（按状态拒绝）和准备窗口（要求 running 的运行）
+把守。0.6.1 的"报告类工具仍可达"与"暂停的运行不能被无视"两条性质都保留——单元测试
+（`withholds the browser while a run is paused, and restores it on resume`）正是单运行
+场景，因此仍通过。全量 **115 passed (115)**。

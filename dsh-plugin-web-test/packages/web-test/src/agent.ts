@@ -157,9 +157,14 @@ export function guardReason(
   // A run the operator paused, or that a restart interrupted, stops dispatching
   // here, in the execution path, so a model that ignores the pause still cannot
   // drive the browser. The refusal is scoped to the session that owns the run, so
-  // one session's hold never stops another session's test work.
+  // one session's hold never stops another session's test work. It applies only
+  // while that held run is the session's only run: once a different run is
+  // running, the held run keeps its own boundaries through `requireAuthority`
+  // and the preparation check, and holding the whole session would leave a
+  // restarted run able to block the session forever.
   const held = store?.holdForSession(sessionId)
-  if (held !== undefined && !HELD_RUN_ALLOWED_TOOLS.includes(execution.name)) {
+  const running = store?.browserGrantForSession(sessionId)?.status === 'running'
+  if (held !== undefined && !running && !HELD_RUN_ALLOWED_TOOLS.includes(execution.name)) {
     return `web-test: run ${held.runKey} is ${held.status} and refuses new test actions. `
       + (held.status === 'resuming'
         ? 'The DSH host restarted during that run; report what you know through web_test_status and ask the'
