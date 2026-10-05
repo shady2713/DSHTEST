@@ -175,6 +175,34 @@ web-test 预设会话中每次工具调用都以 turn 错误结束：
 `Cannot read properties of undefined (reading 'prepare')`，工具结果未落盘。
 它在**禁用角色浏览器行之后依旧复现**，因此不是浏览器层引起。尚未定位到具体调用点。
 
+### 修正上一次的归因
+
+上一次把 persona 冲突整体归为环境问题，并据此撤回了预设 persona 行的移除。**这个归因不完整**，
+这里拆成两个独立问题：
+
+1. **环境问题**：普通会话（不选任何预设）也报
+   `deployment:persona-prefix` 已注册。在全新 profile、把插件从 bundle 列表彻底摘除、patch
+   置空之后仍然复现；换到隔离 `HOME`（不含用户 `~/.dsh/local-bundles` 等本机状态）后，普通
+   会话创建成功。所以这一个来自本机 DSH 既有状态，与插件无关。
+2. **插件问题**：错误信息点名 `web-test-persona` 时，是预设里的 persona 行与部署 persona 在
+   同一作用域冲突。移除该行后，预设在干净 profile 上创建会话成功。所以移除该行是成立的。
+
+两者曾被我混为一谈，结论一度反了。此处按证据更正。
+
+### 干净环境下的真实进展
+
+用 `dsh iso --from-default-profile web` 建全新 profile，装 0.1.5，`启动失败 0 / 未激活 0`，
+`web-test` 预设会话创建成功（`session-c5581e24…`）。
+
+`web_test_start_run` 仍然以 `Cannot read properties of undefined (reading 'prepare')` 让每个
+turn 以 error 结束，工具结果不落盘。**在干净 profile 上依旧复现，因此不是环境问题**，与
+预设组合绑定。宿主侧该报错出现在 PTC 绑定闭包里读取
+`registry[TOOL_RUNTIME_SCHEDULER]` 之后调用 `scheduler.prepare`，即该符号在会话作用域的
+registry 上取不到。尚未定位为什么本插件的预设作用域缺少它。
+
+注意：pnpm 按路径缓存——同名 tarball 重新构建不会重读安装。本轮 0.1.4 重装后安装内仍是旧的
+persona 行，0.1.5 才真正生效。每个候选版本必须用**未使用过的版本号**。
+
 ## 未解项（如实保留）
 
 **插件自行核验角色身份目前不可用。** `assume_role` 要通过 `tools.execute` 向角色

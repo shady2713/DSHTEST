@@ -47,11 +47,11 @@
     # Opt-in Agent preset for test sessions. Declared as a loader row rather
     # than registered from code, so each entry below is a real composition
     # entry with its own lifecycle instead of a definition no loader starts.
-    # It carries only this plugin's own agent row. Rows the host already
-    # registers globally (a persona, a shell tool) collide when the registry
-    # mounts them again inside a preset scope, which made the preset fail to
-    # activate on a clean profile; the test identity lives in the agent's own
-    # instructions instead.
+    # It carries only this plugin's agent row. Two rows here collide with the
+    # deployment composition when the registry mounts them: a `@deepseek-ai/dsh-persona`
+    # row reports `prompt section "deployment:persona-prefix" is already registered`, and
+    # a `@deepseek-ai/dsh-tool-bash` row reports the same for `tool:bash`. The test
+    # identity and the execution guard live in the agent row itself.
     #
     # The browser row is deliberately inside the preset: a provider mounted at
     # host level would expose browser tools to every session, which the
@@ -66,11 +66,6 @@
         id: web-test
         name: Web testing
         description: Analyze, confirm, execute, and report Web test cases in a real browser.
-        # The persona row that used to sit here was removed: `dsh-persona`
-        # documents that a global mount collides with the prompt registry's own
-        # registration and fails loud, and a preset that boots with the profile
-        # mounts before any agent scopes it. The plugin's own agent
-        # instructions carry the test identity instead.
         order: 100
         plugins:
           - id: web-test-agent
