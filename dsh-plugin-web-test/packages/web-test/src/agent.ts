@@ -522,7 +522,15 @@ export function apply(ctx: Context): void {
       // mid-turn is not callable until the following turn; starting them here
       // means the next turn can already drive each role's account.
       await store.putRun(record)
-      for (const role of store.declaredRoles(input.runKey)) await pool?.ensure(role)
+      // Role browsers are started in the background, not awaited here. Awaiting
+      // them made this tool wait for a Chromium launch per role, which ran past
+      // the tool timeout and left the run unrecorded. The browser provider
+      // hands an MCP server's tools to an Agent when that Agent is created, so
+      // starting them now is what makes the next turn able to drive them.
+      const roles = store.declaredRoles(input.runKey)
+      void pool?.prefetch(roles).catch((error: unknown) => {
+        ctx.logger.warn(`web-test: role browsers for run ${input.runKey} did not all start: ${String(error)}`)
+      })
       return { runKey: record.key, status: record.status, evidenceRoot: dir }
     },
   }), 'web-test: start run tool')

@@ -223,6 +223,19 @@ export class RoleBrowserPool extends Service {
   }
 
   /**
+   * Start every named role's browser without waiting for them.
+   *
+   * Used at run start so the next Agent can already reach them. A failure is
+   * reported to the caller rather than swallowed, because a run whose browsers
+   * never came up must not look like one that is ready to execute.
+   * @param roles - Role names to start.
+   * @returns once every role's mount call has returned.
+   */
+  async prefetch(roles: readonly string[]): Promise<void> {
+    await Promise.all(roles.map(role => this.ensure(role)))
+  }
+
+  /**
    * Read the signed-in account back from the site, through this role's browser.
    *
    * Two nested tool calls: navigate to the identity endpoint, then read the

@@ -47,6 +47,11 @@
     # Opt-in Agent preset for test sessions. Declared as a loader row rather
     # than registered from code, so each entry below is a real composition
     # entry with its own lifecycle instead of a definition no loader starts.
+    # It carries only this plugin's own agent row. Rows the host already
+    # registers globally (a persona, a shell tool) collide when the registry
+    # mounts them again inside a preset scope, which made the preset fail to
+    # activate on a clean profile; the test identity lives in the agent's own
+    # instructions instead.
     #
     # The browser row is deliberately inside the preset: a provider mounted at
     # host level would expose browser tools to every session, which the
@@ -61,29 +66,15 @@
         id: web-test
         name: Web testing
         description: Analyze, confirm, execute, and report Web test cases in a real browser.
+        # The persona row that used to sit here was removed: `dsh-persona`
+        # documents that a global mount collides with the prompt registry's own
+        # registration and fails loud, and a preset that boots with the profile
+        # mounts before any agent scopes it. The plugin's own agent
+        # instructions carry the test identity instead.
         order: 100
         plugins:
-          - id: web-test-persona
-            name: '@deepseek-ai/dsh-persona'
-            config:
-              prefix: >-
-                You are a Web test agent. Work in this order: analyze the test
-                case, present the plan and wait for the operator to confirm it,
-                then execute the confirmed steps in a real browser, assert the
-                expected results, and collect screenshots as evidence. Report
-                what actually happened; never claim a step you did not perform.
-              suffix: Your working directory is {{cwd}}.
-          # No browser row on purpose. The stock provider mounts one browser
-          # per Session and offers no tool that creates a second context, so two
-          # roles acting at once could not hold separate logins through it. The
-          # plugin starts one isolated MCP browser per role instead and the
-          # execution guard admits only the active role's namespace, so a
-          # globally mounted provider could only be a way around the role
-          # binding.
           - id: web-test-agent
             name: 'dsh-plugin-web-test/agent'
           # Present on purpose: the plugin's execution guard must refuse this
           # tool even though the composition provides it, so the restriction is
           # enforced on the execution path rather than by the tool's absence.
-          - id: web-test-probe-shell
-            name: '@deepseek-ai/dsh-tool-bash'

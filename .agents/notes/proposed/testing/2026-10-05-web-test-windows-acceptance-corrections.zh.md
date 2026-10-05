@@ -157,6 +157,24 @@ Windows 记录指出 68 个单测没抓到 D2，因为没有任何测试让**真
 - 同一角色名在不同项目/环境/运行之间的隔离键尚未加代次，旧运行的排队调用仍可能借用
   新运行的授权。
 
+### 环境诊断：persona 冲突不属于本插件
+
+在干净 profile 上反复遇到 `persona (@deepseek-ai/dsh-persona): prompt section
+"deployment:persona-prefix" is already registered`，且**普通会话（未选 web-test 预设）也失败**。
+把 `dsh-plugin-web-test` 从 profile 的 bundle 列表里彻底摘除、patch 置空后重启，普通会话
+**仍然报同样的错误**。
+
+因此该冲突来自本机 DSH 的既有环境状态，不是插件装配造成的。此前移除预设 persona 行是
+在追这个环境症状的根，那个改动没有证据支持，属于误判。预设 persona 行是否恢复，留待
+环境恢复后重新验证再定；`web-test-probe-shell` 行的移除是**独立成立的**——该行把
+`dsh-tool-bash` 挂进预设作用域，与全局 `tool:bash` 段落冲突，这条错误在插件在册时可复现。
+
+### 另一个已定位的宿主侧错误
+
+web-test 预设会话中每次工具调用都以 turn 错误结束：
+`Cannot read properties of undefined (reading 'prepare')`，工具结果未落盘。
+它在**禁用角色浏览器行之后依旧复现**，因此不是浏览器层引起。尚未定位到具体调用点。
+
 ## 未解项（如实保留）
 
 **插件自行核验角色身份目前不可用。** `assume_role` 要通过 `tools.execute` 向角色
