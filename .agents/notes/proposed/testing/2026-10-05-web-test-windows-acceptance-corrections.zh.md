@@ -1093,3 +1093,26 @@ Error: tool "web_test_begin_operation" returned invalid output:
 
 另外：`rm -rf lib/` 会连 typert 产物一起删掉，必须重跑 `scripts/generate-typert.mjs`，
 否则宿主报 `exports "./typert" but importing ... failed`，而且报错和真正原因看起来无关。
+
+### 0.6.11：业务动作路径修复后可用
+
+0.6.5 修复后重测，`begin_operation` 走通：
+
+```
+Operation op-1 of run run-1 is dispatching. Perform the change now, observe the
+result independently, then call web_test_settle_operation.
+```
+
+操作记录落库，带角色与代次（`role: 'buyer'`、`gen: 1`）。同一次会话里更早的一次浏览器
+调用被正确拒绝：
+
+```
+web-test: this session has no run that may drive a browser. A run needs to be
+running and to have called web_test_assume_role …
+```
+
+构建顺序也要记下来：**tsc → tsdown → generate-typert → pack**。我先 `rm -rf lib` 再
+tsdown，tsdown 依赖 tsc 写出的 `lib/types/`，于是报
+`Cannot resolve entry module lib/types/role-browser.js`，宿主侧只显示
+`web-test: failed to import` 和预设 `never started`——两个都不指向真正原因。以后不要在
+同一轮里既删 `lib/` 又跳过 tsc。
