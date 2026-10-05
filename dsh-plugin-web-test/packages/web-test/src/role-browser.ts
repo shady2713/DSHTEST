@@ -373,7 +373,7 @@ export class RoleBrowserPool extends Service {
  * page cannot be mistaken for a signed-in account: an unsigned page answers
  * with an empty string rather than with whatever text happens to be on it.
  */
-const IDENTITY_PROBE = '() => document.body.dataset.webtestAccount ?? ""'
+const IDENTITY_PROBE = '() => JSON.stringify({ account: document.body.dataset.webtestAccount ?? "", url: location.href, title: document.title })'
 
 /**
  * Derive a child call id from the call that asked for it.

@@ -49,13 +49,13 @@ export const inject = ['tools', 'webTestStore', 'webTestRoleBrowsers']
 /**
  * Browser tools a run may use before its role is verified.
  *
- * These navigate, read, and fill. They cannot press anything on the page:
- * `browser_click` is absent on purpose, because a click is how a run changes
- * business data, and an unverified run must not be able to. A sign-in that needs
- * a click is a human-takeover step, not something this grant covers.
- *
- * Each is confined to the run's own role browser, so allowing them early grants
- * preparation rather than access.
+ * These navigate, read, fill, and press. `browser_click` is included because a
+ * sign-in form is normally submitted by pressing its button, and refusing every
+ * click would make preparation impossible without a human at the keyboard. The
+ * grant is bounded on the other side: it applies only before the run's role is
+ * verified, only to the run's own role browser, and only from a session that
+ * owns a running run declaring that role. A run that has finished signing in
+ * loses it and needs a verified role, as it would for any other action.
  */
 const LOGIN_TOOLS: ReadonlySet<string> = new Set([
   'browser_navigate',
@@ -66,6 +66,7 @@ const LOGIN_TOOLS: ReadonlySet<string> = new Set([
   'browser_select_option',
   'browser_wait_for',
   'browser_find',
+  'browser_click',
   'browser_press_key',
   'browser_console_messages',
   'browser_network_requests',

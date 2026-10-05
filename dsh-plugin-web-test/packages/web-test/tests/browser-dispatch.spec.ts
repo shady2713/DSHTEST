@@ -116,10 +116,12 @@ describe('browser dispatch authorisation', () => {
     try {
       await store.controlRun('run-1', 'resume')
       await store.assumeRole('run-1', 'buyer', { account: '', detail: 'the site reported no account' })
-      // Reading the account page is preparation, so it stays reachable; a click
-      // is not, and the verified-role grant that business tools need is absent.
+      // The sign-in itself stays reachable: the run is running and declares the
+      // role, even though nothing has been verified yet.
       expect(guardReason({ name: ALICE_BROWSER, }, store, 'owner')).toBeUndefined()
-      expect(guardReason({ name: 'mcp__playwright-role-buyer__browser_click' }, store, 'owner'))
+      expect(guardReason({ name: 'mcp__playwright-role-buyer__browser_click' }, store, 'owner')).toBeUndefined()
+      // Another role's browser is not reachable for the same preparation.
+      expect(guardReason({ name: 'mcp__playwright-role-approver__browser_navigate' }, store, 'owner'))
         .toContain('no run that may drive a browser')
     } finally {
       await dispose()

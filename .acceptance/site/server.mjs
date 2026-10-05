@@ -101,9 +101,18 @@ createServer((req, res) => {
     })
   }
   if (url.pathname === '/') {
+    // A signed-out visitor gets the sign-in form, so a test drives the site the
+    // way a person does rather than posting credentials at an endpoint it was
+    // told about. A signed-in visitor gets the account's own capabilities.
+    const body = me === null
+      ? `<form method="post" action="/login" id="signin">
+      <label for="user">账号</label><input id="user" name="user" autocomplete="username">
+      <label for="pass">密码</label><input id="pass" name="pass" type="password" autocomplete="current-password">
+      <button type="submit" id="signin-submit">登录</button>
+    </form>`
+      : `可创建：${me.canCreate}｜可审批：${me.canApprove}<p><a href="/orders">我的订单</a></p>`
     return res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }),
-      res.end(page('受控验收站点', me === null ? '未登录' : `可创建：${me.canCreate}｜可审批：${me.canApprove}`,
-        me === null ? '' : me.name))
+      res.end(page('受控验收站点', body, me === null ? '' : me.name))
   }
   json(res, 404, { error: 'not found' })
 }).listen(8902, '127.0.0.1', () => console.log('acceptance site on http://127.0.0.1:8902'))

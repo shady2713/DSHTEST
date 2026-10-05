@@ -113,19 +113,17 @@ describe('operator holds', () => {
       .toContain('belongs to another role')
   })
 
-  it('admits a login step before the role is verified, but not a click', () => {
+  it('admits a sign-in before the role is verified, including pressing its button', () => {
     const preparing: GuardStore = {
       holdForSession: () => undefined,
       browserGrantForSession: () => undefined,
       mayPrepareIdentity: (_sessionId, role) => role === 'alice',
     }
-    // Reading and filling is how a person gets signed in before the first
-    // verified switch, so it is reachable.
+    // Reading, filling, and pressing the form's button is how a person gets
+    // signed in before the first verified switch.
     expect(guardReason({ name: 'mcp__playwright-role-alice__browser_navigate' }, preparing)).toBeUndefined()
     expect(guardReason({ name: 'mcp__playwright-role-alice__browser_fill_form' }, preparing)).toBeUndefined()
-    // A click is how business data changes, so it waits for a verified role.
-    expect(guardReason({ name: 'mcp__playwright-role-alice__browser_click' }, preparing))
-      .toContain('no run that may drive a browser')
+    expect(guardReason({ name: 'mcp__playwright-role-alice__browser_click' }, preparing)).toBeUndefined()
     // And a role the run does not declare is never prepared.
     expect(guardReason({ name: 'mcp__playwright-role-bob__browser_navigate' }, preparing))
       .toContain('no run that may drive a browser')
