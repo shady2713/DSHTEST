@@ -126,6 +126,11 @@ export const TEST_INSTRUCTIONS = [
  */
 export const HELD_RUN_ALLOWED_TOOLS: readonly string[] = [
   `${TOOL_PREFIX}status`,
+  // Starting a different run is how an operator gets moving again after a pause
+  // or a restart: the held run keeps its own authority, and the new one gets an
+  // independent one. Refusing this left a `resuming` run able to block the
+  // session permanently.
+  `${TOOL_PREFIX}start_run`,
   `${TOOL_PREFIX}operation_unknown`,
   `${TOOL_PREFIX}settle_operation`,
   `${TOOL_PREFIX}resume_wait`,

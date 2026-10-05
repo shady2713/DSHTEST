@@ -695,9 +695,29 @@ it stops working if this run is cancelled, restarted or resumes.
 新增 2 个测试（恢复使暂停前的令牌失效、同名新运行获得自己的代次），全量
 **114 passed (114)**。
 
-**未完成**：取消 A → 新建 B → 用 A 的旧令牌发起动作这条实测本轮没跑成——模型没有走到
-`assume_role`，日志里没有令牌可取。单元测试覆盖了"运行已取消"和"代次不符"两种拒绝理由，
-但**第五节最核心的那条（排队中的旧调用借不到新运行的授权）在真实宿主上仍无证据**。
+### 0.6.1：宿主重启留下的 resuming 运行会永久卡住新运行（已修）
+
+测量"取消 A → 新建 B → 用 A 的旧令牌"时先撞上一个真缺陷。上一轮被 `kill -9` 的宿主把
+`run-A` 留在 `resuming`，本轮模型无论用哪个新键启动都被拒：
+
+```
+web-test: run run-A is resuming and refuses new test actions. The DSH host
+restarted during that run; report what you know through web_test_status …
+```
+
+`HELD_RUN_ALLOWED_TOOLS` 里没有 `start_run`，所以**一个被重启打断的运行能把这个会话永久
+堵死**——模型再也无法开始任何新工作。这直接违反第五节"新运行获得独立有效授权，不被旧取消
+状态永久卡住"。
+
+修法：`start_run` 进入允许列表。被持有的运行保留它自己的授权边界（浏览器调用照样被拒），
+而新运行拿自己的代次与授权。对应测试从"拒绝 `start_run`"改写为"拒绝被持有运行自身的动作，
+但允许新运行启动"，全量 **114 passed (114)**。
+
+顺带确认了一条**符合预期**的行为：宿主重启打断的运行回到 `resuming` 并拒绝新动作，要求
+先 `web_test_status` 上报——这条本身是对的，不改。
+
+**仍未测**：取消 A → 新建 B → 用 A 的旧令牌发起动作。这次没跑成的原因是上面那个卡死缺陷，
+修完后需要重测。
 
 **0.4.6 仍不是验收候选。**
 

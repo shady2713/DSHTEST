@@ -141,11 +141,14 @@ describe('tool allowlist', () => {
 })
 
 describe('operator holds', () => {
-  it('refuses every action for the session that owns a held run', () => {
+  it("refuses the held run's own actions, and still lets a new run start", () => {
     const store = holding('run-1', 'paused')
-    for (const name of [`${ROLE_BROWSER_PREFIX}browser_navigate`, `${TOOL_PREFIX}start_run`, `${TOOL_PREFIX}report_case`]) {
-      expect(guardReason({ name }, store, 'owner')).toMatch(/run run-1 is paused/)
-    }
+    expect(guardReason({ name: `${ROLE_BROWSER_PREFIX}browser_navigate` }, store, 'owner'))
+      .toMatch(/run run-1 is paused/)
+    // A paused or restarting run must not be able to block the session forever:
+    // starting a different run is how the operator gets moving again, and the
+    // new run gets authority of its own rather than the held run's.
+    expect(guardReason({ name: `${TOOL_PREFIX}start_run` }, store, 'owner')).toBeUndefined()
   })
 
   it('keeps the reporting and bookkeeping tools reachable, so a held run stays recordable', () => {
