@@ -140,10 +140,11 @@ export const HELD_RUN_ALLOWED_TOOLS: readonly string[] = [
  * @returns a denial reason, or `undefined` to leave the call allowed.
  */
 export function guardReason(
-  execution: Readonly<{ name: string }>,
+  execution: Readonly<{ name: string, arguments?: unknown, agent?: { id: string } }>,
   store?: {
     holdForSession: (sessionId: string) => { runKey: string, status: string } | undefined
     browserGrantForSession: (sessionId: string) => { runKey: string, status: string, role: string } | undefined
+    requireAuthority: (token: string, agentId: string) => { runKey: string, role: string }
     mayPrepareIdentity: (sessionId: string, role: string) => boolean
   },
   sessionId = '',
@@ -179,7 +180,26 @@ export function guardReason(
         + ' called web_test_assume_role with its accountPage, which is also how a cancelled or paused run gives up'
         + ' its browser. Start a new run to work again.'
     }
-    if (execution.name.startsWith(`mcp__playwright-role-${grant.role}__`)) return undefined
+    if (execution.name.startsWith(`mcp__playwright-role-${grant.role}__`)) {
+      // Preparation needs no authority — establishing the role is how the
+      // authority comes into existence, and `mayPrepareIdentity` already limits
+      // it to a running run that declares this role. Outside that window every
+      // call must present the token `web_test_assume_role` issued, so a call
+      // queued before the run was cancelled or restarted cannot act on the role
+      // a later start granted.
+      if (preparing && store?.mayPrepareIdentity(sessionId, role)) return undefined
+      const presented = (execution.arguments as { authority?: unknown } | undefined)?.authority
+      if (typeof presented !== 'string' || presented === '') {
+        return 'web-test: this action needs the authority web_test_assume_role issued.'
+          + ' Pass it as the "authority" argument; the token stops working when the run is cancelled or restarted.'
+      }
+      try {
+        store?.requireAuthority(presented, execution.agent?.id ?? '')
+      } catch (error) {
+        return String(error instanceof Error ? error.message : error)
+      }
+      return undefined
+    }
     return `web-test: run ${grant.runKey} acts as role ${JSON.stringify(grant.role)}; the browser tool`
       + ` "${execution.name}" belongs to another role's account, or is not a login step. Switch role with`
       + ' web_test_assume_role, and act only after it has confirmed the account.'
@@ -333,6 +353,8 @@ function requireConfirmedSteps(plan: CasePlanRecord, reported: number[]): void {
  */
 /**
  * The agent a call runs as, which the authority it presents must belong to.
+ * @param execution - The call entering the guard.
+ * @returns its agent id, empty when the call carries none.
  * @param exec - The running tool call.
  * @returns the agent id.
  * @throws when the call carries no agent.
@@ -468,6 +490,9 @@ const operationResultSchema = z.object({
   runKey: z.string(),
   operationKey: z.string(),
   dispatch: z.string(),
+  // The authority a verified role hands out, empty for tools that issue none.
+  // Browser calls outside the preparation window must present it.
+  authority: z.string().default(''),
   note: z.string(),
 })
 
@@ -539,6 +564,10 @@ export function apply(ctx: Context): void {
         phase: 'execution',
         status: 'running',
         unresolvedOperations: {},
+        // Every start is a new generation, so any authority handed out under an
+        // earlier one stops validating and a call queued before the restart
+        // cannot act under what this start grants.
+        generation: (store.getRun(input.runKey)?.generation ?? 0) + 1,
         // The owning session is what scopes an operator's hold: pausing this run
         // stops the session that started it and leaves other sessions working.
         ownerSessionId: exec.agent?.id ?? '',
@@ -931,11 +960,15 @@ export function apply(ctx: Context): void {
       schema: {
         type: 'object',
         additionalProperties: false,
-        required: ['runKey', 'operationKey', 'dispatch', 'note'],
+        required: ['runKey', 'operationKey', 'dispatch', 'authority', 'note'],
         properties: {
           runKey: { type: 'string' },
           operationKey: { type: 'string' },
           dispatch: { type: 'string' },
+          authority: {
+            type: 'string',
+            description: 'Token the browser calls of this run must present; empty when no role is verified.',
+          },
           note: { type: 'string' },
         },
       },
@@ -987,11 +1020,15 @@ export function apply(ctx: Context): void {
       schema: {
         type: 'object',
         additionalProperties: false,
-        required: ['runKey', 'operationKey', 'dispatch', 'note'],
+        required: ['runKey', 'operationKey', 'dispatch', 'authority', 'note'],
         properties: {
           runKey: { type: 'string' },
           operationKey: { type: 'string' },
           dispatch: { type: 'string' },
+          authority: {
+            type: 'string',
+            description: 'Token the browser calls of this run must present; empty when no role is verified.',
+          },
           note: { type: 'string' },
         },
       },
@@ -1038,11 +1075,15 @@ export function apply(ctx: Context): void {
       schema: {
         type: 'object',
         additionalProperties: false,
-        required: ['runKey', 'operationKey', 'dispatch', 'note'],
+        required: ['runKey', 'operationKey', 'dispatch', 'authority', 'note'],
         properties: {
           runKey: { type: 'string' },
           operationKey: { type: 'string' },
           dispatch: { type: 'string' },
+          authority: {
+            type: 'string',
+            description: 'Token the browser calls of this run must present; empty when no role is verified.',
+          },
           note: { type: 'string' },
         },
       },
@@ -1083,11 +1124,15 @@ export function apply(ctx: Context): void {
       schema: {
         type: 'object',
         additionalProperties: false,
-        required: ['runKey', 'operationKey', 'dispatch', 'note'],
+        required: ['runKey', 'operationKey', 'dispatch', 'authority', 'note'],
         properties: {
           runKey: { type: 'string' },
           operationKey: { type: 'string' },
           dispatch: { type: 'string' },
+          authority: {
+            type: 'string',
+            description: 'Token the browser calls of this run must present; empty when no role is verified.',
+          },
           note: { type: 'string' },
         },
       },
@@ -1146,11 +1191,15 @@ export function apply(ctx: Context): void {
       schema: {
         type: 'object',
         additionalProperties: false,
-        required: ['runKey', 'operationKey', 'dispatch', 'note'],
+        required: ['runKey', 'operationKey', 'dispatch', 'authority', 'note'],
         properties: {
           runKey: { type: 'string' },
           operationKey: { type: 'string' },
           dispatch: { type: 'string' },
+          authority: {
+            type: 'string',
+            description: 'Token the browser calls of this run must present; empty when no role is verified.',
+          },
           note: { type: 'string' },
         },
       },
@@ -1192,11 +1241,15 @@ export function apply(ctx: Context): void {
       schema: {
         type: 'object',
         additionalProperties: false,
-        required: ['runKey', 'operationKey', 'dispatch', 'note'],
+        required: ['runKey', 'operationKey', 'dispatch', 'authority', 'note'],
         properties: {
           runKey: { type: 'string' },
           operationKey: { type: 'string' },
           dispatch: { type: 'string' },
+          authority: {
+            type: 'string',
+            description: 'Token the browser calls of this run must present; empty when no role is verified.',
+          },
           note: { type: 'string' },
         },
       },

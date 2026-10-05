@@ -631,8 +631,34 @@ Agent**，模型无法自证——`runKey` 是模型给的，但令牌是随机�
 
 新增 5 个测试，全部通过；全量 **107 passed (107)**，类型检查通过。
 
-**尚未接入守卫**：业务动作工具还没有 `authority` 参数，`requireAuthority` 目前没有调用方。
-守卫接入和 `start_run` 的代次递增是下一步。
+### 0.5.1：授权已接入守卫，真实宿主上验证生效
+
+`start_run` 每次启动把代次加一，所以恢复后的运行必然拿到新令牌。守卫的规则改成：
+
+- **身份准备窗口内**（`mayPrepareIdentity`）不需令牌——建立角色正是令牌产生的前提
+- **窗口外**每一次浏览器调用都必须带 `authority`，否则拒绝
+
+这一条是我写错后改对的：`LOGIN_TOOLS` 几乎涵盖所有浏览器工具，所以按"是不是登录工具"
+来判断是错的；真正的分界是准备窗口。
+
+**真实宿主证据**（0.5.1，隔离 `DSH_HOME`）：登录并 `assume_role` 成功后，让模型在 buyer
+角色浏览器里按一个键但**不带** `authority`，工具原话：
+
+```
+web-test: this action needs the authority web_test_assume_role issued.
+Pass it as the "authority" argument; the token stops working when the run is
+cancelled or restarted.
+```
+
+同一轮还暴露并修掉一处：`assume_role` 的输出 JSON Schema 没声明 `authority`，宿主按
+`additionalProperties: false` 拒了整个返回。现在 `authority` 在输出 schema、zod schema 和
+`note` 里三处齐备。
+
+新增守卫测试 5 个（无令牌、旧代次、别的 Agent、带令牌放行、准备窗口免令牌），全量
+**112 passed (112)**，类型检查通过。
+
+**未验证**：带正确令牌的业务动作在真实宿主上能否跑通（只验证了拒绝侧）；排队中的旧调用
+是否真的借不到新运行的授权（需要构造排队场景）。
 
 **0.4.6 仍不是验收候选。**
 

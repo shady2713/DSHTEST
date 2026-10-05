@@ -24,7 +24,63 @@ interface GuardStore {
   holdForSession: (sessionId: string) => { runKey: string, status: string } | undefined
   browserGrantForSession: (sessionId: string) => { runKey: string, status: string, role: string } | undefined
   mayPrepareIdentity: (sessionId: string, role: string) => boolean
+  requireAuthority?: (token: string, agentId: string) => { runKey: string, role: string }
 }
+
+/** A store whose run has a verified role and one live authority. */
+function actingAs(role: string, accepted: string[]): GuardStore {
+  return {
+    holdForSession: () => undefined,
+    browserGrantForSession: () => ({ runKey: 'run-1', status: 'running', role }),
+    mayPrepareIdentity: () => false,
+    requireAuthority: (token, agentId) => {
+      if (agentId !== 'agent-a') throw new Error(`web-test: that authority belongs to another agent (${agentId})`)
+      if (!accepted.includes(token)) throw new Error('web-test: authority was minted in generation 0 of run "run-1", which is now generation 1')
+      return { runKey: 'run-1', role }
+    },
+  }
+}
+
+describe('business action authority', () => {
+  it('admits an action that presents the authority it was issued', () => {
+    const store = actingAs('alice', ['tok-live'])
+    expect(guardReason(
+      { name: 'mcp__playwright-role-alice__browser_click', arguments: { authority: 'tok-live' }, agent: { id: 'agent-a' } },
+      store,
+    )).toBeUndefined()
+  })
+
+  it('refuses an action that presents no authority', () => {
+    const refusal = guardReason(
+      { name: 'mcp__playwright-role-alice__browser_click', arguments: {}, agent: { id: 'agent-a' } },
+      actingAs('alice', ['tok-live']),
+    )
+    expect(refusal).toContain('needs the authority')
+  })
+
+  it('refuses an action carrying an authority from an earlier generation', () => {
+    const refusal = guardReason(
+      { name: 'mcp__playwright-role-alice__browser_click', arguments: { authority: 'tok-old' }, agent: { id: 'agent-a' } },
+      actingAs('alice', ['tok-live']),
+    )
+    expect(refusal).toContain('generation 0')
+  })
+
+  it('refuses an action presenting another agent\'s authority', () => {
+    const refusal = guardReason(
+      { name: 'mcp__playwright-role-alice__browser_click', arguments: { authority: 'tok-live' }, agent: { id: 'agent-b' } },
+      actingAs('alice', ['tok-live']),
+    )
+    expect(refusal).toContain('another agent')
+  })
+
+  it('leaves a login step free of authority', () => {
+    expect(guardReason(
+      { name: 'mcp__playwright-role-alice__browser_click', arguments: {}, agent: { id: 'agent-a' } },
+      { ...actingAs('alice', []), mayPrepareIdentity: () => true },
+    )).toBeUndefined()
+  })
+})
 
 describe('tool allowlist', () => {
   it('admits this plugin\'s own tools', () => {
@@ -33,13 +89,17 @@ describe('tool allowlist', () => {
     }
   })
 
-  it('admits the active role\'s browser and refuses every other role\'s', () => {
+  it('admits the active role\'s browser under its authority and refuses another role\'s', () => {
     const asAlice: GuardStore = {
       holdForSession: () => undefined,
       browserGrantForSession: () => ({ runKey: 'run-1', status: 'running', role: 'alice' }),
       mayPrepareIdentity: () => false,
+      requireAuthority: () => ({ runKey: 'run-1', role: 'alice' }),
     }
-    expect(guardReason({ name: 'mcp__playwright-role-alice__browser_navigate' }, asAlice)).toBeUndefined()
+    expect(guardReason(
+      { name: 'mcp__playwright-role-alice__browser_navigate', arguments: { authority: 'tok' }, agent: { id: 'agent-a' } },
+      asAlice,
+    )).toBeUndefined()
     // A second role's browser is a different account, so naming it must not be
     // a way to act as that account.
     const crossed = guardReason({ name: 'mcp__playwright-role-bob__browser_navigate' }, asAlice)
@@ -102,8 +162,11 @@ describe('operator holds', () => {
       holdForSession: (sessionId: string) => (sessionId === 'owner' ? { runKey: 'run-1', status: 'paused' } : undefined),
       browserGrantForSession: () => ({ runKey: 'run-1', status: 'running', role: 'alice' }),
       mayPrepareIdentity: () => false,
+      requireAuthority: () => ({ runKey: 'run-1', role: 'alice' }),
     }
-    expect(guardReason({ name: 'mcp__playwright-role-alice__browser_navigate' }, store, 'other')).toBeUndefined()
+    expect(guardReason(
+      { name: 'mcp__playwright-role-alice__browser_navigate', arguments: { authority: 'tok' }, agent: { id: 'other' } },
+      store, 'other')).toBeUndefined()
     // A tool of no role at all is still outside the policy, rather than
     // something the guard waves through.
     expect(guardReason({ name: 'mcp__other-browser__navigate' }, store, 'other')).toMatch(/outside the test execution policy/)
