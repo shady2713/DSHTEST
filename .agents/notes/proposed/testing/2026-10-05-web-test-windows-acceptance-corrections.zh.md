@@ -247,6 +247,30 @@ profile 因此装出第二份副本。`TOOL_RUNTIME_SCHEDULER` 是模块加载�
 修掉一处相关缺陷：提供方在 browser-use 服务上的注册比本 effect 活得久，池上一轮挂过的角色
 在下一轮挂载时会撞名并抛错。现在这种"名字已占用"被视为该角色浏览器仍然在用，不是失败。
 
+### 0.3.7：定位"只有一个角色的工具在清单里"
+
+直接证据（临时探针，探针已删）：
+
+```
+WT-PROBE prefetch roles=["approver","buyer"] started=["approver","buyer"] mounts=2
+```
+
+两个角色的浏览器**都挂上了**。让模型自报可见的 MCP 命名空间，只有一个：
+
+```
+命名空间: ['playwright-role-approver']
+```
+
+即失败不在挂载，而在**每个 Agent 的工具登记**。提供方在 `agent/created` 里按
+`resources.available(agent)` 决定 ready 还是 blocked；`prefetch` 只等到
+`mountSessionMcp` 返回，那是**注册完成**，不是浏览器就绪，第二个角色的客户端在该 Agent
+创建时尚未连上，于是它的工具被按 blocked 掩掉。
+
+`browserUse` 公开面只有 `register(name): () => Promise<void>`（返回的是释放句柄），
+没有就绪信号；提供方的 `resources.available` / `clients` 都不导出。要让两个角色的工具
+同时进清单，需要一个公开的就绪等待点，目前没有——这是下一步要解的具体问题，不能靠
+"多等一会儿"或调大超时掩盖。
+
 仍未验证：两角色 Cookie 不串用的直接证据、跨角色业务协作、取消/恢复、授权代次、真实释放。
 `0.3.6` 仍不是验收候选。
 
