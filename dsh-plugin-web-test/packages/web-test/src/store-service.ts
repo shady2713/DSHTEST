@@ -66,7 +66,7 @@ import type {
 } from './types.ts'
 
 /** Plugin version, matching this package's manifest. */
-export const PLUGIN_VERSION = '0.5.2'
+export const PLUGIN_VERSION = '0.6.0'
 
 /**
  * Host release this plugin's peer declaration accepts.
@@ -371,9 +371,15 @@ export class WebTestStore extends Service {
     if (next === undefined) {
       throw new Error(`web-test: run ${JSON.stringify(runKey)} is ${run.status} and cannot ${action}`)
     }
+    // Anything that puts a stopped run back to `running` starts a new
+    // generation, so an authority minted before the pause cannot act after the
+    // resume. Pausing alone needs none: a non-running run has no valid authority
+    // either way, and `requireAuthority` refuses on status first.
+    const restarting = next === 'running' && run.status !== 'running'
     const record = {
       ...run,
       status: next,
+      generation: restarting ? run.generation + 1 : run.generation,
       // Resuming or answering releases whatever the run was waiting for; only a
       // business-time wait keeps a deadline, and `resumeWait` clears that one.
       waitingUntilMs: next === 'running' ? run.waitingUntilMs : 0,

@@ -55,6 +55,23 @@ describe('authority is bound to a run, a generation and an agent', () => {
     expect(() => h.store.requireAuthority('not-a-token', 'agent-a')).toThrow(/no valid authority/)
   })
 
+  it('counts a resume as a new generation, so a pre-pause token stops working', async () => {
+    const { token, h } = await verified()
+    await h.store.controlRun('run-1', 'pause')
+    expect(() => h.store.requireAuthority(token, 'agent-a')).toThrow(/is paused/)
+    const resumed = await h.store.controlRun('run-1', 'resume')
+    if (resumed.status === 'running') {
+      expect(() => h.store.requireAuthority(token, 'agent-a')).toThrow(/generation/)
+    }
+  })
+
+  it('gives a new run on the same key its own generation', async () => {
+    const { token, h } = await verified()
+    const previous = h.store.getRun('run-1').generation
+    await h.store.putRun({ ...h.store.getRun('run-1'), generation: previous + 1 })
+    expect(() => h.store.requireAuthority(token, 'agent-a')).toThrow(/generation/)
+  })
+
   it('issues a fresh token for the generation that follows', async () => {
     const { h } = await verified()
     const run = h.store.getRun('run-1')
