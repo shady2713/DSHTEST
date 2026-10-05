@@ -266,10 +266,33 @@ WT-PROBE prefetch roles=["approver","buyer"] started=["approver","buyer"] mounts
 `mountSessionMcp` 返回，那是**注册完成**，不是浏览器就绪，第二个角色的客户端在该 Agent
 创建时尚未连上，于是它的工具被按 blocked 掩掉。
 
-`browserUse` 公开面只有 `register(name): () => Promise<void>`（返回的是释放句柄），
-没有就绪信号；提供方的 `resources.available` / `clients` 都不导出。要让两个角色的工具
-同时进清单，需要一个公开的就绪等待点，目前没有——这是下一步要解的具体问题，不能靠
-"多等一会儿"或调大超时掩盖。
+### 0.3.8：单槽注册表——多角色并行浏览器在本宿主上不成立
+
+`@deepseek-ai/dsh-browser-use` 的文档原话：
+
+> Reserve the **sole** provider slot until the contribution is disposed.
+> A second registration fails even when it repeats the current name.
+
+`register()` 把名字写进 `this.registration`，重复注册直接抛错。也就是说**一个 browser-use
+提供方槽位**——我的设计"N 个角色各挂一个 `mountSessionMcp`"在本宿主上不成立。
+
+这也解释了 0.3.7 的现象：第二个角色的挂载必然失败。我上一轮加的
+`alreadyRegistered` 容错把这次**必然失败吞成了成功**，于是看起来"挂上了"（`mounts=2`），
+实际上第二个提供方从未注册，工具自然不在清单里。这个容错本身是错的：它掩盖了一个应当
+暴露的架构约束，必须撤掉或改成明确失败。
+
+由此产生的设计后果（尚未决定，需要产品判断）：
+
+- **单角色、顺序切换**可行且真实：同一时刻只有一个角色的浏览器；切角色时真实释放旧
+  浏览器（`agent/created` 已有可用钩子）再起新的，A 的登录态不会带到 B。这满足"角色不串用"，
+  但不满足"A/B 同时登录"。
+- **A/B 同时在线**需要别的机制。唯一在公开接口内可查的方向是：槽位是**按服务实例**持有的，
+  而作用域会为服务派生子实例——若 `mountSessionMcp` 挂在一个派生作用域的 ctx 上，
+  每个作用域会有自己的槽位。但提供方的工具是按 agent 登记的，派生作用域里的提供方是否
+  登记到测试 Agent 的清单上，未经验证。
+
+在这个问题解决之前，不应把 0.3.7 记成"两角色并存已验证"，也不应为了跑通而继续容忍
+注册失败。
 
 仍未验证：两角色 Cookie 不串用的直接证据、跨角色业务协作、取消/恢复、授权代次、真实释放。
 `0.3.6` 仍不是验收候选。
