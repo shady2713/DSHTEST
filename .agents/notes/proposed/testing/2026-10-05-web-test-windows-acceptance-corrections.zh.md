@@ -437,9 +437,30 @@ ctx.effect(() => async () => { await this.releaseAll() })
 
 并确认这个 MCP 客户端的父进程仍是 `node …/dsh iso2`，即它仍挂在宿主下，没有被关闭。
 
-所以"行禁用释放浏览器"**仍不通过**，且 async disposer 不是原因。下一步要查的是：禁用该行
-时，服务实例的 effect 是否真的被销毁——`webTest/status` 报 unavailable 是 typert 网关的
-视图，不等于池的 fiber 已经 teardown。这两件事必须分开验证。
+所以"行禁用释放浏览器"**仍不通过**，且 async disposer 不是原因。### 0.4.2：服务确实被销毁了，但释放仍未发生
+
+把上一条记的疑问分开验证了。把该行改成 `disabled: true` 之后，真实调用确实失败：
+
+```json
+{"code":"gateway/service-unavailable",
+ "message":"typert gateway: … active Service "webTest" is unavailable"}
+```
+
+**服务实例是被销毁的**，不是网关视图的错觉。所以 `ctx.effect` 的 disposer 应该是被调用的。
+
+那么剩下的问题在**释放的内容**上。`playwright/mcp` 这个标记匹配的是 **MCP 客户端进程**，
+它是宿主的子进程（父进程实测为 `node …/dsh iso2`）。宿主退出时它跟着消失；只禁用该行时
+它留下——说明提供方的 teardown 关掉的是**浏览器**，而客户端子进程要等宿主退出才被回收。
+
+也就是说：我此前用 `playwright/mcp` 作为"插件自有浏览器"的标记，量到的一直是**客户端进程**，
+不是浏览器进程。两条结论都要修正：
+
+- 宿主退出：客户端进程确实消失（成立）
+- 行禁用：客户端进程留下；**浏览器本身是否关闭，本轮没有量到**
+
+下一步必须换一个能唯一识别浏览器进程的标记——`playwrightArgs` 用
+`--executable-path` 指定可执行文件时它会出现在浏览器命令行里，可据此精确统计浏览器
+进程数，再与客户端进程数分开看。
 
 上一条"宿主退出"有证据与此不冲突：进程随宿主整体退出，不等于插件在运行期释放了它。
 
