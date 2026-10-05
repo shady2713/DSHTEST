@@ -1155,3 +1155,19 @@ web-test: run run-B is resuming and refuses new test actions.
 把守。0.6.1 的"报告类工具仍可达"与"暂停的运行不能被无视"两条性质都保留——单元测试
 （`withholds the browser while a run is paused, and restores it on resume`）正是单运行
 场景，因此仍通过。全量 **115 passed (115)**。
+
+### 0.6.14：在全新隔离 home 上重测跨进程交接，未走通
+
+新建 `/home/weetion/dshiso3`（`--from-default-profile web`），启用插件的 patch 行后，buyer
+那一轮**没有派发任何工具调用**——会话日志里只有 `turn/start`、`user/message`、
+`assistant/attempt`，没有 `tool/call`，`run-A` 根本没建立。模型直接用文字回答了。
+
+所以跨进程交接这条**仍未验证**。已验证的只有结构性事实：同一进程内第二个角色一定被
+`browser use provider "… " is already registered` 拒绝（0.6.12）。
+
+顺带记两条环境操作：
+
+1. `cordis.patch.yml` 的格式是**顶层 YAML 数组**，不是 `plugins:` 键。我按后者追加，宿主报
+   `failed to parse overlay … YAMLException`，而且会话创建返回空响应、看起来像宿主挂了。
+2. `dsh <name> --from-default-profile web --port N --no-open` 会**一直阻塞**在前面（它在
+   启动服务），要放后台跑，或者建完 profile 再单独启动。
