@@ -64,7 +64,7 @@ import type {
 } from './types.ts'
 
 /** Plugin version, matching this package's manifest. */
-export const PLUGIN_VERSION = '0.1.2'
+export const PLUGIN_VERSION = '0.1.3'
 
 /**
  * Host release this plugin's peer declaration accepts.
@@ -854,6 +854,17 @@ export class WebTestStore extends Service {
         + ' changing role, because the effect they may have had belongs to the current account')
     }
     const declared = this.requireDeclaredRole(run, role)
+    // The account a role is expected to present comes from the confirmed
+    // environment, not from anything the run supplies at switch time. A model
+    // that named its own expected account could satisfy the check with the
+    // wrong one.
+    const expected = this.expectedAccount(run, declared)
+    if (expected !== '' && verified.account !== expected) {
+      throw new Error(`web-test: run ${JSON.stringify(runKey)} confirmed role ${JSON.stringify(declared)} as`
+        + ` ${JSON.stringify(verified.account)}, but that role is bound to ${JSON.stringify(expected)} in`
+        + ` environment ${JSON.stringify(run.environmentRevisionKey)}; sign that account in before switching.`
+        + ` The page said: ${verified.detail}`)
+    }
     // The role field is written only after the browser answered as that
     // account, so the record never claims an identity the site did not
     // confirm. A failed check throws above and leaves the previous role in
@@ -918,6 +929,48 @@ export class WebTestStore extends Service {
    */
   verifiedAccount(runKey: string, role: string): string {
     return this.getRoleIdentity(runKey, role)?.account ?? ''
+  }
+
+  /**
+   * Whether a run may prepare a role's identity in that role's browser.
+   *
+   * This is the preparation step, not access: it is what lets a person sign in
+   * before the role is verified. It is scoped to a run that is executing and
+   * owns the named role, so it cannot be used to reach another role's account,
+   * another run, or another session.
+   * @param sessionId - Session asking.
+   * @param role - Role whose browser is being prepared.
+   * @returns true when the session has a running run that declares the role.
+   */
+  mayPrepareIdentity(sessionId: string, role: string): boolean {
+    if (role === '') return false
+    for (const run of this.sorted(TABLE_RUNS) as RunRecord[]) {
+      if (run.ownerSessionId !== sessionId) continue
+      if (run.status !== 'running') continue
+      if (this.declaredRoles(run.key).includes(role)) return true
+    }
+    return false
+  }
+
+  /**
+   * The account a declared role is bound to.
+   *
+   * A role whose `accountRef` names an account binds the role to it, so the
+   * switch is checked against the environment the operator confirmed rather
+   * than against a value the run produces. An `accountRef` that is not a
+   * concrete account name (`ref:...`) binds nothing and returns an empty
+   * string, which leaves the switch allowed but unverified against a name.
+   * @param run - Run whose environment holds the binding.
+   * @param role - Declared role name.
+   * @returns the expected account, or an empty string when none is bound.
+   */
+  expectedAccount(run: RunRecord, role: string): string {
+    if (role === '') return ''
+    const environment = this.listEnvironments(run.projectKey)
+      .find(candidate => candidate.key === run.environmentRevisionKey)
+    const declared = environment?.roles.find(candidate => candidate.name === role)
+    if (declared === undefined) return ''
+    return declared.accountRef.startsWith('ref:') ? '' : declared.accountRef
   }
 
   /**

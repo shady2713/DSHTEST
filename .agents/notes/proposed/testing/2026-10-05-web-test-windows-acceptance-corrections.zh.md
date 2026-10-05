@@ -109,6 +109,54 @@ Windows 记录指出 68 个单测没抓到 D2，因为没有任何测试让**真
   被守卫拒绝，原文为"this session has no run that may drive a browser"。角色隔离
   的路由强制在真实宿主上生效。
 
+## 0.1.3：作用域派发与身份核验的修复进展
+
+`0.1.2` 保留为开发检查点，**不视为浏览器功能可用的验收候选**。`0.1.3` 继续该目标。
+
+### 已修（根因，不是绕过）
+
+1. **作用域派发**。宿主 `ToolsRuntime` 用 `get(name, scope)` 取工具视图，`scope` 就是
+   Agent。此前只传了 `parent`，父调用不携带作用域，于是查找落到全局视图，角色的 MCP
+   工具根本不在那里，恒为 `unknown tool`。现在传 `exec.agent`，并用公开的
+   `ToolCallId(id)` 工厂为子调用生成**独立 callId**，同时带 `rootCallId`、`parent`、
+   `signal`，让日志里内外两层可分辨。没有伪造 Agent；没有 Agent 时直接拒绝，而不是
+   退到全局查找。
+
+2. **身份核验不再接收任意页面文字**。`readAccount` 原来把页面文本当账号，登录页或错误页
+   都会被当成身份。现在读 `data-web-test-account` 标记，未登录时该属性为空，核验失败；
+   受控站点已按此实现，未登录为空、两个账号各自不同。
+
+3. **预期账号来自已确认的环境**。角色在环境里用 `accountRef` 绑定账号，核验比对的是
+   环境里那个绑定值。模型不能再自己声明 `expectAccount` 来让自己通过；旧的 `identityUrl`
+   参数保留为 `accountPage` 的兼容名。
+
+4. **解开登录与授权的循环**。区分三段：身份准备（导航、读取、填表、按键）、插件固定的
+   身份观察（`assume_role` 自己的核验）、已核验角色执行业务。准备阶段只对**已核验前**的
+   只读/填表工具开放，且限定在本会话运行声明的角色浏览器上；**`browser_click` 明确不在
+   准备集内**，因为点击是改变业务数据的动作，需要人工接管。核验失败不发业务权限。
+
+5. **导入与装配**。`@playwright/mcp` 及 `mountSessionMcp` 那条路径的 peer 全部声明为插件
+   依赖，否则在 profile 的 node_modules 里解析不到；提供方改为按需动态加载；tsdown 的
+   chunk 从 `lib/shared/` 放回 `lib/`，因为 shared chunk 下一层的
+   `createRequire(...)('../package.json')` 会解析失败，那正是两个行"failed to import"的原因。
+
+### 真实宿主实测
+
+- `0.1.3` 在 `webclean` profile 上**全部行激活**（0 次 "did not activate"），
+  `web_test/status` 返回 `active 0.1.3`。
+- 端到端最小闭环（建运行 → 取得角色浏览器 → 登录 → 核验身份 → 执行一个允许动作）
+  **尚未取得证据**：全新 profile 启动时预设行停在
+  `pending (waiting for service: agentPresets)`，导致无法建测试会话。
+
+### 仍未解
+
+- 端到端闭环未验证，因此角色隔离目标**仍未完成**。
+- 全新 profile 的预设引导（`agentPresets` 就绪顺序）是一个新暴露的问题，尚未定位。
+- 浏览器资源真实释放（保存 scope/fiber/MCP 释放句柄并等待完成）尚未实现，当前
+  `releaseAll` 仍是清 Map + `setTimeout(0)`，不构成进程回收。
+- 同一角色名在不同项目/环境/运行之间的隔离键尚未加代次，旧运行的排队调用仍可能借用
+  新运行的授权。
+
 ## 未解项（如实保留）
 
 **插件自行核验角色身份目前不可用。** `assume_role` 要通过 `tools.execute` 向角色

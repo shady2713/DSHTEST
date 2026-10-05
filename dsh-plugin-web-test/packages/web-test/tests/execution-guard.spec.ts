@@ -15,6 +15,7 @@ function holding(runKey: string, status: string): GuardStore {
   return {
     holdForSession: (sessionId: string) => (sessionId === 'owner' ? { runKey, status } : undefined),
     browserGrantForSession: () => undefined,
+    mayPrepareIdentity: () => false,
   }
 }
 
@@ -22,6 +23,7 @@ function holding(runKey: string, status: string): GuardStore {
 interface GuardStore {
   holdForSession: (sessionId: string) => { runKey: string, status: string } | undefined
   browserGrantForSession: (sessionId: string) => { runKey: string, status: string, role: string } | undefined
+  mayPrepareIdentity: (sessionId: string, role: string) => boolean
 }
 
 describe('tool allowlist', () => {
@@ -32,7 +34,11 @@ describe('tool allowlist', () => {
   })
 
   it('admits the active role\'s browser and refuses every other role\'s', () => {
-    const asAlice: GuardStore = { holdForSession: () => undefined, browserGrantForSession: () => ({ runKey: 'run-1', status: 'running', role: 'alice' }) }
+    const asAlice: GuardStore = {
+      holdForSession: () => undefined,
+      browserGrantForSession: () => ({ runKey: 'run-1', status: 'running', role: 'alice' }),
+      mayPrepareIdentity: () => false,
+    }
     expect(guardReason({ name: 'mcp__playwright-role-alice__browser_navigate' }, asAlice)).toBeUndefined()
     // A second role's browser is a different account, so naming it must not be
     // a way to act as that account.
@@ -44,7 +50,7 @@ describe('tool allowlist', () => {
   it('refuses every browser when the session has no verified role', () => {
     const reason = guardReason(
       { name: 'mcp__playwright-role-alice__browser_navigate' },
-      { holdForSession: () => undefined, browserGrantForSession: () => undefined },
+      { holdForSession: () => undefined, browserGrantForSession: () => undefined, mayPrepareIdentity: () => false },
     )
     expect(reason).toContain('no run that may drive a browser')
   })
@@ -54,7 +60,7 @@ describe('tool allowlist', () => {
     // account, so an unverified role cannot become reachable.
     const unverified = guardReason(
       { name: 'mcp__playwright-role-alice__browser_navigate' },
-      { holdForSession: () => undefined, browserGrantForSession: () => undefined },
+      { holdForSession: () => undefined, browserGrantForSession: () => undefined, mayPrepareIdentity: () => false },
     )
     expect(unverified).toContain('no run that may drive a browser')
   })
@@ -95,11 +101,34 @@ describe('operator holds', () => {
     const store: GuardStore = {
       holdForSession: (sessionId: string) => (sessionId === 'owner' ? { runKey: 'run-1', status: 'paused' } : undefined),
       browserGrantForSession: () => ({ runKey: 'run-1', status: 'running', role: 'alice' }),
+      mayPrepareIdentity: () => false,
     }
     expect(guardReason({ name: 'mcp__playwright-role-alice__browser_navigate' }, store, 'other')).toBeUndefined()
     // A tool of no role at all is still outside the policy, rather than
     // something the guard waves through.
     expect(guardReason({ name: 'mcp__other-browser__navigate' }, store, 'other')).toMatch(/outside the test execution policy/)
+    // The stub holds a valid grant, so its own role's browser is reachable even
+    // though another session's run is paused; a foreign namespace is not.
+    expect(guardReason({ name: 'mcp__playwright-role-bob__browser_navigate' }, store, 'other'))
+      .toContain('belongs to another role')
+  })
+
+  it('admits a login step before the role is verified, but not a click', () => {
+    const preparing: GuardStore = {
+      holdForSession: () => undefined,
+      browserGrantForSession: () => undefined,
+      mayPrepareIdentity: (_sessionId, role) => role === 'alice',
+    }
+    // Reading and filling is how a person gets signed in before the first
+    // verified switch, so it is reachable.
+    expect(guardReason({ name: 'mcp__playwright-role-alice__browser_navigate' }, preparing)).toBeUndefined()
+    expect(guardReason({ name: 'mcp__playwright-role-alice__browser_fill_form' }, preparing)).toBeUndefined()
+    // A click is how business data changes, so it waits for a verified role.
+    expect(guardReason({ name: 'mcp__playwright-role-alice__browser_click' }, preparing))
+      .toContain('no run that may drive a browser')
+    // And a role the run does not declare is never prepared.
+    expect(guardReason({ name: 'mcp__playwright-role-bob__browser_navigate' }, preparing))
+      .toContain('no run that may drive a browser')
   })
 
   it('asks for the operator, not for a tool that does not exist', () => {

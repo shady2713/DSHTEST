@@ -69,7 +69,11 @@ const nodeLib: UserConfig = {
     neverBundle: isExternal,
     alwaysBundle: specifier => !isBuiltin(specifier) && !isExternal(specifier),
   },
-  outputOptions: { entryFileNames: '[name].js', chunkFileNames: 'shared/[name]-[hash].js' },
+  // Chunks stay directly in `lib/`. A shared chunk one directory deeper breaks
+  // the `createRequire(...)('../package.json')` the typed-remote runtime does to
+  // read this package's version, which is what made the shared rows fail to
+  // import while the entry rows loaded.
+  outputOptions: { entryFileNames: '[name].js', chunkFileNames: '[name]-[hash].js' },
 }
 
 /**

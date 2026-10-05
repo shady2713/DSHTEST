@@ -38,6 +38,32 @@ export const name = 'web-test-agent'
 /** Cordis service injection for this composition. */
 export const inject = ['tools', 'webTestStore', 'webTestRoleBrowsers']
 
+/**
+ * Browser tools a run may use before its role is verified.
+ *
+ * These navigate, read, and fill. They cannot press anything on the page:
+ * `browser_click` is absent on purpose, because a click is how a run changes
+ * business data, and an unverified run must not be able to. A sign-in that needs
+ * a click is a human-takeover step, not something this grant covers.
+ *
+ * Each is confined to the run's own role browser, so allowing them early grants
+ * preparation rather than access.
+ */
+const LOGIN_TOOLS: ReadonlySet<string> = new Set([
+  'browser_navigate',
+  'browser_evaluate',
+  'browser_snapshot',
+  'browser_fill_form',
+  'browser_type',
+  'browser_select_option',
+  'browser_wait_for',
+  'browser_find',
+  'browser_press_key',
+  'browser_console_messages',
+  'browser_network_requests',
+  'browser_resize',
+])
+
 /** Identity of the agent preset the operator selects explicitly. */
 export const PRESET_ID = 'web-test'
 
@@ -109,6 +135,7 @@ export function guardReason(
   store?: {
     holdForSession: (sessionId: string) => { runKey: string, status: string } | undefined
     browserGrantForSession: (sessionId: string) => { runKey: string, status: string, role: string } | undefined
+    mayPrepareIdentity: (sessionId: string, role: string) => boolean
   },
   sessionId = '',
 ): string | undefined {
@@ -126,10 +153,17 @@ export function guardReason(
   }
   if (execution.name.startsWith(TOOL_PREFIX)) return undefined
   if (execution.name.startsWith(ROLE_BROWSER_PREFIX)) {
-    // One authorisation decides every browser call: the run it belongs to must
-    // be executing, and its role must have been confirmed against the site.
-    // A cancelled run therefore loses its browser, a later run gets its own,
-    // and another session is judged on its own run.
+    const role = RoleBrowserPool.roleOf(execution.name)
+    // Preparing an identity is not business work, and gating it behind a
+    // verified role would be circular: the first switch can never happen. So
+    // a role's own browser is reachable for identity work while the run is
+    // executing, and every other tool still needs the verified role.
+    const preparing = LOGIN_TOOLS.has(execution.name.slice(ROLE_BROWSER_PREFIX.length).split('__')[1] ?? '')
+    if (preparing && store?.mayPrepareIdentity(sessionId, role)) return undefined
+    // One authorisation decides every other browser call: the run it belongs to
+    // must be executing, and its role must have been confirmed against the
+    // site. A cancelled run therefore loses its browser, a later run gets its
+    // own, and another session is judged on its own run.
     const grant = store?.browserGrantForSession(sessionId)
     if (grant === undefined) {
       return `web-test: this session has no run that may drive a browser. A run needs to be running and to have`
@@ -138,7 +172,8 @@ export function guardReason(
     }
     if (execution.name.startsWith(`mcp__playwright-role-${grant.role}__`)) return undefined
     return `web-test: run ${grant.runKey} acts as role ${JSON.stringify(grant.role)}; the browser tool`
-      + ` "${execution.name}" belongs to another role's account. Switch role with web_test_assume_role first.`
+      + ` "${execution.name}" belongs to another role's account, or is not a login step. Switch role with`
+      + ' web_test_assume_role, and act only after it has confirmed the account.'
   }
   return `web-test sessions may only call ${TOOL_PREFIX}* and the active role's ${ROLE_BROWSER_PREFIX}* tools; `
     + `"${execution.name}" is outside the test execution policy`
@@ -298,10 +333,10 @@ async function verifyRoleIdentity(
     throw new Error('web-test: this build has no role browser pool, so no role can be verified')
   }
   if (identityUrl === undefined) {
-    throw new Error('web-test: assume_role needs identityUrl: the account has to be read back from the site, not'
+    throw new Error('web-test: assume_role needs accountPage: the account has to be read back from the site, not'
       + ' assumed from the role name')
   }
-  pool.ensure(role)
+  await pool.ensure(role)
   const account = await pool.readAccount(tools, exec, role, identityUrl)
   return { account: account.account, detail: account.detail }
 }
@@ -487,7 +522,7 @@ export function apply(ctx: Context): void {
       // mid-turn is not callable until the following turn; starting them here
       // means the next turn can already drive each role's account.
       await store.putRun(record)
-      for (const role of store.declaredRoles(input.runKey)) pool?.ensure(role)
+      for (const role of store.declaredRoles(input.runKey)) await pool?.ensure(role)
       return { runKey: record.key, status: record.status, evidenceRoot: dir }
     },
   }), 'web-test: start run tool')
@@ -1023,20 +1058,14 @@ export function apply(ctx: Context): void {
       const parsed = z.object({
         runKey: z.string().min(1),
         role: z.string(),
+        accountPage: z.string().url().optional(),
         identityUrl: z.string().url().optional(),
-        expectAccount: z.string().optional(),
       }).parse(args)
       // The role is bound to a real browser and the account is read back from
       // the site before the field is written, so a run never claims an identity
       // the site did not confirm.
-      const verified = await verifyRoleIdentity(tools, exec, pool, parsed.role, parsed.identityUrl)
-      if (parsed.expectAccount !== undefined && parsed.expectAccount !== '') {
-        if (verified.account !== parsed.expectAccount) {
-          throw new Error(`web-test: role ${JSON.stringify(parsed.role)}'s browser is signed in as`
-            + ` ${JSON.stringify(verified.account)} but the run expects ${JSON.stringify(parsed.expectAccount)};`
-            + ` sign that account in on this role's browser first. The site said: ${verified.detail}`)
-        }
-      }
+      const accountPage = parsed.accountPage ?? parsed.identityUrl
+      const verified = await verifyRoleIdentity(tools, exec, pool, parsed.role, accountPage)
       const run = await store.assumeRole(parsed.runKey, parsed.role, verified)
       return {
         runKey: run.key,

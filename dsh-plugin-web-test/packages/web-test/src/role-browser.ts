@@ -22,8 +22,9 @@ import { Service } from '@deepseek-ai/cordis'
 import type { Context } from '@deepseek-ai/cordis'
 import type ToolsService from '@deepseek-ai/dsh-tools'
 import type { ToolExecutionResult, ToolRunContext } from '@deepseek-ai/dsh-tools'
+import { ToolCallId } from '@deepseek-ai/dsh-llm'
+import type { ToolExecutionToken } from '@deepseek-ai/dsh-tools'
 import { z } from 'zod'
-import { mountSessionMcp } from '@deepseek-ai/dsh-experimental-browser-use-runtime/mcp'
 
 /** Loader identity of this service's row. */
 export const name = 'webTestRoleBrowsers'
@@ -141,16 +142,20 @@ export class RoleBrowserPool extends Service {
    * @param role - Declared role name.
    * @returns the role's browser resource.
    */
-  ensure(role: string): RoleBrowser {
+  async ensure(role: string): Promise<RoleBrowser> {
     const existing = this.started.get(role)
     if (existing !== undefined) return existing
     const serverName = `playwright-role-${role}`
+    // The provider is loaded on demand rather than at import time: it pulls the
+    // MCP client's whole peer tree, which a unit test that never starts a
+    // browser should not have to load.
+    const { mountSessionMcp } = await import('@deepseek-ai/dsh-experimental-browser-use-runtime/mcp')
     this.ctx.effect(() => {
       mountSessionMcp(this.ctx, {
-      name: serverName,
-      // Each role owns its own Chromium, so no two roles contend for one
-      // attached browser and neither can land on the other's page.
-      exclusive: false,
+        name: serverName,
+        // Each role owns its own Chromium, so no two roles contend for one
+        // attached browser and neither can land on the other's page.
+        exclusive: false,
         command: process.execPath,
         args: playwrightArgs(this.executablePath, this.headless),
         env: {},
@@ -237,29 +242,28 @@ export class RoleBrowserPool extends Service {
     identityUrl: string,
   ): Promise<IdentityAnswer> {
     const namespace = RoleBrowserPool.namespaceOf(role)
+    // `ToolsRuntime` resolves a tool with `view(scope)`, so the call has to
+    // name the same Agent the model used. Without `agent` the lookup falls
+    // back to the global view, where an MCP server's tools are not registered
+    // and every role browser reads as an unknown tool. `parent` alone only
+    // links the call to the outer one; it carries no scope.
+    const child = childCallId(exec, 'navigate')
     const navigate = await tools.execute({
-      callId: exec.callId,
-      // The enclosing execution's token is what places this call inside the
-      // Agent's scope. Without it the dispatch runs against the global
-      // registry, where an MCP server's tools are not registered, and every
-      // role browser reads as an unknown tool.
-      parent: exec.token,
+      ...child,
       name: `${namespace}browser_navigate`,
       arguments: { url: identityUrl },
       signal: exec.signal,
     })
     assertToolOk(navigate, `${namespace}browser_navigate`, role)
+    const probe = childCallId(exec, 'identity')
     const read = await tools.execute({
-      callId: exec.callId,
-      parent: exec.token,
+      ...probe,
       name: `${namespace}browser_evaluate`,
-      arguments: { function: '() => document.body.innerText' },
+      arguments: { function: IDENTITY_PROBE },
       signal: exec.signal,
     })
     assertToolOk(read, `${namespace}browser_evaluate`, role)
-    const detail = firstText(read.value)
-    const account = detail.trim().replace(/^["']|["']$/g, '')
-    return { account, detail }
+    return parseIdentity(firstText(read.value))
   }
 
   /**
@@ -276,6 +280,73 @@ export class RoleBrowserPool extends Service {
     for (const dispose of disposers) dispose()
     await new Promise(resolve => setTimeout(resolve, 0))
   }
+}
+
+/**
+ * The page function that reports identity.
+ *
+ * It reads a marker the identity endpoint sets, so a login page or an error
+ * page cannot be mistaken for a signed-in account: an unsigned page answers
+ * with an empty string rather than with whatever text happens to be on it.
+ */
+const IDENTITY_PROBE = '() => document.body.dataset.webtestAccount ?? ""'
+
+/**
+ * Derive a child call id from the call that asked for it.
+ *
+ * A child needs its own id so the session log keeps the inner call and the
+ * outer one apart, while the shared prefix keeps the two correlatable.
+ * @param parentId - The enclosing call's id.
+ * @param label - What the child does.
+ * @returns the child's call id.
+ */
+function childCallId(exec: ToolRunContext, label: string): {
+  callId: ToolCallId
+  rootCallId: ToolCallId
+  parent: ToolExecutionToken
+  agent: NonNullable<ToolRunContext['agent']>
+} {
+  return {
+    callId: ToolCallId(`${exec.callId}:web-test:${label}`),
+    rootCallId: ToolCallId(exec.callId),
+    parent: exec.token,
+    agent: requireAgent(exec),
+  }
+}
+
+/**
+ * The Agent a nested call must be attributed to.
+ *
+ * A call with no Agent would resolve against the global tool view, which is
+ * not this session's browser set; rather than widen the lookup, the call is
+ * refused.
+ * @param exec - The enclosing execution.
+ * @returns the Agent that owns the role browser.
+ * @throws when the enclosing call has no Agent.
+ */
+function requireAgent(exec: ToolRunContext): NonNullable<ToolRunContext['agent']> {
+  if (exec.agent === undefined) {
+    throw new Error('web-test: this call has no Agent, so a role browser cannot be reached; run a browser action'
+      + ' from a Web testing session')
+  }
+  return exec.agent
+}
+
+/**
+ * Read the account out of an identity probe's answer.
+ *
+ * The probe returns the `data-web-test-account` attribute or an empty string,
+ * so the only way a value arrives is a page that actually declared an account.
+ * @param raw - The text the probe returned.
+ * @returns the account and the raw text, for the record.
+ */
+function parseIdentity(raw: string): IdentityAnswer {
+  const text = raw.trim()
+  const account = text.replace(/^["']|["']$/g, '')
+  if (account === '') {
+    return { account: '', detail: text === '' ? 'the page carried no data-web-test-account marker' : text }
+  }
+  return { account, detail: text }
 }
 
 /**

@@ -31,8 +31,14 @@ const who = req => {
   const name = sessions.get(sid)
   return name === undefined ? null : { name, ...ACCOUNTS[name] }
 }
-const page = (title, body) => `<!doctype html><meta charset="utf-8"><title>${title}</title>
-<h1 id="page">${title}</h1><div id="account">未登录</div><pre id="main">${body}</pre>`
+// The identity marker is the only thing a test may read to decide who is
+// signed in. It is absent unless the request carried a session cookie, so a
+// login page, an error page, or any other text cannot be mistaken for an
+// account. The expected account is not part of the marker: a test compares what
+// the page says against the account its confirmed environment declares.
+const page = (title, body, account) => `<!doctype html><meta charset="utf-8"><title>${title}</title>
+<body data-webtest-account="${account}"><h1 id="page">${title}</h1>
+<div id="account">${account === '' ? '未登录' : account}</div><pre id="main">${body}</pre></body>`
 
 createServer((req, res) => {
   const url = new URL(req.url, 'http://127.0.0.1')
@@ -51,7 +57,16 @@ createServer((req, res) => {
       res.end(JSON.stringify({ account: name, name: account.name }))
     })
   }
-  if (url.pathname === '/whoami') return json(res, 200, { account: me?.name ?? null, canCreate: me?.canCreate ?? false, canApprove: me?.canApprove ?? false })
+  if (url.pathname === '/whoami') {
+    return json(res, 200, { account: me?.name ?? null, canCreate: me?.canCreate ?? false, canApprove: me?.canApprove ?? false })
+  }
+  // A page that states who is signed in, so a test can verify identity through
+  // a real rendered page rather than by trusting free text.
+  if (url.pathname === '/account') {
+    return res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }),
+      res.end(page('当前账号', me === null ? '请先登录' : `可创建：${me.canCreate}｜可审批：${me.canApprove}`,
+        me === null ? '' : me.name))
+  }
   if (url.pathname === '/logout') {
     sessions.delete(cookieOf(req))
     res.writeHead(200, { 'set-cookie': 'sid=; Path=/; Max-Age=0' }); return res.end('{"ok":true}')
@@ -87,7 +102,8 @@ createServer((req, res) => {
   }
   if (url.pathname === '/') {
     return res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }),
-      res.end(page('受控验收站点', me === null ? '未登录' : `当前账号：${me.name}｜可创建：${me.canCreate}｜可审批：${me.canApprove}`))
+      res.end(page('受控验收站点', me === null ? '未登录' : `可创建：${me.canCreate}｜可审批：${me.canApprove}`,
+        me === null ? '' : me.name))
   }
   json(res, 404, { error: 'not found' })
 }).listen(8902, '127.0.0.1', () => console.log('acceptance site on http://127.0.0.1:8902'))
