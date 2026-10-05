@@ -145,6 +145,10 @@ export class RoleBrowserPool extends Service {
   async ensure(role: string): Promise<RoleBrowser> {
     const existing = this.started.get(role)
     if (existing !== undefined) return existing
+    // Mounted against this pool's own context, never an agent's. The provider
+    // reads `browserUse` off the context it is given, which an agent context
+    // does not inject, and it scopes each server per agent itself, adopting
+    // agents that already exist.
     const serverName = `playwright-role-${role}`
     // The provider is loaded on demand rather than at import time: it pulls the
     // MCP client's whole peer tree, which a unit test that never starts a
