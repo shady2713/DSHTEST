@@ -283,6 +283,9 @@ export const operationRecordSchema = z.object({
   role: z.string().default(''),
   /** Digest of the request, so the same intent is recognisable on a repeat. */
   requestDigest: z.string().min(1),
+  // The run generation that dispatched it, so a report can tell two attempts of
+  // the same operation across a restart apart from one attempt repeated.
+  generation: z.number().int().nonnegative().default(0),
   dispatch: operationDispatchSchema,
 })
 

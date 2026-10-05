@@ -743,6 +743,7 @@ export class WebTestStore extends Service {
       runKey,
       operationKey,
       intent,
+      generation: run.generation,
       role: effectiveRole,
       requestDigest,
       dispatch: { kind: 'dispatching' },

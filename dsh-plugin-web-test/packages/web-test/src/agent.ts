@@ -467,6 +467,7 @@ const beginOperationInputSchema = z.object({
   intent: z.string().min(1),
   requestDigest: z.string().min(1),
   role: z.string().default(''),
+  authority: z.string().min(1),
 })
 
 /** The settle-operation tool's arguments. */
@@ -949,11 +950,15 @@ export function apply(ctx: Context): void {
     parameters: {
       type: 'object',
       additionalProperties: false,
-      required: ['runKey', 'operationKey', 'intent', 'requestDigest'],
+      required: ['runKey', 'operationKey', 'intent', 'requestDigest', 'authority'],
       properties: {
         runKey: { type: 'string', description: 'The run that performs the change.' },
         operationKey: { type: 'string', description: 'Short id for this operation, stable across the run.' },
         intent: { type: 'string', description: 'The business change in one line, for the report.' },
+        authority: {
+          type: 'string',
+          description: 'Token web_test_assume_role issued; it names the run and generation that may perform this change.',
+        },
         requestDigest: {
           type: 'string',
           description: 'Digest of the request you are about to send, so a repeat is recognisable as the same change.',
@@ -985,11 +990,16 @@ export function apply(ctx: Context): void {
         }]
       },
     },
-    async execute(args) {
+    async execute(args, exec) {
       refusing()
       const input = beginOperationInputSchema.parse(args)
+      // A business-changing operation carries the authority of the role that is
+      // about to perform it, so the record names both the role and the generation
+      // it was minted in and a report can tell two attempts across a restart
+      // apart from one attempt repeated.
+      const authority = store.requireAuthority(input.authority, requireAgentId(exec))
       const record = await store.beginOperation(
-        input.runKey, input.operationKey, input.intent, input.requestDigest, input.role,
+        input.runKey, input.operationKey, input.intent, input.requestDigest, authority.role,
       )
       return {
         runKey: record.runKey,
