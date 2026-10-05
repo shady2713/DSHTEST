@@ -1038,7 +1038,13 @@ export class WebTestStore extends Service {
     for (const run of this.sorted(TABLE_RUNS) as RunRecord[]) {
       if (run.ownerSessionId !== sessionId) continue
       if (run.status !== 'running') continue
-      if (this.declaredRoles(run.key).includes(role)) return true
+      if (!this.declaredRoles(run.key).includes(role)) continue
+      // The window is open only until this role is the verified one. Leaving it
+      // open afterwards let every browser call skip the authority check, because
+      // preparation is exactly what a call without authority is allowed to do.
+      // A role switch re-opens it, since the new role is not verified yet.
+      if (run.activeRole === role && this.verifiedAccount(run.key, role) !== '') return false
+      return true
     }
     return false
   }

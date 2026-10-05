@@ -732,7 +732,39 @@ gen: 1`），拿到令牌 `fe3b4bbc-baed-4343-9d39-4d1a92f0e36f`，经 API 取�
 让理由本身带上代次（可区分的文本），要么直接对 `requireAuthority` 做真实派发测试
 （用可控的调用而不是让模型自由发挥）。
 
-在补上这个方法之前，不把第五节这条记为通过。
+### 0.6.2：读日志发现——授权根本没被要求过（已修）
+
+上一轮说"日志不记参数"是**我自己没查对**。`tool/call` 事件里就有 `arguments`。读出实际派发的
+参数后，结论从"无法判断"变成"确实有问题"：
+
+```
+web_test_assume_role runKey='run-A'
+web_test_assume_role runKey='run-B'
+browser_evaluate   authority=None
+browser_evaluate   authority=None
+```
+
+**两次浏览器调用都没带 `authority`，却都成功了**——而且此时 `run-B` 已经
+`now acts as buyer`（窗口本该已关闭）。
+
+根因在 `mayPrepareIdentity`：它对"本会话 running 且声明了该角色"的运行**一律返回 true**，
+不看该角色是否已经核验通过。所以准备窗口从头到尾开着，而"不带令牌"正是准备窗口允许的行为
+——**授权要求实际上从未生效过**。
+
+修法：只有当该角色**还不是**已核验的活动角色时窗口才开着。
+
+```ts
+if (run.activeRole === role && this.verifiedAccount(run.key, role) !== '') return false
+return true
+```
+
+角色切换会重新打开窗口（新角色尚未核验），所以切换登录照常可用。
+
+**这推翻了 0.5.2 的结论**：那次"接受侧通过"也是在窗口一直开着的情况下取得的，证明不了令牌
+在起作用。同样 0.5.1 的"拒绝侧"也可能是别的原因（那次的浏览器调用模型确实没带令牌，而
+窗口开着本该放行——所以那次拒绝的来源需要复核）。授权链路要重新取证。
+
+6 个 `browser-dispatch` 测试按新规则更新（核验后的调用必须带令牌），全量 **114 passed (114)**。
 
 **0.4.6 仍不是验收候选。**
 

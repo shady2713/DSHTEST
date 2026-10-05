@@ -25,8 +25,10 @@ describe('browser dispatch authorisation', () => {
         'environment_revisions': { 'shop-test': environment('shop-test', ['buyer']) },
       }),
     })
+      // A verified role's own calls now need the authority it was issued.
+      const token = (): string => store.mintAuthority('run-1', 'owner')?.token ?? ''
     try {
-      const reason = guardReason({ name: ALICE_BROWSER }, store, 'owner')
+      const reason = guardReason({ name: ALICE_BROWSER, arguments: { authority: token() }, agent: { id: 'owner' } }, store, 'owner')
       expect(reason).toContain('no run that may drive a browser')
       expect(reason).toContain('cancelled')
     } finally {
@@ -43,16 +45,18 @@ describe('browser dispatch authorisation', () => {
         role_identities: { 'run-1/buyer': identity('run-1', 'buyer') },
       }),
     })
+      // A verified role's own calls now need the authority it was issued.
+      const token = (): string => store.mintAuthority('run-1', 'owner')?.token ?? ''
     try {
       await store.controlRun('run-1', 'resume')
       await store.assumeRole('run-1', 'buyer', { account: 'Alice Buyer', detail: '/whoami' })
-      expect(guardReason({ name: ALICE_BROWSER }, store, 'owner')).toBeUndefined()
+      expect(guardReason({ name: ALICE_BROWSER, arguments: { authority: token() }, agent: { id: 'owner' } }, store, 'owner')).toBeUndefined()
       await store.controlRun('run-1', 'pause')
       // A paused run names the pause, which is more useful than the generic
       // no-grant wording, and it is still a refusal.
-      expect(guardReason({ name: ALICE_BROWSER }, store, 'owner')).toContain('is paused and refuses new test actions')
+      expect(guardReason({ name: ALICE_BROWSER, arguments: { authority: token() }, agent: { id: 'owner' } }, store, 'owner')).toContain('is paused and refuses new test actions')
       await store.controlRun('run-1', 'resume')
-      expect(guardReason({ name: ALICE_BROWSER }, store, 'owner')).toBeUndefined()
+      expect(guardReason({ name: ALICE_BROWSER, arguments: { authority: token() }, agent: { id: 'owner' } }, store, 'owner')).toBeUndefined()
     } finally {
       await dispose()
       cleanupHomes()
@@ -67,6 +71,8 @@ describe('browser dispatch authorisation', () => {
         role_identities: { 'run-2/buyer': identity('run-2', 'buyer') },
       }),
     })
+      // A verified role's own calls now need the authority it was issued.
+      const token = (): string => store.mintAuthority('run-2', 'owner')?.token ?? ''
     try {
       // The cancelled run is still in the store, so this fails only if the
       // grant is read from the session rather than from the run that is
@@ -77,7 +83,7 @@ describe('browser dispatch authorisation', () => {
       expect(fresh.status).toBe('running')
       await store.assumeRole('run-2', 'buyer', { account: 'Alice Buyer', detail: '/whoami' })
       expect(store.verifiedAccount('run-2', 'buyer')).toBe('Alice Buyer')
-      expect(guardReason({ name: ALICE_BROWSER }, store, 'owner')).toBeUndefined()
+      expect(guardReason({ name: ALICE_BROWSER, arguments: { authority: token() }, agent: { id: 'owner' } }, store, 'owner')).toBeUndefined()
     } finally {
       await dispose()
       cleanupHomes()
@@ -95,10 +101,12 @@ describe('browser dispatch authorisation', () => {
         role_identities: { 'run-theirs/buyer': identity('run-theirs', 'buyer') },
       }),
     })
+      // A verified role's own calls now need the authority it was issued.
+      const token = (): string => store.mintAuthority('run-theirs', 'theirs')?.token ?? ''
     try {
       await store.controlRun('run-theirs', 'resume')
       await store.assumeRole('run-theirs', 'buyer', { account: 'Alice Buyer', detail: '/whoami' })
-      expect(guardReason({ name: ALICE_BROWSER }, store, 'theirs')).toBeUndefined()
+      expect(guardReason({ name: ALICE_BROWSER, arguments: { authority: token() }, agent: { id: 'theirs' } }, store, 'theirs')).toBeUndefined()
       expect(guardReason({ name: ALICE_BROWSER }, store, 'mine')).toContain('no run that may drive a browser')
     } finally {
       await dispose()
@@ -113,6 +121,8 @@ describe('browser dispatch authorisation', () => {
         'environment_revisions': { 'shop-test': environment('shop-test', ['buyer']) },
       }),
     })
+      // A verified role's own calls now need the authority it was issued.
+      const token = (): string => store.mintAuthority('run-theirs', 'theirs')?.token ?? ''
     try {
       await store.controlRun('run-1', 'resume')
       await store.assumeRole('run-1', 'buyer', { account: '', detail: 'the site reported no account' })
