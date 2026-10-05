@@ -612,6 +612,13 @@ export function apply(ctx: Context): void {
         updatedAtMs: Date.now(),
       })
       await store.putRun(record)
+      // Closing a run gives up its browser: the next run, or a later one in
+      // another session, must not inherit this role's signed-in state. The
+      // release is awaited so the browser is closed before the call returns, and
+      // a browser that will not close is reported rather than passed over.
+      if (existing?.activeRole !== undefined && pool !== undefined) {
+        await pool.releaseRole(existing.activeRole)
+      }
       return { runKey: record.key, status: record.status }
     },
   }), 'web-test: finish run tool')
