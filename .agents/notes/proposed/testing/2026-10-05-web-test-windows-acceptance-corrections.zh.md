@@ -657,8 +657,35 @@ cancelled or restarted.
 新增守卫测试 5 个（无令牌、旧代次、别的 Agent、带令牌放行、准备窗口免令牌），全量
 **112 passed (112)**，类型检查通过。
 
-**未验证**：带正确令牌的业务动作在真实宿主上能否跑通（只验证了拒绝侧）；排队中的旧调用
-是否真的借不到新运行的授权（需要构造排队场景）。
+### 0.5.2：接受侧在真实宿主上跑通，闭环首次闭合
+
+0.5.1 修掉输出 schema 之后重测，**带正确令牌的获准业务动作真正执行了**：
+
+```
+Run run-1 now acts as buyer; every operation and case result records it.
+Present authority "a1c306ec-797c-4c68-8b34-0eeb0efa5ec8" with the actions it allows;
+it stops working if this run is cancelled, restarted or resumes.
+
+### Result 2 ### Ran Playwright code
+```js await page.evaluate('() => 1+1'); ```
+```
+
+同一轮里：模型在 buyer 角色浏览器真实登录站点 → `assume_role` 从站点读回账号、匹配已确认
+环境里 buyer 绑定的 `Alice Buyer` → 铸造令牌 → 用该令牌发起一次浏览器动作 → **守卫放行并
+真实执行**，结果 `2`。
+
+拒绝侧已在 0.5.1 验证（不带令牌被拒，原话见上）。所以第五节的两侧在真实宿主上都有证据：
+
+| 场景 | 结果 |
+|---|---|
+| 无令牌的动作 | **拒绝**（0.5.1） |
+| 令牌来自别的 Agent | 拒绝（单测） |
+| 令牌铸造于更早代次 | 拒绝（单测） |
+| 令牌从未签发 | 拒绝（单测） |
+| 当前代次的有效令牌 | **放行并执行**（0.5.2） |
+
+仍未验证：排队中的旧调用借不到新运行的授权（需要构造排队场景）；暂停/恢复后代次与令牌的
+实际变化；重启后重新核验；跨角色协作；报告可追溯。
 
 **0.4.6 仍不是验收候选。**
 
