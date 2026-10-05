@@ -128,8 +128,11 @@ export class RoleBrowserPool extends Service {
     // Disabling this row is what reaps the Chromium instances the plugin owns.
     // Nothing else is touched: another session's browser and the user's own
     // are not this plugin's to close.
-    ctx.effect(() => () => {
-      void this.releaseAll()
+    // The disposer returns the promise rather than firing it: cordis awaits an
+    // async disposer, so the browser is closed before the service goes away.
+    // Returning `void` here left the Chromium running until the host exited.
+    ctx.effect(() => async () => {
+      await this.releaseAll()
     })
   }
 
