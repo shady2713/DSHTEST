@@ -462,14 +462,10 @@ export function apply(ctx: Context): void {
   const tools: ToolsService = ctx.tools
   const store = ctx.webTestStore
 
-  // Role browsers start here, while this preset's agent row is loading, so the
-  // provider has its MCP servers in place before any test session's agent is
-  // created — it defines a server's tools on an agent as that agent appears, and
-  // cannot add them to one that already exists.
-  void pool?.prefetchConfirmed(store).catch((error: unknown) => {
-    ctx.logger.warn(`web-test: role browsers did not all start: ${String(error)}`)
-  })
-
+  // Role browsers are not mounted here. The provider defines a server's tools on
+  // an agent as that agent is created, so a browser mounted at preset load is
+  // too late for the session's own agent; the environment is confirmed before
+  // the session exists, and that is where the browser is mounted.
   ctx.effect(() => tools.register({
     name: `${TOOL_PREFIX}start_run`,
     description:
@@ -544,10 +540,9 @@ export function apply(ctx: Context): void {
       // the tool timeout and left the run unrecorded. The browser provider
       // hands an MCP server's tools to an Agent when that Agent is created, so
       // starting them now is what makes the next turn able to drive them.
-      const roles = store.declaredRoles(input.runKey)
-      void pool?.prefetch(roles).catch((error: unknown) => {
-        ctx.logger.warn(`web-test: role browsers for run ${input.runKey} did not all start: ${String(error)}`)
-      })
+      if (pool === undefined) {
+        ctx.logger.warn(`web-test: this build has no role browser pool, so run ${input.runKey} has no browser`)
+      }
       return { runKey: record.key, status: record.status, evidenceRoot: dir }
     },
   }), 'web-test: start run tool')

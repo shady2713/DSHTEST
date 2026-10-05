@@ -326,6 +326,43 @@ WT-PROBE prefetch roles=["approver","buyer"] started=["approver","buyer"] mounts
 3. 释放失败必须抛出并可观察，不吞掉
 4. 切角色后旧身份的核验失效，需要重新核验（`agent/disposed` 已有现成钩子可用于随 Agent 释放）
 
+### 0.4.0：真实释放句柄已就位，但"切角色时挂载"不成立
+
+**已实现**（第六节主体）：
+
+- `mountBrowser` 保存 `ctx.effect(...)` 返回的真实释放句柄（`Disposable<Promise<void>>`），
+  不再是清 Map
+- 新增 `releaseRole(role)`：`await` 句柄完成，释放失败抛出并带上角色名，不吞掉
+- `releaseAll()` 依次 `await` 每个角色的释放，失败汇总成一条错误抛出；**删掉了原来的
+  `await new Promise(resolve => setTimeout(resolve, 0))`**，那个写法正是不算证据的那种
+- 新增 `switchTo(role)`：角色不同则先释放旧角色再挂载新角色
+- 删除了 `alreadyRegistered` 容错和 `prefetch`/`prefetchConfirmed` 批量预取
+
+**切角色时挂载不成立**，实测错误换了形态：
+
+```
+web-test: role "buyer"'s browser failed mcp__playwright-role-buyer__browser_navigate:
+playwright-role-buyer: browser tool belongs to another Session
+```
+
+浏览器在 0.3.9 挂上了（chrome 进程数 30 → 30，没有新起也没有退出），但提供方把工具绑到了
+**另一个 Session**：它的 `agent/created` 钩子只在 Agent 创建时为该 Agent 建会话资源，
+挂载发生在 `assume_role` 也就是 Agent 之后，于是没有资源归属。
+
+两条约束叠加后的结论：**角色必须在测试会话创建之前就确定并挂载**。也就是说一个测试会话
+只能扮演环境里的第一个角色；要换角色，得结束该会话，另起一个——浏览器天然不同，登录态
+自然不共享。
+
+`0.4.0` 回到环境确认时挂载第一个角色（`stored.roles[0]`），实测单角色闭环仍成立：
+
+```
+run-1: running | activeRole: 'buyer'
+```
+
+`switchTo`/`releaseRole` 的代码保留但当前没有调用方——它们是会话结束与插件禁用时真实释放
+的抓手。仍未验证：会话结束/取消/插件禁用时 Chromium 真的退出（需要在干净进程环境里数
+chrome 进程），以及授权代次。
+
 仍未验证：两角色 Cookie 不串用的直接证据、跨角色业务协作、取消/恢复、授权代次、真实释放。
 `0.3.6` 仍不是验收候选。
 

@@ -19,7 +19,7 @@
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Service } from '@deepseek-ai/cordis'
-import type { Context } from '@deepseek-ai/cordis'
+import type { Context, Disposable } from '@deepseek-ai/cordis'
 import type ToolsService from '@deepseek-ai/dsh-tools'
 import type { ToolExecutionResult, ToolRunContext } from '@deepseek-ai/dsh-tools'
 import { ToolCallId } from '@deepseek-ai/dsh-llm'
@@ -86,7 +86,9 @@ export class RoleBrowserPool extends Service {
   private readonly pending = new Map<string, RoleBrowser>()
 
   /** Disposers returned by `mountSessionMcp`, one per started role. */
-  private readonly mounts = new Map<string, () => void>()
+  private readonly mounts = new Map<string, Disposable<Promise<void>>>()
+  /** The role this pool currently drives; the host allows only one at a time. */
+  private activeRole: string | undefined
 
   /**
    * @param ctx - Owning context, which supplies the tools and browser services
@@ -147,7 +149,7 @@ export class RoleBrowserPool extends Service {
   async ensure(role: string): Promise<RoleBrowser> {
     // A role already starting counts as started. Confirming an environment and
     // loading the preset can both reach this, and the provider refuses a second
-    // registration under the same name, so the second caller waits for the first
+    // registration under the same name, so the second caller waits for the
     // mount instead of issuing its own.
     const pendingRole = this.pending.get(role)
     if (pendingRole !== undefined) return pendingRole
@@ -162,41 +164,57 @@ export class RoleBrowserPool extends Service {
       this.pending.delete(role)
     }
     return browser
-    // Mounted against this pool's own context, never an agent's. The provider
-    // reads `browserUse` off the context it is given, which an agent context
-    // does not inject, and it scopes each server per agent itself, adopting
-    // agents that already exist.
-    const serverName = `playwright-role-${role}`
-    // The provider is loaded on demand rather than at import time: it pulls the
-    // MCP client's whole peer tree, which a unit test that never starts a
-    // browser should not have to load.
-    const { mountSessionMcp } = await import('@deepseek-ai/dsh-experimental-browser-use-runtime/mcp')
-    this.ctx.effect(() => {
-      try {
-        mountSessionMcp(this.ctx, {
-          name: serverName,
-          // Each role owns its own Chromium, so no two roles contend for one
-          // attached browser and neither can land on the other's page.
-          exclusive: false,
-          command: process.execPath,
-          args: playwrightArgs(this.executablePath, this.headless),
-          env: {},
-        })
-      } catch (error) {
-        // The provider owns its registration on the browser-use service, which
-        // outlives this effect. A role that was already mounted in an earlier
-        // life of the pool therefore finds its name taken; the browser it
-        // describes is still the one this role uses, so this is not a failure.
-        if (!alreadyRegistered(error)) throw error
-      }
-      // The provider registers its own disposal against this context, so
-      // dropping the entry here is all the role release has to do; the Chromium
-      // itself goes with the provider's teardown.
-      return () => { this.mounts.delete(role) }
-    })
-    this.started.set(role, browser)
-    this.mounts.set(role, () => { this.started.delete(role) })
+  }
+
+  /**
+   * Make a role the one this pool drives, releasing any other first.
+   *
+   * The host keeps a single browser-use provider, so a second role cannot be
+   * mounted alongside the first. Switching therefore closes the previous role's
+   * browser for real and starts a new one, which is also what keeps one role's
+   * login out of the next: the browser that held it is gone before the new one
+   * exists.
+   * @param role - The role to act as.
+   * @returns the role's browser resource.
+   */
+  async switchTo(role: string): Promise<RoleBrowser> {
+    if (this.activeRole !== undefined && this.activeRole !== role) {
+      await this.releaseRole(this.activeRole)
+    }
+    const browser = await this.ensure(role)
+    this.activeRole = role
     return browser
+  }
+
+  /**
+   * The role this pool currently drives.
+   * @returns the active role, or undefined when none is mounted.
+   */
+  active(): string | undefined {
+    return this.activeRole
+  }
+
+  /**
+   * Close one role's browser and wait for it.
+   *
+   * The effect that mounted the provider is disposed and awaited, so this
+   * returns only after the provider has torn the browser down. A browser that
+   * fails to close is reported rather than dropped.
+   * @param role - The role to release.
+   * @returns once the browser is closed.
+   */
+  async releaseRole(role: string): Promise<void> {
+    const mounted = this.mounts.get(role)
+    this.mounts.delete(role)
+    this.started.delete(role)
+    this.pending.delete(role)
+    if (this.activeRole === role) this.activeRole = undefined
+    if (mounted === undefined) return
+    try {
+      await mounted()
+    } catch (error) {
+      throw new Error(`web-test: the browser for role ${JSON.stringify(role)} did not close: ${String(error)}`)
+    }
   }
 
   /**
@@ -211,33 +229,28 @@ export class RoleBrowserPool extends Service {
     // MCP client's whole peer tree, which a unit test that never starts a
     // browser should not have to load.
     const { mountSessionMcp } = await import('@deepseek-ai/dsh-experimental-browser-use-runtime/mcp')
-    this.ctx.effect(() => {
-      try {
-        mountSessionMcp(this.ctx, {
+    // Mounted against this pool's own context, never an agent's: the provider
+    // reads `browserUse` off the context it is given, which an agent context
+    // does not inject, and it scopes each server per agent itself.
+    const mounted = this.ctx.effect(() => {
+      mountSessionMcp(this.ctx, {
         name: serverName,
         // Each role owns its own Chromium, so no two roles contend for one
         // attached browser and neither can land on the other's page.
         exclusive: false,
         command: process.execPath,
         args: playwrightArgs(this.executablePath, this.headless),
-          env: {},
-        })
-      } catch (error) {
-        // The provider owns its registration on the browser-use service, which
-        // outlives this effect. A role that was already mounted in an earlier
-        // life of the pool therefore finds its name taken; the browser it
-        // describes is still the one the role uses, so this is not a failure.
-        if (!alreadyRegistered(error)) throw error
-        return () => { this.mounts.delete(role) }
-      }
-      // The provider registers its own disposal against this context, so
-      // dropping the entry here is all the role release has to do; the Chromium
-      // itself goes with the provider's teardown.
-      return () => { this.mounts.delete(role) }
-    })
+        env: {},
+      })
+      // The provider registers its own teardown against this context, so
+      // disposing this effect is what closes the browser. The disposer returned
+      // here runs before that one and has nothing left to do.
+      return () => {}
+    }, `web-test role browser ${role}`)
+    this.mounts.set(role, mounted)
     this.started.set(role, browser)
-    this.mounts.set(role, () => { this.started.delete(role) })
   }
+
 
   /**
    * Every role browser this pool has started.
@@ -287,37 +300,9 @@ export class RoleBrowserPool extends Service {
     return toolName.slice(BROWSER_TOOL_PREFIX.length).split(BROWSER_TOOL_SUFFIX)[0] ?? ''
   }
 
-  /**
-   * Start every named role's browser without waiting for them.
-   *
-   * Used at run start so the next Agent can already reach them. A failure is
-   * reported to the caller rather than swallowed, because a run whose browsers
-   * never came up must not look like one that is ready to execute.
-   * @param roles - Role names to start.
-   * @returns once every role's mount call has returned.
-   */
-  async prefetch(roles: readonly string[]): Promise<void> {
-    await Promise.all(roles.map(role => this.ensure(role)))
-  }
 
-  /**
-   * Start a browser for every role the operator has already confirmed.
-   *
-   * The provider defines an MCP server's tools on an agent's own context when
-   * that agent is created, and offers no way to add them to an agent that
-   * already exists. A role browser started after the session's agent exists
-   * therefore never reaches it. Mounting from the preset's agent row — which
-   * loads before any test session's agent — is the point where the servers are
-   * in place for the agents that follow.
-   *
-   * The roles come from confirmed environments, so an environment confirmed
-   * after a session already exists needs a new session to reach its roles.
-   * @param roles - Role names to start, across every confirmed environment.
-   * @returns once every role's mount call has returned.
-   */
-  async prefetchConfirmed(store: { confirmedRoles(): string[] }): Promise<void> {
-    await this.prefetch(store.confirmedRoles())
-  }
+
+
 
   /**
    * Read the signed-in account back from the site, through this role's browser.
@@ -371,21 +356,20 @@ export class RoleBrowserPool extends Service {
    * @returns once every role's server is disposed.
    */
   async releaseAll(): Promise<void> {
-    const disposers = [...this.mounts.values()]
-    this.mounts.clear()
-    this.started.clear()
-    for (const dispose of disposers) dispose()
-    await new Promise(resolve => setTimeout(resolve, 0))
+    // Every mounted role's effect is disposed and awaited, so this returns only
+    // after each provider has torn its browser down. Yielding a tick instead
+    // would report the browsers closed while they were still running.
+    const roles = [...this.mounts.keys()]
+    const failures: string[] = []
+    for (const role of roles) {
+      try {
+        await this.releaseRole(role)
+      } catch (error) {
+        failures.push(String(error))
+      }
+    }
+    if (failures.length > 0) throw new Error(`web-test: not every role browser closed: ${failures.join('; ')}`)
   }
-}
-
-/**
- * Whether a mount failed only because the provider is already registered.
- * @param error - The thrown value.
- * @returns true when the name is already taken.
- */
-function alreadyRegistered(error: unknown): boolean {
-  return error instanceof Error && error.message.includes('is already registered')
 }
 
 /**

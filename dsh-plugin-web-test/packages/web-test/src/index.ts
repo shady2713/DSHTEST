@@ -149,13 +149,11 @@ export class WebTestService extends TypertRemoteService {
     this.acceptingGuard()
     const record = environmentRevisionRecordSchema.parse(environment)
     const stored = await this.ctx.webTestStore.putEnvironment(record)
-    // Confirming an environment is the last moment before an operator starts a
-    // test session, and the only moment a role browser can still reach the agent
-    // it will serve: the provider defines an MCP server's tools on an agent as
-    // that agent is created, so a browser started after the session exists never
-    // reaches it. Starting here also means the browser is up before the first
-    // prompt, rather than after a run begins.
-    await this.ctx.webTestRoleBrowsers.prefetch(stored.roles.map(role => role.name))
+    // The browser is mounted here rather than when a run starts: the provider
+    // defines a server's tools on an agent as that agent is created and cannot
+    // add them to one that already exists, so a browser mounted after the
+    // session exists never reaches it.
+    await this.ctx.webTestRoleBrowsers.ensure(stored.roles[0]?.name ?? '')
     return stored
   }
 
