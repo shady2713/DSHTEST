@@ -65,6 +65,19 @@ describe('authority is bound to a run, a generation and an agent', () => {
     }
   })
 
+  it('drops the verified role on resume, so the run must re-verify against the site', async () => {
+    const { token, h } = await verified()
+    await h.store.controlRun('run-1', 'pause')
+    const resumed = await h.store.controlRun('run-1', 'resume')
+    if (resumed.status === 'running') {
+      // The browser behind a resumed run is not the one the account was
+      // confirmed on, so no new token may be minted from the old claim.
+      expect(resumed.activeRole).toBe('')
+      expect(h.store.mintAuthority('run-1', 'agent-a')).toBeUndefined()
+      expect(() => h.store.requireAuthority(token, 'agent-a')).toThrow()
+    }
+  })
+
   it('gives a new run on the same key its own generation', async () => {
     const { token, h } = await verified()
     const previous = h.store.getRun('run-1').generation

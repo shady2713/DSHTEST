@@ -66,7 +66,7 @@ import type {
 } from './types.ts'
 
 /** Plugin version, matching this package's manifest. */
-export const PLUGIN_VERSION = '0.6.2'
+export const PLUGIN_VERSION = '0.6.3'
 
 /**
  * Host release this plugin's peer declaration accepts.
@@ -380,6 +380,11 @@ export class WebTestStore extends Service {
       ...run,
       status: next,
       generation: restarting ? run.generation + 1 : run.generation,
+      // A run that comes back to `running` has a new browser behind it, so the
+      // role it claims was confirmed against a browser that no longer exists.
+      // Clearing it makes the run re-verify the account against the site before
+      // it may act again, instead of re-minting authority for a stale claim.
+      activeRole: restarting ? '' : run.activeRole,
       // Resuming or answering releases whatever the run was waiting for; only a
       // business-time wait keeps a deadline, and `resumeWait` clears that one.
       waitingUntilMs: next === 'running' ? run.waitingUntilMs : 0,
