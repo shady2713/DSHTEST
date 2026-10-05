@@ -766,6 +766,33 @@ return true
 
 6 个 `browser-dispatch` 测试按新规则更新（核验后的调用必须带令牌），全量 **114 passed (114)**。
 
+### 0.6.3：授权终于真正生效，两侧都有可核对的证据
+
+0.6.2 修好之后重测。**这次的关键是读 `tool/call` 事件里的 `arguments`**——证据因此可核对，
+不再依赖模型"照做"：
+
+```
+派发 authority='None'
+  结果: Error: web-test: this action needs the authority web_test_assume_role issued.
+        Pass it as the "authority" argument; …
+
+派发 authority='e7a8adf5-974c-40c4-a…'
+  结果: ### Result 2 ### Ran Playwright code ```js await page.evaluate('() => 1+1'); ```
+```
+
+同一次会话、同一轮、连续两次 `browser_evaluate`：
+
+| 派发的 `authority` | 结果 |
+|---|---|
+| 无 | **拒绝**，理由是缺令牌 |
+| `assume_role` 签发的令牌 | **放行并真实执行**，返回值 `2` |
+
+这是第五节第一次有可核对的证据。之前的"接受侧通过"（0.5.2）是在准备窗口一直开着的情况下
+取得的，证明不了令牌在起作用；0.6.2 关闭窗口之后才第一次能看到令牌真正把守。
+
+**仍未测**：取消 A 后用 A 的旧令牌发动作是否被拒——现在证据方法已经可靠（能读实际参数），
+可以重跑那条场景。
+
 **0.4.6 仍不是验收候选。**
 
 "释放"的产品含义我不改。第六节要的是进程回收，把"释放"降格成"不再授权"与要求不等价。
