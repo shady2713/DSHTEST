@@ -419,18 +419,60 @@ function requireAgent(exec: ToolRunContext): NonNullable<ToolRunContext['agent']
 /**
  * Read the account out of an identity probe's answer.
  *
- * The probe returns the `data-web-test-account` attribute or an empty string,
- * so the only way a value arrives is a page that actually declared an account.
+ * The probe answers with the account, the URL and the title, so a refusal names
+ * the page it read and a success names where that account came from.
  * @param raw - The text the probe returned.
- * @returns the account and the raw text, for the record.
+ * @returns the account and a description of the page it was read from.
  */
 function parseIdentity(raw: string): IdentityAnswer {
+  // The provider renders an evaluated value under a `### Result` heading, quotes
+  // it when the value is a string, and may append a page summary. Parsing the
+  // whole text therefore fails for reasons that have nothing to do with the
+  // account; the object's own text is extracted instead, brace-matched so the
+  // escaped quotes inside it do not end it early.
   const text = raw.trim()
-  const account = text.replace(/^["']|["']$/g, '')
-  if (account === '') {
-    return { account: '', detail: text === '' ? 'the page carried no data-web-test-account marker' : text }
+  const start = text.indexOf('{')
+  if (start < 0) {
+    return { account: '', detail: `the identity probe answered without an object: ${text}` }
   }
-  return { account, detail: text }
+  let depth = 0
+  let end = -1
+  for (let index = start; index < text.length; index += 1) {
+    const character = text[index]
+    if (character === '\\') { index += 1; continue }
+    if (character === '{') depth += 1
+    else if (character === '}') {
+      depth -= 1
+      if (depth === 0) { end = index + 1; break }
+    }
+  }
+  if (end < 0) {
+    return { account: '', detail: `the identity probe answered with an unterminated object: ${text}` }
+  }
+  let decoded: unknown
+  const inner = text.slice(start, end)
+  // Inside a quoted string the object's own quotes arrive escaped; undo that
+  // before parsing, and fall back to the escaped form if the unescaping is wrong.
+  for (const candidate of inner.includes('\\"') ? [inner.replace(/\\"/g, '"'), inner] : [inner]) {
+    try {
+      decoded = JSON.parse(candidate)
+      break
+    } catch {
+      continue
+    }
+  }
+  if (typeof decoded !== 'object' || decoded === null || Array.isArray(decoded)) {
+    return { account: '', detail: `the identity probe answered with unparseable text: ${text}` }
+  }
+
+  const fields = decoded as Record<string, unknown>
+  const account = typeof fields.account === 'string' ? fields.account.trim() : ''
+  const url = typeof fields.url === 'string' ? fields.url : 'an unknown page'
+  const title = typeof fields.title === 'string' ? ` titled ${JSON.stringify(fields.title)}` : ''
+  return {
+    account,
+    detail: account === '' ? `page ${url}${title} declared no account` : `page ${url}${title} declared ${JSON.stringify(account)}`,
+  }
 }
 
 /**
@@ -460,8 +502,17 @@ function assertToolOk(result: ToolExecutionResult, toolName: string, role: strin
  * @returns its text, or an empty string when it carried none.
  */
 function firstText(result: unknown): string {
-  if (!Array.isArray(result)) return ''
-  for (const block of result) {
+  // A tool result is either the MCP content blocks themselves or an object
+  // carrying them under `content`, and a block is `{ type: 'text', text }`.
+  // Reading only the array form returned nothing for this provider, so every
+  // identity read reported an empty page.
+  const blocks = Array.isArray(result)
+    ? result
+    : (typeof result === 'object' && result !== null && Array.isArray((result as { content?: unknown }).content)
+        ? (result as { content: unknown[] }).content
+        : undefined)
+  if (blocks === undefined) return ''
+  for (const block of blocks) {
     if (typeof block === 'object' && block !== null && 'text' in block) {
       const text = (block as { text: unknown }).text
       if (typeof text === 'string') return text

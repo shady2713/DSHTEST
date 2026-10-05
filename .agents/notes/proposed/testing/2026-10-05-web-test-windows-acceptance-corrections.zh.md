@@ -229,6 +229,31 @@ profile 因此装出第二份副本。`TOOL_RUNTIME_SCHEDULER` 是模块加载�
 模型看不到它是必填，连连省略；zod 侧又是 optional，两边不一致。改为 JSON Schema 与 zod
 都必填，去掉 schema 外的 `identityUrl` 别名。
 
+### 0.3.5：单角色身份核验闭环成立
+
+此前 `assume_role` 一直读到空账号。三处取值的真实缺陷叠在一起，都不是模型问题：
+
+1. `firstText` 只认 MCP 内容块的**数组**形式，而这个提供方返回 `{ content: [...] }` **对象**，
+   于是每次身份读取都得到空串。
+2. 探针改回小 JSON 后，解析仍按"裸账号"写——`parseIdentity` 没跟着改（一次替换没匹配上）。
+3. 提供方把求值结果渲染成 `### Result "<JSON 字符串>"`，标题与值同行、值再套一层引号。
+   严格 `JSON.parse` 整段文本必然失败。
+
+现在按配平大括号截取对象文本，必要时先还原转义引号，再解析。三种形态都能读出账号。
+
+**真实宿主证据**（0.3.5，隔离 `DSH_HOME`，受控站点 8902）：
+
+- 浏览器点击登录按钮：`- Page URL: http://127.0.0.1:8902/login`
+- `assume_role` 返回：`Run run-1 now acts as buyer; every operation and case result records it.`
+- 同一轮身份页快照：`- Page Title: 当前账号 ... generic: Alice Buyer ... 可创建：true｜可审批：false`
+- `getRun` → `run-1: running | activeRole: 'buyer'`
+
+即：浏览器真实登录 → 插件从站点读到账号 → 与已确认环境里 `buyer` 绑定的 `Alice Buyer`
+一致 → 角色核验通过并写入运行。这是 `activeRole` 第一次有真实来源，而不是存储字段自证。
+
+仍未验证：A/B 双账号 Cookie 不串用、跨角色业务、取消/恢复、授权代次、资源真实释放。
+`0.3.5` 仍不是验收候选。
+
 ### 0.3.0：准备窗口内的点击解禁，身份拒绝可追溯
 
 `browser_click` 之前被一刀切排除在准备集之外，结果真实登录走不通——站点登录表单靠按钮提交，
