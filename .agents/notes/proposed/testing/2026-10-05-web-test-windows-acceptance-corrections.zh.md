@@ -126,7 +126,14 @@ Windows 记录指出 68 个单测没抓到 D2，因为没有任何测试让**真
 
 ## 交接给 Windows 的复测清单
 
-新候选：`dsh-plugin-web-test-0.1.2.tgz`，与 `0.1.1` 不同文件名，未覆盖旧包。
+新候选：`dsh-plugin-web-test-0.1.2.tgz`，SHA-256
+`4ba7a13e0ba3719b8827fd401d084963f3ae8b0f2d277f96c6f3e7092b8f0f92`，与 `0.1.1`
+不同文件名。
+
+`0.1.1` 的 tarball 曾被后续构建以同名覆盖，已从 `6c0f6682e53` 恢复为 Windows
+实际验收的那一份：133471 字节，SHA-256
+`64c3757ebb4a957b8ea1da6167bd5a298b6286dc9e8546d551620acc6cf4f58a`。此后每个
+候选使用自己的版本号文件名，不再覆盖既有包。
 
 - 默认安装后的浏览器启动（无 `executablePath`，提供方自行发现）。
 - `web_test_status` 与 `web_test_report_case` 的 schema 往返。
