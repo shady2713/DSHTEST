@@ -35,7 +35,15 @@ import type { CasePlanRecord } from './types.ts'
 /** Loader row id for this composition inside the preset. */
 export const name = 'web-test-agent'
 
-/** Cordis service injection for this composition. */
+/**
+ * Cordis service injection for this composition.
+ *
+ * The execution guard is registered on the host-plane tools runtime by the
+ * `web-test` service, not from here: a preset that also guards would attach the
+ * guard to whatever runtime that scope resolves, while the agent loop reads the
+ * scheduler off its own. Registering it once at the host plane covers every
+ * execution and reads the owning agent from each one.
+ */
 export const inject = ['tools', 'webTestStore', 'webTestRoleBrowsers']
 
 /**
@@ -1227,17 +1235,4 @@ export function apply(ctx: Context): void {
       },
   }), 'web-test: status tool')
 
-  // The guard runs in the tool pipeline before any tool body. It refuses every
-  // tool outside the test allowlist, refuses everything except the read-only
-  // status tool once the plugin starts draining, and scopes an operator's hold to
-  // the session that owns the held run.
-  ctx.effect(
-    () => tools.guard(execution => {
-      if (!store.accepting && execution.name !== `${TOOL_PREFIX}status`) {
-        return `web-test: the plugin is ${store.state} and refuses new test actions`
-      }
-      return guardReason(execution, store, execution.agent?.id ?? '')
-    }),
-    'web-test: execution guard',
-  )
 }

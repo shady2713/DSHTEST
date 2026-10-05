@@ -17,7 +17,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { Storage } from '@deepseek-ai/dsh-storage'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
-import { PRESET_ID, name as AGENT_ROW } from './agent.ts'
+import { guardReason, PRESET_ID, TOOL_PREFIX, name as AGENT_ROW } from './agent.ts'
 import { buildReportBundle } from './report.ts'
 import type { ReportBundle } from './report.ts'
 import { environmentRevisionRecordSchema, policyRecordSchema, projectRecordSchema } from './records.ts'
@@ -44,7 +44,7 @@ export { PRESET_ID }
  */
 export class WebTestService extends TypertRemoteService {
   /** Waits for the single writer so every business method goes through it. */
-  static inject = ['webTestStore', 'webTestRoleBrowsers']
+  static inject = ['tools', 'webTestStore', 'webTestRoleBrowsers']
 
   /**
    * @param ctx - Owning Context.
@@ -64,6 +64,19 @@ export class WebTestService extends TypertRemoteService {
    */
   protected wire(ctx: Context): void {
     const store = ctx.webTestStore
+    // The execution guard belongs to the host-plane tools runtime. Registered
+    // from the Web testing preset it would attach to that scope's own instance,
+    // which carries no scheduler for the agent loop to use; from here it applies
+    // to every execution and reads the owning agent off each one.
+    ctx.effect(
+      () => ctx.tools.guard(execution => {
+        if (!store.accepting && execution.name !== `${TOOL_PREFIX}status`) {
+          return `web-test: the plugin is ${store.state} and refuses new test actions`
+        }
+        return guardReason(execution, store, execution.agent?.id ?? '')
+      }),
+      'web-test: execution guard',
+    )
 
     ctx.inject(['storage'], (storageCtx) => {
       const hub: Storage = storageCtx.storage

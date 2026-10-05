@@ -49,3 +49,6 @@ native/system/test/bin/
 
 # 隔离验收环境：整棵 DSH home（含 pnpm store），不属于源码。
 /.acceptance/dshhome/
+
+# 隔离验收环境与其中的凭证副本，绝不入库。
+/.acceptance/dshhome2/
