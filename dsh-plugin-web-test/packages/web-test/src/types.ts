@@ -38,6 +38,22 @@ export type OperationDispatch = z.infer<typeof operationDispatchSchema>
 /** One business-changing operation, durable before the action that causes it. */
 export type OperationRecord = z.infer<typeof operationRecordSchema>
 
+/** One verified role's authority to perform business actions. */
+export interface AuthorityToken {
+  /** Unforgeable id the call presents; the record behind it is re-read on use. */
+  token: string
+  /** Run whose verified role this authority belongs to. */
+  runKey: string
+  /** Run generation this authority was minted in. */
+  generation: number
+  /** Agent this authority is issued to; another agent cannot present it. */
+  agentId: string
+  /** Verified role the authority acts as. */
+  role: string
+  /** When the authority was minted. */
+  grantedAtMs: number
+}
+
 /** Every durable record kind this plugin stores. */
 export type PolicyRecord = z.infer<typeof policyRecordSchema>
 

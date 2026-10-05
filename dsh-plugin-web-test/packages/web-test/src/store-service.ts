@@ -19,6 +19,7 @@
 import { chmodSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { Service } from '@deepseek-ai/cordis'
+import { randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import type { KvUnit, Storage } from '@deepseek-ai/dsh-storage'
 import {
@@ -52,6 +53,7 @@ import type {
   CaseResultRecord,
   EnvironmentRevisionRecord,
   CasePlanRecord,
+  AuthorityToken,
   OperationRecord,
   PluginLifecycleState,
   RunHoldStatus,
@@ -566,6 +568,7 @@ export class WebTestStore extends Service {
   }
 
   /** Runs an operator held, so the execution path can refuse them by session. */
+  private readonly authority = new Map<string, AuthorityToken>()
   private readonly heldRuns = new Map<string, RunHoldStatus>()
 
   /** When each run's evidence directory was prepared, so stale files can be refused. */
@@ -873,6 +876,70 @@ export class WebTestStore extends Service {
     // and a stale identity would keep a later browser grant alive.
     if (declared !== '') await this.putIdentity(runKey, declared, verified)
     return this.putRun({ ...run, activeRole: declared, updatedAtMs: Date.now() })
+  }
+
+  /**
+   * Mint the authority one verified role hands to the actions it may perform.
+   *
+   * The token names the run, the generation it was minted in, the agent that
+   * holds it and the role it is for. It is random and unforgeable, so a caller
+   * cannot assert its own authority the way it can assert a run key; every later
+   * check re-reads the run rather than trusting the token's own claims.
+   * @param runKey - Run whose verified role the authority belongs to.
+   * @param agentId - Agent the authority is issued to.
+   * @returns the token, or undefined when the run has no verified role.
+   */
+  mintAuthority(runKey: string, agentId: string): AuthorityToken | undefined {
+    const run = this.requireRun(runKey)
+    if (run.activeRole === '' || run.status !== 'running') return undefined
+    if (this.verifiedAccount(runKey, run.activeRole) === '') return undefined
+    const authority: AuthorityToken = {
+      token: randomUUID(),
+      runKey,
+      generation: run.generation,
+      agentId,
+      role: run.activeRole,
+      grantedAtMs: Date.now(),
+    }
+    this.authority.set(authority.token, authority)
+    return authority
+  }
+
+  /**
+   * Check a token against the run it names, right now.
+   *
+   * The run's own status and generation decide, so a token minted before a run
+   * was cancelled, restarted or resumed stops working without anything having to
+   * revoke it, and a token from one run can never act under another.
+   * @param token - The token a call presented.
+   * @param agentId - The agent making the call.
+   * @returns the authority when it is still valid.
+   * @throws when the token is unknown, belongs to another agent, or names a run
+   * that is no longer running at the generation the token was minted in.
+   */
+  requireAuthority(token: string, agentId: string): AuthorityToken {
+    const authority = this.authority.get(token)
+    if (authority === undefined) {
+      throw new Error('web-test: this call presented no valid authority; call web_test_assume_role and use the token it returns')
+    }
+    if (authority.agentId !== agentId) {
+      throw new Error(`web-test: that authority belongs to another agent (${JSON.stringify(authority.agentId)}); it cannot be carried into this one`)
+    }
+    const run = this.records[TABLE_RUNS] as Record<string, RunRecord>
+    const current = run[authority.runKey]
+    if (current === undefined) {
+      throw new Error(`web-test: authority names run ${JSON.stringify(authority.runKey)}, which no longer exists`)
+    }
+    if (current.status !== 'running') {
+      throw new Error(`web-test: authority names run ${JSON.stringify(authority.runKey)}, which is ${current.status}; only a running run may act`)
+    }
+    if (current.generation !== authority.generation) {
+      throw new Error(`web-test: authority was minted in generation ${authority.generation} of run ${JSON.stringify(authority.runKey)}, which is now generation ${current.generation}; act under the authority this generation gave out`)
+    }
+    if (current.activeRole !== authority.role || this.verifiedAccount(authority.runKey, authority.role) === '') {
+      throw new Error(`web-test: run ${JSON.stringify(authority.runKey)} no longer holds a verified ${JSON.stringify(authority.role)}; verify the role again`)
+    }
+    return authority
   }
 
   /**

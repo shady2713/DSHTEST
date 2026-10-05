@@ -224,6 +224,10 @@ export const runRecordSchema = z.object({
   key: z.string().min(1),
   projectKey: z.string().min(1),
   environmentRevisionKey: z.string().min(1),
+  // Counts how many times this run has been started or resumed. Authority a run
+  // hands out names the generation it was minted in, so a call that was queued
+  // before a restart cannot act under the authority a later start produced.
+  generation: z.number().int().nonnegative().default(0),
   phase: z.enum(['analysis', 'planning', 'execution', 'reporting', 'cleanup']),
   status: z.enum([
     'queued',

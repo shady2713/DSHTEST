@@ -331,6 +331,20 @@ function requireConfirmedSteps(plan: CasePlanRecord, reported: number[]): void {
  * @param identityUrl - Site endpoint that reports the current account.
  * @returns what the site reported.
  */
+/**
+ * The agent a call runs as, which the authority it presents must belong to.
+ * @param exec - The running tool call.
+ * @returns the agent id.
+ * @throws when the call carries no agent.
+ */
+function requireAgentId(exec: ToolRunContext): string {
+  const agent = exec.agent
+  if (agent === undefined) {
+    throw new Error('web-test: this call carries no agent, so no authority can be issued to it')
+  }
+  return agent.id
+}
+
 async function verifyRoleIdentity(
   tools: ToolsService,
   exec: ToolRunContext,
@@ -1094,13 +1108,20 @@ export function apply(ctx: Context): void {
       // the site did not confirm.
       const verified = await verifyRoleIdentity(tools, exec, pool, parsed.role, parsed.accountPage)
       const run = await store.assumeRole(parsed.runKey, parsed.role, verified)
+      // The authority names the generation it was minted in, so a call that was
+      // queued before a restart cannot act under the authority a later start
+      // produces. It is unforgeable: the run it names is re-read on every use.
+      const authority = store.mintAuthority(parsed.runKey, requireAgentId(exec))
       return {
         runKey: run.key,
         operationKey: '',
         dispatch: run.activeRole === '' ? 'no-role' : run.activeRole,
+        authority: authority?.token ?? '',
         note: run.activeRole === ''
           ? `Run ${run.key} now acts without a declared role.`
-          : `Run ${run.key} now acts as ${run.activeRole}; every operation and case result records it.`,
+          : `Run ${run.key} now acts as ${run.activeRole}; every operation and case result records it.`
+            + ` Present authority ${JSON.stringify(authority?.token ?? '')} with the actions it allows;`
+            + ' it stops working if this run is cancelled, restarted or resumes.',
       }
     },
   }), 'web-test: assume role tool')
