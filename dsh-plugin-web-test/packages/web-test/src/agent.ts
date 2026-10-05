@@ -1005,6 +1005,7 @@ export function apply(ctx: Context): void {
         runKey: record.runKey,
         operationKey: record.operationKey,
         dispatch: record.dispatch.kind,
+        authority: input.authority,
         note: 'Perform the change now, observe the result independently, then call web_test_settle_operation.',
       }
     },

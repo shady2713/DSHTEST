@@ -1063,3 +1063,33 @@ forms, with its reason` 扩展为同时断言 Markdown 与 HTML 都含"角色 ad
 
 仍未验证：Remote 描述与工具输出一致性（需要一次真实调用比对）、跨角色协作、
 浏览器断连期间的归属。普通会话工具泄漏仍是已知缺陷。
+
+### 0.6.10：`begin_operation` 的输出没带令牌，把上一轮的功能打断了
+
+上一轮给 `begin_operation` 加了必填 `authority`，**输入**侧正确，但没有把这个令牌放进返回值，
+而输出 schema 的 `required` 里有 `authority`。真实宿主上直接报：
+
+```
+Error: tool "web_test_begin_operation" returned invalid output:
+       missing required property "value.authority"
+```
+
+业务动作路径因此完全不可用。单元测试没抓到——测试不校验工具的输出 schema。
+
+修法：`execute` 返回 `authority: input.authority`，角色取 `requireAuthority` 返回的
+`AuthorityToken.role`（不是模型自报的 `role`）。
+
+**这一轮我走了一段弯路，要记下来**：我先是用 `git checkout` 回退了那次没提交的本轮改动，
+之后用一个临时脚本批量给"缺 authority 的 properties"插入字段，脚本按缩进匹配，在嵌套的
+`output.schema` 里插错了位置，TS 报重复属性，我又按内容删了 5 处——**其中包含原本正确的字段**。
+最后发现 HEAD 本身是自洽的，整批插入和删除都该撤销。
+
+教训两条：
+
+1. **工具的输出 schema 不由单元测试覆盖**，只有宿主加载预设时才发现。改工具返回字段必须
+   重新 `session/create` 验证预设能加载。
+2. **批量文本改 schema 很危险**。改完要用大括号配平逐块核对 `required ⊆ properties`，不能靠
+   固定窗口的字符数去截 properties 块——我因此连续三次得出"字段缺失"的错误结论。
+
+另外：`rm -rf lib/` 会连 typert 产物一起删掉，必须重跑 `scripts/generate-typert.mjs`，
+否则宿主报 `exports "./typert" but importing ... failed`，而且报错和真正原因看起来无关。
