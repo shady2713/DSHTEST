@@ -144,3 +144,28 @@ storage backends are not used for plugin data, so disabling or removing the
 plugin cannot disturb host or session state.
 
 [mapping]: ../../.agents/notes/proposed/testing/2026-10-04-web-test-plugin-requirement-mapping.md
+
+## Authority release and browser processes
+
+Closing a run, cancelling it, or disabling the plugin revokes that run's authority
+immediately: the terminal status takes it out of `browserGrantForSession`, so no
+business action can be dispatched under the role the run verified. New runs get
+their own authority and are not blocked by an earlier cancelled one.
+
+The Chromium process a role drives is reclaimed on a narrower schedule than that.
+`mountSessionMcp` registers the effect that owns the browser on the context it is
+given and does not return it, so the pool cannot dispose that effect on its own;
+the browser closes when the provider's fiber is destroyed, which happens when the
+host exits. Measured on the development host: browsers 12 to 0 when the host takes
+SIGTERM, unchanged across a cancelled run and across disabling the role-browser
+row. The disposal handle is still called and awaited, so the boundary is a host
+capability rather than a missing call, and no code path reports a browser as
+closed before it is.
+
+## One browser-use provider per host
+
+`@deepseek-ai/dsh-browser-use` reserves a single provider slot and refuses a
+second registration, and `mountSessionMcp` defines a server's tools on an agent as
+that agent is created, with no way to add them to an existing one. A test session
+therefore acts as one role for its lifetime; another role runs in another session,
+with a different browser and no shared login.

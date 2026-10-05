@@ -612,10 +612,12 @@ export function apply(ctx: Context): void {
         updatedAtMs: Date.now(),
       })
       await store.putRun(record)
-      // Closing a run gives up its browser: the next run, or a later one in
-      // another session, must not inherit this role's signed-in state. The
-      // release is awaited so the browser is closed before the call returns, and
-      // a browser that will not close is reported rather than passed over.
+      // Closing a run revokes this run's authority: the terminal status takes it
+      // out of `browserGrantForSession`, so no business action can be dispatched
+      // under the role it verified. The browser is also offered its disposal
+      // handle, which is awaited; the process itself is reclaimed only when the
+      // provider's own fiber is destroyed, because `mountSessionMcp` does not
+      // return the effect that owns the browser. See the plugin README.
       if (existing?.activeRole !== undefined && pool !== undefined) {
         await pool.releaseRole(existing.activeRole)
       }
