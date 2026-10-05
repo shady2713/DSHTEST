@@ -203,6 +203,19 @@ registry 上取不到。尚未定位为什么本插件的预设作用域缺少�
 注意：pnpm 按路径缓存——同名 tarball 重新构建不会重读安装。本轮 0.1.4 重装后安装内仍是旧的
 persona 行，0.1.5 才真正生效。每个候选版本必须用**未使用过的版本号**。
 
+### `prepare` 报错的定位进展（未修复）
+
+失败点是 `dsh-agent-loop` 读取 `ctx.tools[TOOL_RUNTIME_SCHEDULER]` 后调用 `prepare` /
+`finalize`，该符号在它读到的那个 `tools` 上取不到。用公开导出的符号在两处直接探测过：
+
+- 宿主层：`scheduler=true`，构造函数 `ToolRuntime`
+- 预设作用域（`web-test` agent 行拿到的 `tools`）：`scheduler=true`，构造函数 `ToolRuntime`，
+  且与宿主层**不是同一个实例**（`same=false`）
+
+所以预设作用域确实会得到自己的 `ToolRuntime` 实例（与交付的 kernel 预设同样 inject `tools`，
+这是正常行为），而宿主与预设两处都带该符号。agent loop 读到的因此是第三个对象，尚未识别。
+探针已删除，未进入产物。
+
 ## 未解项（如实保留）
 
 **插件自行核验角色身份目前不可用。** `assume_role` 要通过 `tools.execute` 向角色
