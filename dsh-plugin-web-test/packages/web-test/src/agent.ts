@@ -1046,7 +1046,7 @@ export function apply(ctx: Context): void {
     parameters: {
       type: 'object',
       additionalProperties: false,
-      required: ['runKey', 'role'],
+      required: ['runKey', 'role', 'accountPage'],
       properties: {
         runKey: { type: 'string' },
         role: { type: 'string', description: 'Declared role name, or an empty string to act without a role.' },
@@ -1074,14 +1074,12 @@ export function apply(ctx: Context): void {
       const parsed = z.object({
         runKey: z.string().min(1),
         role: z.string(),
-        accountPage: z.string().url().optional(),
-        identityUrl: z.string().url().optional(),
+        accountPage: z.string().url(),
       }).parse(args)
       // The role is bound to a real browser and the account is read back from
       // the site before the field is written, so a run never claims an identity
       // the site did not confirm.
-      const accountPage = parsed.accountPage ?? parsed.identityUrl
-      const verified = await verifyRoleIdentity(tools, exec, pool, parsed.role, accountPage)
+      const verified = await verifyRoleIdentity(tools, exec, pool, parsed.role, parsed.accountPage)
       const run = await store.assumeRole(parsed.runKey, parsed.role, verified)
       return {
         runKey: run.key,

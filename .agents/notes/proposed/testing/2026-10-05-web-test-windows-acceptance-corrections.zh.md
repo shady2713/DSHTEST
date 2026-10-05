@@ -216,6 +216,26 @@ persona 行，0.1.5 才真正生效。每个候选版本必须用**未使用过�
 这是正常行为），而宿主与预设两处都带该符号。agent loop 读到的因此是第三个对象，尚未识别。
 探针已删除，未进入产物。
 
+### 0.2.x：作用域根因已解，`accountPage` 必修
+
+`prepare` 报错的真正原因找到了：0.1.3 把九个 `@deepseek-ai/dsh-*` 包放进了 `dependencies`，
+profile 因此装出第二份副本。`TOOL_RUNTIME_SCHEDULER` 是模块加载时求值的 `Symbol()`，两份副本
+是两个不同符号，agent loop 用自己的符号去查带插件副本符号的运行时，必然取不到。改为
+`peerDependencies` 后，profile 不再装 `dsh-tools` 副本，预设会话里的工具调用第一次拿到落盘结果。
+
+（此前用插件自己副本的符号做的探测报告 `scheduler=true`，正是这个原因——探针自己骗了人。）
+
+`assume_role` 的 `accountPage` 之前在手写 JSON Schema 里没进 `required`（`['runKey','role']`），
+模型看不到它是必填，连连省略；zod 侧又是 optional，两边不一致。改为 JSON Schema 与 zod
+都必填，去掉 schema 外的 `identityUrl` 别名。
+
+### 仍未闭合：角色浏览器工具没进 Agent 清单
+
+真实宿主上，模型从头到尾没有发起过一次 `mcp__playwright-role-<role>__*` 调用。角色浏览器在
+`start_run` 里后台启动，而提供方是在 Agent **创建时**把 MCP 工具交给该 Agent 的；本会话的
+Agent 早于启动就已存在，所以工具不在它的清单里。这与之前记录的"提供方不接管既有 Agent"是
+同一个问题，目前没有绕开它——守卫没有放宽，也没有靠"下一轮再说"蒙混。
+
 ## 未解项（如实保留）
 
 **插件自行核验角色身份目前不可用。** `assume_role` 要通过 `tools.execute` 向角色
