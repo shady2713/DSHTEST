@@ -127,7 +127,7 @@ Windows 记录指出 68 个单测没抓到 D2，因为没有任何测试让**真
 ## 交接给 Windows 的复测清单
 
 新候选：`dsh-plugin-web-test-0.1.2.tgz`，SHA-256
-`4ba7a13e0ba3719b8827fd401d084963f3ae8b0f2d277f96c6f3e7092b8f0f92`，与 `0.1.1`
+`230f13dc08cfb35abdfbc30d849ce807ea2805668f6cb902d3b2da5d12abe8b5`，与 `0.1.1`
 不同文件名。
 
 `0.1.1` 的 tarball 曾被后续构建以同名覆盖，已从 `6c0f6682e53` 恢复为 Windows
