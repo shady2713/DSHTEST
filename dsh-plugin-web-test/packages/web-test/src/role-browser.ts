@@ -172,19 +172,23 @@ export class RoleBrowserPool extends Service {
     // browser should not have to load.
     const { mountSessionMcp } = await import('@deepseek-ai/dsh-experimental-browser-use-runtime/mcp')
     this.ctx.effect(() => {
-      // The provider registers a browser-use provider under the server's name
-      // and refuses a second one. A role confirmed again, or a second test
-      // session, reaches this path with the browser already up, so an existing
-      // registration is the expected outcome and not a failure.
-      mountSessionMcp(this.ctx, {
-        name: serverName,
-        // Each role owns its own Chromium, so no two roles contend for one
-        // attached browser and neither can land on the other's page.
-        exclusive: false,
-        command: process.execPath,
-        args: playwrightArgs(this.executablePath, this.headless),
-        env: {},
-      })
+      try {
+        mountSessionMcp(this.ctx, {
+          name: serverName,
+          // Each role owns its own Chromium, so no two roles contend for one
+          // attached browser and neither can land on the other's page.
+          exclusive: false,
+          command: process.execPath,
+          args: playwrightArgs(this.executablePath, this.headless),
+          env: {},
+        })
+      } catch (error) {
+        // The provider owns its registration on the browser-use service, which
+        // outlives this effect. A role that was already mounted in an earlier
+        // life of the pool therefore finds its name taken; the browser it
+        // describes is still the one this role uses, so this is not a failure.
+        if (!alreadyRegistered(error)) throw error
+      }
       // The provider registers its own disposal against this context, so
       // dropping the entry here is all the role release has to do; the Chromium
       // itself goes with the provider's teardown.
@@ -208,15 +212,24 @@ export class RoleBrowserPool extends Service {
     // browser should not have to load.
     const { mountSessionMcp } = await import('@deepseek-ai/dsh-experimental-browser-use-runtime/mcp')
     this.ctx.effect(() => {
-      mountSessionMcp(this.ctx, {
+      try {
+        mountSessionMcp(this.ctx, {
         name: serverName,
         // Each role owns its own Chromium, so no two roles contend for one
         // attached browser and neither can land on the other's page.
         exclusive: false,
         command: process.execPath,
         args: playwrightArgs(this.executablePath, this.headless),
-        env: {},
-      })
+          env: {},
+        })
+      } catch (error) {
+        // The provider owns its registration on the browser-use service, which
+        // outlives this effect. A role that was already mounted in an earlier
+        // life of the pool therefore finds its name taken; the browser it
+        // describes is still the one the role uses, so this is not a failure.
+        if (!alreadyRegistered(error)) throw error
+        return () => { this.mounts.delete(role) }
+      }
       // The provider registers its own disposal against this context, so
       // dropping the entry here is all the role release has to do; the Chromium
       // itself goes with the provider's teardown.
@@ -364,6 +377,15 @@ export class RoleBrowserPool extends Service {
     for (const dispose of disposers) dispose()
     await new Promise(resolve => setTimeout(resolve, 0))
   }
+}
+
+/**
+ * Whether a mount failed only because the provider is already registered.
+ * @param error - The thrown value.
+ * @returns true when the name is already taken.
+ */
+function alreadyRegistered(error: unknown): boolean {
+  return error instanceof Error && error.message.includes('is already registered')
 }
 
 /**

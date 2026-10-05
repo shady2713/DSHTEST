@@ -229,6 +229,27 @@ profile 因此装出第二份副本。`TOOL_RUNTIME_SCHEDULER` 是模块加载�
 模型看不到它是必填，连连省略；zod 侧又是 optional，两边不一致。改为 JSON Schema 与 zod
 都必填，去掉 schema 外的 `identityUrl` 别名。
 
+### 0.3.6：两个角色各自核验通过
+
+同一运行里先后核验了两个角色，各自读到站点自己的账号、各自匹配已确认环境里的绑定：
+
+- `Run run-ab now acts as approver; every operation and case result records it.`
+  （approver 绑定 `Bob Approver`）
+- 早前 buyer 的同一句（buyer 绑定 `Alice Buyer`）
+
+这就是角色隔离的直接证据：不同角色读到不同账号，且每个账号都来自站点而不是存储字段。
+
+同时暴露一个未修缺陷：buyer 角色的浏览器工具报
+`unknown tool "mcp__playwright-role-buyer__browser_navigate"`——两个角色同时预取时，
+只有一个角色的 MCP 工具进入了该 Agent 的清单。`prefetchConfirmed` 与 `putEnvironment` 两条
+预取路径并发时，角色被逐个 `await import` 后挂载，是否两个都完成需要进一步确认。
+
+修掉一处相关缺陷：提供方在 browser-use 服务上的注册比本 effect 活得久，池上一轮挂过的角色
+在下一轮挂载时会撞名并抛错。现在这种"名字已占用"被视为该角色浏览器仍然在用，不是失败。
+
+仍未验证：两角色 Cookie 不串用的直接证据、跨角色业务协作、取消/恢复、授权代次、真实释放。
+`0.3.6` 仍不是验收候选。
+
 ### 0.3.5：单角色身份核验闭环成立
 
 此前 `assume_role` 一直读到空账号。三处取值的真实缺陷叠在一起，都不是模型问题：
