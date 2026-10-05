@@ -525,10 +525,47 @@ run-1: completed | activeRole: ''
 已证明销毁了）；不是 async disposer 没被等（句柄被 await 且没抛）；不是标记量错对象
 （这次量的是 `--executable-path` 指定的浏览器本体）。
 
-因此"真实释放"在本宿主上目前**只有宿主退出这一条路径成立**。运行结束、取消、插件禁用、
-角色资源重建四条都关不掉浏览器。下一步要么找到提供方真正接住进程回收的公开挂钩，要么把
-"释放"的产品含义改为"不再授权"并如实说明进程随宿主退出——后者与第六节的要求不等价，
-不能我自己降格。
+### 0.4.4：读到了关闭路径的确切代码位置
+
+`mountSessionMcp`（`@deepseek-ai/dsh-experimental-browser-use-runtime/lib/types/mcp.js`）
+里的结构是：
+
+```js
+ctx.effect(function* () {
+  yield ctx.browserUse.register(...)
+  resources = new SessionResources(ctx, { … })
+  yield async () => { stopping = true; await resources.dispose(); clients.clear() }
+}, `${options.name}.sessions`)
+
+ctx.on('agent/created', async ({ agent, signal }) => {
+  const state = { status: resources.available(agent) ? 'ready' : 'blocked' }
+  agent.ctx.effect(() => async () => {
+    clients.delete(agent)
+    await state.mask?.dispose()          // 只释放掩码，不关浏览器
+  }, `${options.name}.activation`)
+  …
+})
+```
+
+`SessionResources.dispose()` 会 `await` 每个 `OwnedSessionResource.close()`，所以**确实存在
+真正的关闭路径**。但它只挂在 `….sessions` 这个 effect 的 disposer 上，也就是**提供方整体
+被销毁**时；每个 Agent 的 disposer 只清 `clients` 和 `state.mask`，**不碰资源**。
+
+这解释了观测到的全部现象：
+
+- 宿主退出 → 提供方 effect 销毁 → `resources.dispose()` → 浏览器关闭（实测 12 → 0）
+- 运行结束、取消 → 只涉及 Agent 和运行，**根本到不了** `resources.dispose()`（实测 11 → 11）
+- 行禁用 → 理论上应到，但实测 12 → 12；`resources.dispose()` 里的 `close()` 显然没有让
+  Chromium 退出（客户端与浏览器都没少）
+
+也就是说：关闭能力**存在但只绑在提供方生命周期上**，而我无法把一个运行或一次角色切换绑定到
+它——公开接口里没有"销毁这个提供方但保留宿主"的入口，`browserUse` 的注册又只有单槽。
+
+下一步要查的是最后这一点：销毁提供方的 effect 后重新挂载（先 `releaseRole` 再 `ensure`）是否
+能让新的浏览器起来并让旧的退出。如果可以，那么"切角色时真实释放"就有了实现路径，而且比
+之前设想的更严格——必须换一个新的提供方实例，而不是复用。
+
+"释放"的产品含义我不改。第六节要的是进程回收，把"释放"降格成"不再授权"与要求不等价。
 
 这同时说明一件事：运行关闭时的释放只能释放**运行自己核验过的**角色浏览器；预挂的浏览器
 属于环境，不随单个运行释放。这是有意的归属划分，但两条路径都要各自验证。
