@@ -78,6 +78,21 @@ npm pack --pack-destination ../../dist
 因此本插件的 peer 声明 `@deepseek-ai/dsh` `0.2.0-rc.2` **不应下调**，也**不需要**另行安装 DSH。
 §3 的四项优先检查仍然是"当时未执行"，而非失败；它们改为在上述桌面应用上验收。
 
+### 后续：Windows 验收（`1ebf93d332`）后的修复与新候选
+
+Windows 端对 `0.1.1` 完成桌面验收，列出 D1–D6 六项阻塞缺陷。逐项状态、归因
+纠正与未解项见
+[2026-10-05-web-test-windows-acceptance-corrections.zh.md](2026-10-05-web-test-windows-acceptance-corrections.zh.md)。
+
+新候选 **0.1.2**（与 `0.1.1` 不同文件名，未覆盖旧包）：`web_test_status` 输出
+schema 补齐并可 render；`report_case` 可选字段在持久化前归一化；预设移除全局
+浏览器行，浏览器改由每角色独立 MCP 服务器提供，配置交由提供方发现，不再写死
+Linux 路径；类型化 Remote 描述补齐到 19 个方法并加同步检查；浏览器派发授权绑定
+到运行 + 会话 + 已核验角色。
+
+**未解**：插件自行核验角色身份仍不可用（向角色 MCP 浏览器派发返回 `unknown tool`），
+因此角色隔离目标未完成，详见纠正记录。
+
 ### 后续：Ubuntu 宿主执行控制与恢复验证（优先项 3）
 
 在 Ubuntu 原版 DSH 0.2.0-rc.2 上以真实模型回合实测，非直接调用领域方法：

@@ -117,6 +117,23 @@ const casePlanRecord = z.object({
   updatedAtMs: z.number().int().nonnegative(),
 })
 
+const operationResolution = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('observed-success') }),
+  z.object({ kind: z.literal('observed-absent') }),
+  z.object({ kind: z.literal('still-unknown'), reason: z.string() }),
+])
+
+const operationRecord = z.object({
+  schemaVersion: z.literal(3),
+  kind: z.literal('operation'),
+  runKey: z.string().min(1),
+  operationKey: z.string().min(1),
+  intent: z.string().min(1),
+  role: z.string(),
+  requestDigest: z.string().min(1),
+  dispatch: z.object({ kind: z.string() }).passthrough(),
+})
+
 const runRecord = z.object({
   schemaVersion: z.literal(3),
   kind: z.literal('run'),
@@ -198,6 +215,52 @@ const invocations = [
       { name: 'note', wire: 'note', symbol: 'string', create: '() => z.string()' },
     ],
     result: { symbol: 'CasePlanRecord', create: '() => casePlanRecord' },
+  },
+  {
+    method: 'assumeRole',
+    parameters: [
+      { name: 'runKey', wire: 'runKey', symbol: 'string', create: '() => z.string().min(1)' },
+      { name: 'role', wire: 'role', symbol: 'string', create: '() => z.string().min(1)' },
+    ],
+    result: { symbol: 'RemoteRun', create: '() => runRecord' },
+  },
+  {
+    method: 'releaseRole',
+    parameters: [
+      { name: 'runKey', wire: 'runKey', symbol: 'string', create: '() => z.string().min(1)' },
+      { name: 'role', wire: 'role', symbol: 'string', create: '() => z.string().min(1)' },
+    ],
+    result: { symbol: 'RemoteRun', create: '() => runRecord' },
+  },
+  {
+    method: 'waitRun',
+    parameters: [
+      { name: 'runKey', wire: 'runKey', symbol: 'string', create: '() => z.string().min(1)' },
+      { name: 'untilIso', wire: 'untilIso', symbol: 'string', create: '() => z.string().min(1)' },
+      { name: 'reason', wire: 'reason', symbol: 'string', create: '() => z.string().min(1)' },
+    ],
+    result: { symbol: 'RemoteRun', create: '() => runRecord' },
+  },
+  {
+    method: 'resumeWait',
+    parameters: [
+      { name: 'runKey', wire: 'runKey', symbol: 'string', create: '() => z.string().min(1)' },
+    ],
+    result: { symbol: 'RemoteRun', create: '() => runRecord' },
+  },
+  {
+    method: 'listOperations',
+    parameters: [],
+    result: { symbol: 'RemoteOperation[]', create: '() => z.array(operationRecord)' },
+  },
+  {
+    method: 'resolveOperation',
+    parameters: [
+      { name: 'runKey', wire: 'runKey', symbol: 'string', create: '() => z.string().min(1)' },
+      { name: 'operationKey', wire: 'operationKey', symbol: 'string', create: '() => z.string().min(1)' },
+      { name: 'resolution', wire: 'resolution', symbol: "OperationResolution", create: "() => z.discriminatedUnion('kind', [z.object({ kind: z.literal('observed-success') }), z.object({ kind: z.literal('observed-absent') }), z.object({ kind: z.literal('still-unknown'), reason: z.string() })])" },
+    ],
+    result: { symbol: 'RemoteOperation', create: '() => operationRecord' },
   },
   {
     method: 'controlRun',
@@ -368,6 +431,8 @@ type RemotePolicy = z.infer<typeof policyRecord>
 type RemoteCaseResult = z.infer<typeof caseResultRecord>
 type RemoteRun = z.infer<typeof runRecord>
 type RemoteCasePlan = z.infer<typeof casePlanRecord>
+type RemoteOperation = z.infer<typeof operationRecord>
+type OperationResolution = z.infer<typeof operationResolution>
 
 declare module '@deepseek-ai/dsh-typert-protocol' {
   interface TypertRemoteNamespace${NAMESPACE_TYPED} {
@@ -382,6 +447,12 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
     listRuns: () => Promise<{ ok: true, value: RemoteRun[] } | { ok: false, error: { code: string, message: string } }>
     listCases: (runKey: string) => Promise<{ ok: true, value: RemoteCasePlan[] } | { ok: false, error: { code: string, message: string } }>
     ruleOnCase: (runKey: string, caseKey: string, decision: 'confirm' | 'reject', note: string) => Promise<{ ok: true, value: RemoteCasePlan } | { ok: false, error: { code: string, message: string } }>
+    assumeRole: (runKey: string, role: string) => Promise<{ ok: true, value: RemoteRun } | { ok: false, error: { code: string, message: string } }>
+    releaseRole: (runKey: string, role: string) => Promise<{ ok: true, value: RemoteRun } | { ok: false, error: { code: string, message: string } }>
+    waitRun: (runKey: string, untilIso: string, reason: string) => Promise<{ ok: true, value: RemoteRun } | { ok: false, error: { code: string, message: string } }>
+    resumeWait: (runKey: string) => Promise<{ ok: true, value: RemoteRun } | { ok: false, error: { code: string, message: string } }>
+    listOperations: () => Promise<{ ok: true, value: RemoteOperation[] } | { ok: false, error: { code: string, message: string } }>
+    resolveOperation: (runKey: string, operationKey: string, resolution: OperationResolution) => Promise<{ ok: true, value: RemoteOperation } | { ok: false, error: { code: string, message: string } }>
     controlRun: (runKey: string, action: 'pause' | 'resume' | 'cancel') => Promise<{ ok: true, value: RemoteRun } | { ok: false, error: { code: string, message: string } }>
     getRun: (runKey: string) => Promise<{ ok: true, value: RemoteRun } | { ok: false, error: { code: string, message: string } }>
   }

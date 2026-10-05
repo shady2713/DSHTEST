@@ -30,6 +30,7 @@ import {
   policyRecordSchema,
   projectRecordSchema,
   runHoldStatusSchema,
+  roleIdentityRecordSchema,
   runRecordSchema,
 } from './records.ts'
 import {
@@ -37,6 +38,7 @@ import {
   TABLE_CASE_RESULTS,
   TABLE_ENVIRONMENT_REVISIONS,
   TABLE_CASE_PLANS,
+  TABLE_ROLE_IDENTITIES,
   TABLE_OPERATIONS,
   TABLE_POLICIES,
   TABLE_PROJECTS,
@@ -57,11 +59,12 @@ import type {
   PluginStatus,
   PolicyRecord,
   ProjectRecord,
+  RoleIdentityRecord,
   RunControlAction,
 } from './types.ts'
 
 /** Plugin version, matching this package's manifest. */
-export const PLUGIN_VERSION = '0.1.1'
+export const PLUGIN_VERSION = '0.1.2'
 
 /**
  * Host release this plugin's peer declaration accepts.
@@ -84,6 +87,7 @@ const TABLE_SCHEMAS = [
   { table: TABLE_CASE_RESULTS, schema: caseResultRecordSchema },
   { table: TABLE_OPERATIONS, schema: operationRecordSchema },
   { table: TABLE_CASE_PLANS, schema: casePlanRecordSchema },
+  { table: TABLE_ROLE_IDENTITIES, schema: roleIdentityRecordSchema },
 ] as const
 
 /** Statuses a run can never leave, so a hold or a wait cannot apply to them. */
@@ -138,6 +142,14 @@ const PRESERVED_ACROSS_RESTART: readonly RunRecord['status'][] = [
 const UNRESOLVED_DISPATCHES: readonly OperationRecord['dispatch']['kind'][] = ['dispatching', 'dispatched', 'unknown']
 
 /** What one restart found that needs an operator's decision. */
+/** What the site answered when a role's identity was checked. */
+export interface VerifiedIdentity {
+  /** The account the site reported, or an empty string when it reported none. */
+  account: string
+  /** The site's own wording, kept so a failure can be reported as it stated it. */
+  detail: string
+}
+
 export interface ReconciliationReport {
   /** Runs a restart interrupted; each needs explicit continuation. */
   readonly blockedRuns: readonly string[]
@@ -483,6 +495,51 @@ export class WebTestStore extends Service {
    * @param sessionId - Session asking, or empty when the caller has none.
    * @returns the held run and the reason it is held.
    */
+  /**
+   * The session's active run and the role it is verified to be acting as.
+   *
+   * This is the whole browser authorisation: a browser tool is dispatched only
+   * when the run it belongs to is executing and that run's role was confirmed
+   * against the site. Cancelling a run therefore revokes its browser without
+   * touching another run or another session, because a later run is a
+   * different run with its own authorisation.
+   * @param sessionId - Session asking.
+   * @returns the run key, its status, and the verified role, or nothing when
+   * the session has no run that may drive a browser.
+   */
+  browserGrantForSession(sessionId: string): { runKey: string, status: RunRecord['status'], role: string } | undefined {
+    // Skipped runs are not the end of the search: a session that cancelled run
+    // A and started run B owns both, and B is the one that may drive a
+    // browser. Stopping at A's cancelled status would jam every later run,
+    // which is the failure this guard has to avoid.
+    for (const run of this.sorted(TABLE_RUNS) as RunRecord[]) {
+      if (run.ownerSessionId !== sessionId) continue
+      if (run.status !== 'running') continue
+      // A running run with no confirmed role owns the session, and holding the
+      // browser back is the answer rather than a reason to look elsewhere.
+      if (run.activeRole === '' || this.verifiedAccount(run.key, run.activeRole) === '') return undefined
+      return { runKey: run.key, status: run.status, role: run.activeRole }
+    }
+    return undefined
+  }
+
+  /**
+   * The role the session's run is acting as right now.
+   *
+   * Read by the execution guard on every browser call, so browser reachability
+   * follows the run's verified role rather than anything a model supplies.
+   * @param sessionId - Session asking.
+   * @returns the active role, or an empty string when none is set or verified.
+   */
+  activeRoleForSession(sessionId: string): string {
+    for (const run of this.sorted(TABLE_RUNS) as RunRecord[]) {
+      if (run.ownerSessionId !== sessionId) continue
+      if (run.activeRole === '') return ''
+      return this.verifiedAccount(run.key, run.activeRole) === '' ? '' : run.activeRole
+    }
+    return ''
+  }
+
   holdForSession(sessionId: string): { runKey: string, status: RunHoldStatus } | undefined {
     for (const [runKey, status] of this.heldRuns) {
       const owner = this.getRun(runKey)?.ownerSessionId ?? ''
@@ -785,7 +842,7 @@ export class WebTestStore extends Service {
    * @throws when the run is not running, the role is undeclared, or an operation
    * is still unresolved.
    */
-  async assumeRole(runKey: string, role: string): Promise<RunRecord> {
+  async assumeRole(runKey: string, role: string, verified: VerifiedIdentity): Promise<RunRecord> {
     const run = this.requireRun(runKey)
     if (run.status !== 'running') {
       throw new Error(`web-test: run ${JSON.stringify(runKey)} is ${run.status}; only a running run can change role`)
@@ -797,7 +854,92 @@ export class WebTestStore extends Service {
         + ' changing role, because the effect they may have had belongs to the current account')
     }
     const declared = this.requireDeclaredRole(run, role)
+    // The role field is written only after the browser answered as that
+    // account, so the record never claims an identity the site did not
+    // confirm. A failed check throws above and leaves the previous role in
+    // place rather than falling back to it.
+    // Clearing a role records nothing: there is no account to have confirmed,
+    // and a stale identity would keep a later browser grant alive.
+    if (declared !== '') await this.putIdentity(runKey, declared, verified)
     return this.putRun({ ...run, activeRole: declared, updatedAtMs: Date.now() })
+  }
+
+  /**
+   * Read the recorded identity of one role.
+   * @param runKey - Run to read.
+   * @param role - Declared role name.
+   * @returns the record, or undefined when the role was never verified.
+   */
+  getRoleIdentity(runKey: string, role: string): RoleIdentityRecord | undefined {
+    const stored = this.records[TABLE_ROLE_IDENTITIES] as Record<string, RoleIdentityRecord> | undefined
+    return stored?.[`${runKey}/${role}`]
+  }
+
+  /**
+   * Store one role's verified identity.
+   * @param record - The identity to store.
+   * @returns the stored record.
+   */
+  async putRoleIdentity(record: RoleIdentityRecord): Promise<RoleIdentityRecord> {
+    return this.write(TABLE_ROLE_IDENTITIES, record.key, roleIdentityRecordSchema.parse(record))
+      .then(() => record)
+  }
+
+  /**
+   * Record the account a role's browser actually presented.
+   *
+   * A separate record rather than a field on the run, so a report can say
+   * which account produced which case and a later switch cannot overwrite the
+   * evidence that the previous role really was signed in.
+   * @param runKey - Run the identity belongs to.
+   * @param role - Declared role name.
+   * @param verified - What the site answered for that role's browser.
+   */
+  private async putIdentity(runKey: string, role: string, verified: VerifiedIdentity): Promise<void> {
+    await this.putRoleIdentity({
+      schemaVersion: SCHEMA_VERSION,
+      kind: 'role-identity',
+      key: `${runKey}/${role}`,
+      runKey,
+      role,
+      account: verified.account,
+      detail: verified.detail,
+      verifiedAtMs: Date.now(),
+      label: `${role} as ${verified.account === '' ? 'no account' : verified.account}`,
+      updatedAtMs: Date.now(),
+    })
+  }
+
+  /**
+   * The account a role's browser presented when it was last switched to.
+   * @param runKey - Run to read.
+   * @param role - Declared role name.
+   * @returns the verified account, or an empty string when never verified.
+   */
+  verifiedAccount(runKey: string, role: string): string {
+    return this.getRoleIdentity(runKey, role)?.account ?? ''
+  }
+
+  /**
+   * Every role the run's environment declares.
+   *
+   * Read at run start so a role's browser can be started before the model asks
+   * to act as it: the browser provider hands an MCP server's tools to an Agent
+   * when that Agent is created, so a browser started mid-turn is not callable
+   * until the next one.
+   * @param runKey - Run whose environment to read.
+   * @returns the declared role names.
+   * @throws when the run names an environment that is not stored.
+   */
+  declaredRoles(runKey: string): string[] {
+    const run = this.requireRun(runKey)
+    const environment = this.listEnvironments(run.projectKey)
+      .find(candidate => candidate.key === run.environmentRevisionKey)
+    if (environment === undefined) {
+      throw new Error(`web-test: run ${JSON.stringify(runKey)} names environment`
+        + ` ${JSON.stringify(run.environmentRevisionKey)}, which is not stored`)
+    }
+    return environment.roles.map(role => role.name)
   }
 
   /**
@@ -955,6 +1097,7 @@ export class WebTestStore extends Service {
       'case-result': size(TABLE_CASE_RESULTS),
       operation: size(TABLE_OPERATIONS),
       'case-plan': size(TABLE_CASE_PLANS),
+      'role-identity': size(TABLE_ROLE_IDENTITIES),
     }
   }
 

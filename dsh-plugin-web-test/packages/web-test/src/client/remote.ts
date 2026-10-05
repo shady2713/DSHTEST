@@ -102,6 +102,23 @@ const casePlanRecord = z.object({
   updatedAtMs: z.number().int().nonnegative(),
 })
 
+const operationResolution = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('observed-success') }),
+  z.object({ kind: z.literal('observed-absent') }),
+  z.object({ kind: z.literal('still-unknown'), reason: z.string() }),
+])
+
+const operationRecord = z.object({
+  schemaVersion: z.literal(3),
+  kind: z.literal('operation'),
+  runKey: z.string().min(1),
+  operationKey: z.string().min(1),
+  intent: z.string().min(1),
+  role: z.string(),
+  requestDigest: z.string().min(1),
+  dispatch: z.object({ kind: z.string() }).passthrough(),
+})
+
 const runRecord = z.object({
   schemaVersion: z.literal(3),
   kind: z.literal('run'),
@@ -140,6 +157,8 @@ type RemotePolicy = z.infer<typeof policyRecord>
 type RemoteCaseResult = z.infer<typeof caseResultRecord>
 type RemoteRun = z.infer<typeof runRecord>
 type RemoteCasePlan = z.infer<typeof casePlanRecord>
+type RemoteOperation = z.infer<typeof operationRecord>
+type OperationResolution = z.infer<typeof operationResolution>
 
 declare module '@deepseek-ai/dsh-typert-protocol' {
   interface TypertRemoteNamespace77656254657374 {
@@ -154,6 +173,12 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
     listRuns: () => Promise<{ ok: true, value: RemoteRun[] } | { ok: false, error: { code: string, message: string } }>
     listCases: (runKey: string) => Promise<{ ok: true, value: RemoteCasePlan[] } | { ok: false, error: { code: string, message: string } }>
     ruleOnCase: (runKey: string, caseKey: string, decision: 'confirm' | 'reject', note: string) => Promise<{ ok: true, value: RemoteCasePlan } | { ok: false, error: { code: string, message: string } }>
+    assumeRole: (runKey: string, role: string) => Promise<{ ok: true, value: RemoteRun } | { ok: false, error: { code: string, message: string } }>
+    releaseRole: (runKey: string, role: string) => Promise<{ ok: true, value: RemoteRun } | { ok: false, error: { code: string, message: string } }>
+    waitRun: (runKey: string, untilIso: string, reason: string) => Promise<{ ok: true, value: RemoteRun } | { ok: false, error: { code: string, message: string } }>
+    resumeWait: (runKey: string) => Promise<{ ok: true, value: RemoteRun } | { ok: false, error: { code: string, message: string } }>
+    listOperations: () => Promise<{ ok: true, value: RemoteOperation[] } | { ok: false, error: { code: string, message: string } }>
+    resolveOperation: (runKey: string, operationKey: string, resolution: OperationResolution) => Promise<{ ok: true, value: RemoteOperation } | { ok: false, error: { code: string, message: string } }>
     controlRun: (runKey: string, action: 'pause' | 'resume' | 'cancel') => Promise<{ ok: true, value: RemoteRun } | { ok: false, error: { code: string, message: string } }>
     getRun: (runKey: string) => Promise<{ ok: true, value: RemoteRun } | { ok: false, error: { code: string, message: string } }>
   }
@@ -343,6 +368,201 @@ export const TYPERT_REMOTE: TypertRemoteContribution = {
         mode: 'strict',
         typeSymbol: "dsh-plugin-web-test/types#CasePlanRecord",
         create: () => casePlanRecord,
+      },
+    },
+    {
+      id: "dsh-plugin-web-test#webTest/assumeRole",
+      service: "webTest",
+      namespace: "webTest",
+      method: "assumeRole",
+      invocation: { kind: 'direct' },
+      parameters: [
+        {
+          name: "runKey",
+          wire: "runKey",
+          source: 'json',
+          codec: {
+            mode: 'strict',
+            typeSymbol: "dsh-plugin-web-test/types#string",
+            create: () => z.string().min(1),
+          },
+        },
+        {
+          name: "role",
+          wire: "role",
+          source: 'json',
+          codec: {
+            mode: 'strict',
+            typeSymbol: "dsh-plugin-web-test/types#string",
+            create: () => z.string().min(1),
+          },
+        },
+      ],
+      result: {
+        mode: 'strict',
+        typeSymbol: "dsh-plugin-web-test/types#RemoteRun",
+        create: () => runRecord,
+      },
+    },
+    {
+      id: "dsh-plugin-web-test#webTest/releaseRole",
+      service: "webTest",
+      namespace: "webTest",
+      method: "releaseRole",
+      invocation: { kind: 'direct' },
+      parameters: [
+        {
+          name: "runKey",
+          wire: "runKey",
+          source: 'json',
+          codec: {
+            mode: 'strict',
+            typeSymbol: "dsh-plugin-web-test/types#string",
+            create: () => z.string().min(1),
+          },
+        },
+        {
+          name: "role",
+          wire: "role",
+          source: 'json',
+          codec: {
+            mode: 'strict',
+            typeSymbol: "dsh-plugin-web-test/types#string",
+            create: () => z.string().min(1),
+          },
+        },
+      ],
+      result: {
+        mode: 'strict',
+        typeSymbol: "dsh-plugin-web-test/types#RemoteRun",
+        create: () => runRecord,
+      },
+    },
+    {
+      id: "dsh-plugin-web-test#webTest/waitRun",
+      service: "webTest",
+      namespace: "webTest",
+      method: "waitRun",
+      invocation: { kind: 'direct' },
+      parameters: [
+        {
+          name: "runKey",
+          wire: "runKey",
+          source: 'json',
+          codec: {
+            mode: 'strict',
+            typeSymbol: "dsh-plugin-web-test/types#string",
+            create: () => z.string().min(1),
+          },
+        },
+        {
+          name: "untilIso",
+          wire: "untilIso",
+          source: 'json',
+          codec: {
+            mode: 'strict',
+            typeSymbol: "dsh-plugin-web-test/types#string",
+            create: () => z.string().min(1),
+          },
+        },
+        {
+          name: "reason",
+          wire: "reason",
+          source: 'json',
+          codec: {
+            mode: 'strict',
+            typeSymbol: "dsh-plugin-web-test/types#string",
+            create: () => z.string().min(1),
+          },
+        },
+      ],
+      result: {
+        mode: 'strict',
+        typeSymbol: "dsh-plugin-web-test/types#RemoteRun",
+        create: () => runRecord,
+      },
+    },
+    {
+      id: "dsh-plugin-web-test#webTest/resumeWait",
+      service: "webTest",
+      namespace: "webTest",
+      method: "resumeWait",
+      invocation: { kind: 'direct' },
+      parameters: [
+        {
+          name: "runKey",
+          wire: "runKey",
+          source: 'json',
+          codec: {
+            mode: 'strict',
+            typeSymbol: "dsh-plugin-web-test/types#string",
+            create: () => z.string().min(1),
+          },
+        },
+      ],
+      result: {
+        mode: 'strict',
+        typeSymbol: "dsh-plugin-web-test/types#RemoteRun",
+        create: () => runRecord,
+      },
+    },
+    {
+      id: "dsh-plugin-web-test#webTest/listOperations",
+      service: "webTest",
+      namespace: "webTest",
+      method: "listOperations",
+      invocation: { kind: 'direct' },
+      parameters: [
+
+      ],
+      result: {
+        mode: 'strict',
+        typeSymbol: "dsh-plugin-web-test/types#RemoteOperation[]",
+        create: () => z.array(operationRecord),
+      },
+    },
+    {
+      id: "dsh-plugin-web-test#webTest/resolveOperation",
+      service: "webTest",
+      namespace: "webTest",
+      method: "resolveOperation",
+      invocation: { kind: 'direct' },
+      parameters: [
+        {
+          name: "runKey",
+          wire: "runKey",
+          source: 'json',
+          codec: {
+            mode: 'strict',
+            typeSymbol: "dsh-plugin-web-test/types#string",
+            create: () => z.string().min(1),
+          },
+        },
+        {
+          name: "operationKey",
+          wire: "operationKey",
+          source: 'json',
+          codec: {
+            mode: 'strict',
+            typeSymbol: "dsh-plugin-web-test/types#string",
+            create: () => z.string().min(1),
+          },
+        },
+        {
+          name: "resolution",
+          wire: "resolution",
+          source: 'json',
+          codec: {
+            mode: 'strict',
+            typeSymbol: "dsh-plugin-web-test/types#OperationResolution",
+            create: () => z.discriminatedUnion('kind', [z.object({ kind: z.literal('observed-success') }), z.object({ kind: z.literal('observed-absent') }), z.object({ kind: z.literal('still-unknown'), reason: z.string() })]),
+          },
+        },
+      ],
+      result: {
+        mode: 'strict',
+        typeSymbol: "dsh-plugin-web-test/types#RemoteOperation",
+        create: () => operationRecord,
       },
     },
     {

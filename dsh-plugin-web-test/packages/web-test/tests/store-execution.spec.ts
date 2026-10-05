@@ -365,8 +365,12 @@ describe('business-time waits', () => {
 describe('role isolation', () => {
   it('records the role the run acts as', async () => {
     const h = await openRun({ roles: ['admin', 'finance'] })
-    expect((await h.store.assumeRole('run-1', 'finance')).activeRole).toBe('finance')
-    expect((await h.store.assumeRole('run-1', '')).activeRole).toBe('')
+    expect((await h.store.assumeRole('run-1', 'finance', { account: 'Bob', detail: '/whoami' })).activeRole)
+      .toBe('finance')
+    // The account the site reported is what the run may act as; the field is
+    // never written without one.
+    expect(h.store.verifiedAccount('run-1', 'finance')).toBe('Bob')
+    expect((await h.store.assumeRole('run-1', '', { account: '', detail: 'cleared' })).activeRole).toBe('')
   })
 
   it('refuses an undeclared role', async () => {
@@ -376,11 +380,13 @@ describe('role isolation', () => {
 
   it('refuses a role change while an operation is unresolved, because the effect belonged to the old account', async () => {
     const h = await openRun({ roles: ['admin', 'finance'] })
-    await h.store.assumeRole('run-1', 'admin')
+    await h.store.assumeRole('run-1', 'admin', { account: 'A', detail: '/whoami' })
     await h.store.beginOperation('run-1', 'op-1', 'create order #7', 'sha256:aa', 'admin')
-    await expect(h.store.assumeRole('run-1', 'finance')).rejects.toThrow(/still has 1 unresolved operation/)
+    await expect(h.store.assumeRole('run-1', 'finance', { account: 'B', detail: '/whoami' }))
+      .rejects.toThrow(/still has 1 unresolved operation/)
     await h.store.settleOperation('run-1', 'op-1', 'observed-success')
-    expect((await h.store.assumeRole('run-1', 'finance')).activeRole).toBe('finance')
+    expect((await h.store.assumeRole('run-1', 'finance', { account: 'B', detail: '/whoami' })).activeRole)
+      .toBe('finance')
   })
 })
 

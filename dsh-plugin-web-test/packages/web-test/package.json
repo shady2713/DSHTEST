@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-web-test",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Web testing for DSH: test projects, confirmed test cases, real-browser execution, evidence, and reports inside unmodified DSH.",
   "license": "MIT",
   "type": "module",
@@ -11,18 +11,6 @@
       "types": "./lib/types/index.d.ts",
       "default": "./lib/index.js"
     },
-    "./types": {
-      "types": "./lib/types/types.d.ts",
-      "default": "./lib/types/types.js"
-    },
-    "./records": {
-      "types": "./lib/types/records.d.ts",
-      "default": "./lib/types/records.js"
-    },
-    "./store-service": {
-      "types": "./lib/types/store-service.d.ts",
-      "default": "./lib/store-service.js"
-    },
     "./agent": {
       "types": "./lib/types/agent.d.ts",
       "default": "./lib/agent.js"
@@ -31,16 +19,29 @@
       "types": "./lib/types/client/index.d.ts",
       "default": "./lib/client.js"
     },
-    "./typert": {
-      "types": "./lib/typert.host.d.ts",
-      "default": "./lib/typert.host.js"
+    "./package.json": "./package.json",
+    "./records": {
+      "types": "./lib/types/records.d.ts",
+      "default": "./lib/types/records.js"
     },
     "./remote": {
       "types": "./lib/typert.remote-client.d.ts",
       "default": "./lib/typert.remote-client.js"
     },
+    "./role-browser": "./lib/role-browser.js",
     "./src/*": "./src/*",
-    "./package.json": "./package.json"
+    "./store-service": {
+      "types": "./lib/types/store-service.d.ts",
+      "default": "./lib/store-service.js"
+    },
+    "./typert": {
+      "types": "./lib/typert.host.d.ts",
+      "default": "./lib/typert.host.js"
+    },
+    "./types": {
+      "types": "./lib/types/types.d.ts",
+      "default": "./lib/types/types.js"
+    }
   },
   "files": [
     "cordis.patch.yml",
@@ -51,6 +52,7 @@
     "lib/agent.js",
     "lib/client.js",
     "lib/index.js",
+    "lib/role-browser.js",
     "lib/shared/*.js",
     "lib/store-service.js",
     "lib/typert.host.d.ts",
@@ -100,6 +102,7 @@
   "dependencies": {
     "@deepseek-ai/dsh-browser-use": "0.2.0-rc.2",
     "@deepseek-ai/dsh-experimental-browser-use-playwright-mcp": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-experimental-browser-use-runtime": "0.2.0-rc.2",
     "@deepseek-ai/dsh-storage-sqlite": "0.2.0-rc.2",
     "zod": "^4.4.3"
   },

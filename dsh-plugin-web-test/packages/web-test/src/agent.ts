@@ -19,6 +19,9 @@ import { copyFileSync, statSync } from 'node:fs'
 import type { Context } from '@deepseek-ai/cordis'
 import ToolsService from '@deepseek-ai/dsh-tools'
 import { z } from 'zod'
+import { RoleBrowserPool } from './role-browser.ts'
+import type { ToolRunContext } from '@deepseek-ai/dsh-tools'
+import type { VerifiedIdentity } from './store-service.ts'
 import {
   SCHEMA_VERSION,
   casePlanRecordSchema,
@@ -33,7 +36,7 @@ import type { CasePlanRecord } from './types.ts'
 export const name = 'web-test-agent'
 
 /** Cordis service injection for this composition. */
-export const inject = ['tools', 'webTestStore']
+export const inject = ['tools', 'webTestStore', 'webTestRoleBrowsers']
 
 /** Identity of the agent preset the operator selects explicitly. */
 export const PRESET_ID = 'web-test'
@@ -49,15 +52,13 @@ export const PRESET_ID = 'web-test'
 export const TOOL_PREFIX = 'web_test_'
 
 /**
- * Prefix the browser provider's tools carry.
+ * Prefix every role-scoped browser tool shares.
  *
- * The official per-Session Playwright MCP provider registers its server under
- * the fixed name `playwright-mcp`, so its tools are `mcp__playwright-mcp__*`.
- * The allowlist names that prefix explicitly rather than accepting every
- * `mcp__*` tool, so a globally installed browser provider's tools stay outside
- * a test session even if it is loaded at the same time.
+ * Each role's browser is its own MCP server, so a tool name states which
+ * account would act. The guard below admits only the active role's namespace,
+ * which is what stops a model reaching another role's browser by naming it.
  */
-export const BROWSER_TOOL_PREFIX = 'mcp__playwright-mcp__'
+export const ROLE_BROWSER_PREFIX = 'mcp__playwright-role-'
 
 /** Instructions given to a Web testing Agent. */
 export const TEST_INSTRUCTIONS = [
@@ -105,7 +106,10 @@ export const HELD_RUN_ALLOWED_TOOLS: readonly string[] = [
  */
 export function guardReason(
   execution: Readonly<{ name: string }>,
-  store?: { holdForSession: (sessionId: string) => { runKey: string, status: string } | undefined },
+  store?: {
+    holdForSession: (sessionId: string) => { runKey: string, status: string } | undefined
+    browserGrantForSession: (sessionId: string) => { runKey: string, status: string, role: string } | undefined
+  },
   sessionId = '',
 ): string | undefined {
   // A run the operator paused, or that a restart interrupted, stops dispatching
@@ -121,8 +125,22 @@ export function guardReason(
         : 'Ask the operator to continue it; do not act for it in the meantime.')
   }
   if (execution.name.startsWith(TOOL_PREFIX)) return undefined
-  if (execution.name.startsWith(BROWSER_TOOL_PREFIX)) return undefined
-  return `web-test sessions may only call ${TOOL_PREFIX}* and ${BROWSER_TOOL_PREFIX}* tools; `
+  if (execution.name.startsWith(ROLE_BROWSER_PREFIX)) {
+    // One authorisation decides every browser call: the run it belongs to must
+    // be executing, and its role must have been confirmed against the site.
+    // A cancelled run therefore loses its browser, a later run gets its own,
+    // and another session is judged on its own run.
+    const grant = store?.browserGrantForSession(sessionId)
+    if (grant === undefined) {
+      return `web-test: this session has no run that may drive a browser. A run needs to be running and to have`
+        + ' called web_test_assume_role with its identityUrl, which is also how a cancelled or paused run gives up'
+        + ' its browser. Start a new run to work again.'
+    }
+    if (execution.name.startsWith(`mcp__playwright-role-${grant.role}__`)) return undefined
+    return `web-test: run ${grant.runKey} acts as role ${JSON.stringify(grant.role)}; the browser tool`
+      + ` "${execution.name}" belongs to another role's account. Switch role with web_test_assume_role first.`
+  }
+  return `web-test sessions may only call ${TOOL_PREFIX}* and the active role's ${ROLE_BROWSER_PREFIX}* tools; `
     + `"${execution.name}" is outside the test execution policy`
 }
 
@@ -260,6 +278,35 @@ function requireConfirmedSteps(plan: CasePlanRecord, reported: number[]): void {
 }
 
 /**
+ * Read the signed-in account back from the site through a role's own browser.
+ *
+ * The site's answer is the only accepted evidence of identity: the plugin's
+ * own fields cannot show whether a login succeeded.
+ * @param pool - Role browser pool.
+ * @param role - Role whose browser to ask.
+ * @param identityUrl - Site endpoint that reports the current account.
+ * @returns what the site reported.
+ */
+async function verifyRoleIdentity(
+  tools: ToolsService,
+  exec: ToolRunContext,
+  pool: RoleBrowserPool | undefined,
+  role: string,
+  identityUrl: string | undefined,
+): Promise<VerifiedIdentity> {
+  if (pool === undefined) {
+    throw new Error('web-test: this build has no role browser pool, so no role can be verified')
+  }
+  if (identityUrl === undefined) {
+    throw new Error('web-test: assume_role needs identityUrl: the account has to be read back from the site, not'
+      + ' assumed from the role name')
+  }
+  pool.ensure(role)
+  const account = await pool.readAccount(tools, exec, role, identityUrl)
+  return { account: account.account, detail: account.detail }
+}
+
+/**
  * Refuse a proposed case whose steps are not dense and one-based.
  *
  * The result path matches reported steps against confirmed ones by position, so
@@ -367,6 +414,7 @@ const operationResultSchema = z.object({
 })
 
 export function apply(ctx: Context): void {
+  const pool = ctx.webTestRoleBrowsers
   const tools: ToolsService = ctx.tools
   const store = ctx.webTestStore
 
@@ -433,7 +481,13 @@ export function apply(ctx: Context): void {
         // stops the session that started it and leaves other sessions working.
         ownerSessionId: exec.agent?.id ?? '',
       })
+      // Start a browser for every role the environment declares, before the
+      // model asks to act as one. The browser provider hands an MCP server's
+      // tools to an Agent when that Agent is created, so a browser started
+      // mid-turn is not callable until the following turn; starting them here
+      // means the next turn can already drive each role's account.
       await store.putRun(record)
+      for (const role of store.declaredRoles(input.runKey)) pool?.ensure(role)
       return { runKey: record.key, status: record.status, evidenceRoot: dir }
     },
   }), 'web-test: start run tool')
@@ -734,6 +788,10 @@ export function apply(ctx: Context): void {
       // A result describes steps the run actually performed, so a run that is
       // paused, waiting, cancelled or interrupted by a restart takes no new ones.
       store.requireExecutable(parsed.runKey)
+      // Normalise the optional fields before anything is persisted, so a model
+      // that obeys the tool's own contract and omits them gets the same record
+      // as one that passed empty strings. This is the behaviour the tool
+      // description has always promised and the storage schema had not kept.
       const plan = requireConfirmedCase(store, parsed.runKey, parsed.caseKey)
       // Evidence is the plugin's record of what the browser actually produced,
       // so every reported path must resolve to a real file inside the run's
@@ -960,10 +1018,26 @@ export function apply(ctx: Context): void {
         return [{ type: 'text', text: result.note }]
       },
     },
-    async execute(args) {
+    async execute(args, exec) {
       refusing()
-      const parsed = z.object({ runKey: z.string().min(1), role: z.string() }).parse(args)
-      const run = await store.assumeRole(parsed.runKey, parsed.role)
+      const parsed = z.object({
+        runKey: z.string().min(1),
+        role: z.string(),
+        identityUrl: z.string().url().optional(),
+        expectAccount: z.string().optional(),
+      }).parse(args)
+      // The role is bound to a real browser and the account is read back from
+      // the site before the field is written, so a run never claims an identity
+      // the site did not confirm.
+      const verified = await verifyRoleIdentity(tools, exec, pool, parsed.role, parsed.identityUrl)
+      if (parsed.expectAccount !== undefined && parsed.expectAccount !== '') {
+        if (verified.account !== parsed.expectAccount) {
+          throw new Error(`web-test: role ${JSON.stringify(parsed.role)}'s browser is signed in as`
+            + ` ${JSON.stringify(verified.account)} but the run expects ${JSON.stringify(parsed.expectAccount)};`
+            + ` sign that account in on this role's browser first. The site said: ${verified.detail}`)
+        }
+      }
+      const run = await store.assumeRole(parsed.runKey, parsed.role, verified)
       return {
         runKey: run.key,
         operationKey: '',

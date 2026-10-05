@@ -55,6 +55,9 @@ export const TABLE_OPERATIONS = 'operations'
 /** Cases as analysis proposed them and the operator ruled on them. */
 export const TABLE_CASE_PLANS = 'case_plans'
 
+/** Account each role's browser presented, written when a run switches role. */
+export const TABLE_ROLE_IDENTITIES = 'role_identities'
+
 /**
  * Absolute path of the plugin-owned data root.
  *
@@ -130,5 +133,6 @@ export const WEB_TEST_UNIT: KvUnitDescriptor = {
     TABLE_CASE_RESULTS,
     TABLE_OPERATIONS,
     TABLE_CASE_PLANS,
+    TABLE_ROLE_IDENTITIES,
   ],
 }

@@ -8,13 +8,20 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { BROWSER_TOOL_PREFIX, HELD_RUN_ALLOWED_TOOLS, TOOL_PREFIX, guardReason } from '../src/agent.ts'
+import { ROLE_BROWSER_PREFIX, HELD_RUN_ALLOWED_TOOLS, TOOL_PREFIX, guardReason } from '../src/agent.ts'
 
 /** A store whose only held run is the one a test declares. */
-function holding(runKey: string, status: string): { holdForSession: (sessionId: string) => { runKey: string, status: string } | undefined } {
+function holding(runKey: string, status: string): GuardStore {
   return {
     holdForSession: (sessionId: string) => (sessionId === 'owner' ? { runKey, status } : undefined),
+    browserGrantForSession: () => undefined,
   }
+}
+
+/** The store surface the guard reads. */
+interface GuardStore {
+  holdForSession: (sessionId: string) => { runKey: string, status: string } | undefined
+  browserGrantForSession: (sessionId: string) => { runKey: string, status: string, role: string } | undefined
 }
 
 describe('tool allowlist', () => {
@@ -24,13 +31,37 @@ describe('tool allowlist', () => {
     }
   })
 
-  it('admits the official browser provider\'s tools', () => {
-    expect(guardReason({ name: `${BROWSER_TOOL_PREFIX}browser_navigate` })).toBeUndefined()
+  it('admits the active role\'s browser and refuses every other role\'s', () => {
+    const asAlice: GuardStore = { holdForSession: () => undefined, browserGrantForSession: () => ({ runKey: 'run-1', status: 'running', role: 'alice' }) }
+    expect(guardReason({ name: 'mcp__playwright-role-alice__browser_navigate' }, asAlice)).toBeUndefined()
+    // A second role's browser is a different account, so naming it must not be
+    // a way to act as that account.
+    const crossed = guardReason({ name: 'mcp__playwright-role-bob__browser_navigate' }, asAlice)
+    expect(crossed).toContain('belongs to another role')
+    expect(crossed).toContain('web_test_assume_role')
+  })
+
+  it('refuses every browser when the session has no verified role', () => {
+    const reason = guardReason(
+      { name: 'mcp__playwright-role-alice__browser_navigate' },
+      { holdForSession: () => undefined, browserGrantForSession: () => undefined },
+    )
+    expect(reason).toContain('no run that may drive a browser')
+  })
+
+  it('refuses a role whose identity the site never confirmed', () => {
+    // The store answers with an empty role when the run's role has no recorded
+    // account, so an unverified role cannot become reachable.
+    const unverified = guardReason(
+      { name: 'mcp__playwright-role-alice__browser_navigate' },
+      { holdForSession: () => undefined, browserGrantForSession: () => undefined },
+    )
+    expect(unverified).toContain('no run that may drive a browser')
   })
 
   it('refuses a shell tool even when the composition offers it, and names it', () => {
     const reason = guardReason({ name: 'bash' })
-    expect(reason).toContain('may only call web_test_* and mcp__playwright-mcp__*')
+    expect(reason).toContain('may only call web_test_* and the active role')
     expect(reason).toContain('"bash"')
   })
 
@@ -46,7 +77,7 @@ describe('tool allowlist', () => {
 describe('operator holds', () => {
   it('refuses every action for the session that owns a held run', () => {
     const store = holding('run-1', 'paused')
-    for (const name of [`${BROWSER_TOOL_PREFIX}browser_navigate`, `${TOOL_PREFIX}start_run`, `${TOOL_PREFIX}report_case`]) {
+    for (const name of [`${ROLE_BROWSER_PREFIX}browser_navigate`, `${TOOL_PREFIX}start_run`, `${TOOL_PREFIX}report_case`]) {
       expect(guardReason({ name }, store, 'owner')).toMatch(/run run-1 is paused/)
     }
   })
@@ -59,12 +90,24 @@ describe('operator holds', () => {
   })
 
   it('leaves a session that owns no held run working', () => {
-    const store = holding('run-1', 'paused')
-    expect(guardReason({ name: `${BROWSER_TOOL_PREFIX}browser_navigate` }, store, 'other')).toBeUndefined()
+    // Another session's pause must not stop this one's test work, including its
+    // browser, as long as that browser belongs to a role this session verified.
+    const store: GuardStore = {
+      holdForSession: (sessionId: string) => (sessionId === 'owner' ? { runKey: 'run-1', status: 'paused' } : undefined),
+      browserGrantForSession: () => ({ runKey: 'run-1', status: 'running', role: 'alice' }),
+    }
+    expect(guardReason({ name: 'mcp__playwright-role-alice__browser_navigate' }, store, 'other')).toBeUndefined()
+    // A tool of no role at all is still outside the policy, rather than
+    // something the guard waves through.
+    expect(guardReason({ name: 'mcp__other-browser__navigate' }, store, 'other')).toMatch(/outside the test execution policy/)
   })
 
   it('asks for the operator, not for a tool that does not exist', () => {
-    const reason = guardReason({ name: `${BROWSER_TOOL_PREFIX}browser_navigate` }, holding('run-1', 'paused'), 'owner')
+    const reason = guardReason(
+      { name: 'mcp__playwright-role-alice__browser_navigate' },
+      holding('run-1', 'paused'),
+      'owner',
+    )
     expect(reason).toContain('Ask the operator to continue it')
     // The earlier wording pointed at `web_test_resume_run`, which the policy
     // refuses to admit, so the message could not be followed.

@@ -25,9 +25,22 @@
     - id: web-test
       name: 'dsh-plugin-web-test'
 
-    # Browser-use facility the official Playwright MCP provider peers on. The
-    # provider cannot start without this row, and the unmodified CLI does not
-    # ship it, so the plugin declares it as its own install dependency.
+    # Per-role browser resources. A loader row of its own so the browsers the
+    # plugin starts are owned by a composition entry with a real lifecycle:
+    # disabling this row is what reaps them, and nothing else is closed.
+    - id: web-test-role-browsers
+      name: 'dsh-plugin-web-test/role-browser'
+      config:
+        # No executablePath on purpose. The pinned provider discovers Chrome,
+        # Edge, or its own Chromium, which is the only setting that works on
+        # every platform; a path committed here would be right for one machine
+        # only. A profile that needs a specific binary sets it on this row,
+        # which is overridable without restating the preset.
+        headless: false
+
+    # Browser-use facility the role-scoped MCP browsers peer on. Each role's
+    # provider row needs it, and the unmodified CLI does not ship it, so the
+    # plugin declares it as its own install dependency.
     - id: web-test-browser-use
       name: '@deepseek-ai/dsh-browser-use'
 
@@ -60,15 +73,13 @@
                 expected results, and collect screenshots as evidence. Report
                 what actually happened; never claim a step you did not perform.
               suffix: Your working directory is {{cwd}}.
-          - id: web-test-browser
-            name: '@deepseek-ai/dsh-experimental-browser-use-playwright-mcp'
-            config:
-              mode: launch
-              headless: false
-              # Drive the machine's own Chrome. The provider's bundled browser
-              # build is not installed with the unmodified CLI, and the first
-              # release targets a standalone Chrome or Edge anyway.
-              executablePath: /usr/bin/google-chrome
+          # No browser row on purpose. The stock provider mounts one browser
+          # per Session and offers no tool that creates a second context, so two
+          # roles acting at once could not hold separate logins through it. The
+          # plugin starts one isolated MCP browser per role instead and the
+          # execution guard admits only the active role's namespace, so a
+          # globally mounted provider could only be a way around the role
+          # binding.
           - id: web-test-agent
             name: 'dsh-plugin-web-test/agent'
           # Present on purpose: the plugin's execution guard must refuse this

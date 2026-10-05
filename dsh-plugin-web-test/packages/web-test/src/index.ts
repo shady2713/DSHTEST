@@ -44,8 +44,7 @@ export { PRESET_ID }
  */
 export class WebTestService extends TypertRemoteService {
   /** Waits for the single writer so every business method goes through it. */
-  static inject = ['webTestStore']
-
+  static inject = ['webTestStore', 'webTestRoleBrowsers']
 
   /**
    * @param ctx - Owning Context.
@@ -269,7 +268,7 @@ export class WebTestService extends TypertRemoteService {
   @Remote
   async assumeRole(runKey: string, role: string): Promise<RunRecord> {
     this.acceptingGuard()
-    return this.ctx.webTestStore.assumeRole(runKey, role)
+    return this.ctx.webTestStore.assumeRole(runKey, role, { account: '', detail: 'set by the operator, not verified' })
   }
 
   /**
@@ -386,11 +385,11 @@ export class WebTestService extends TypertRemoteService {
 }
 
 
-export default WebTestService
-
 declare module '@deepseek-ai/cordis' {
   interface Context {
     /** Web testing service; also the plugin's typed Remote namespace. */
     webTest: WebTestService
   }
 }
+
+export default WebTestService

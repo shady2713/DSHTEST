@@ -6,12 +6,13 @@
     "tsBuildInfoFile": "lib/tsconfig.host.tsbuildinfo"
   },
   "include": [
-    "src/index.ts",
     "src/agent.ts",
-    "src/records.ts",
-    "src/store-service.ts",
-    "src/types.ts",
     "src/domain/*.ts",
-    "src/report.ts"
+    "src/index.ts",
+    "src/records.ts",
+    "src/report.ts",
+    "src/role-browser.ts",
+    "src/store-service.ts",
+    "src/types.ts"
   ]
 }

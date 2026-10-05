@@ -22,6 +22,7 @@ import type {
   policyRecordSchema,
   operationDispatchSchema,
   projectRecordSchema,
+  roleIdentityRecordSchema,
   runHoldStatusSchema,
   runRecordSchema,
 } from './records.ts'
@@ -54,6 +55,7 @@ export type WebTestRecord =
   | CasePlanRecord
   | CaseResultRecord
   | OperationRecord
+  | RoleIdentityRecord
 
 /**
  * Control actions an operator may apply to a run.
@@ -68,6 +70,9 @@ export type RunControlAction = 'pause' | 'resume' | 'cancel' | 'await-user' | 'c
 export type RunHoldStatus = z.infer<typeof runHoldStatusSchema>
 
 /** Discriminant of a durable record kind. */
+/** The account one role's browser presented, as the site reported it. */
+export type RoleIdentityRecord = z.infer<typeof roleIdentityRecordSchema>
+
 export type WebTestRecordKind = WebTestRecord['kind']
 
 /** Browser product the operator selected for the first release. */

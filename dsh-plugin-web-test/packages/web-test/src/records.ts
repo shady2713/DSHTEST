@@ -125,6 +125,19 @@ export const plannedStepSchema = z.object({
  * that reports a result refuses a case whose status is not `confirmed`, and the
  * report states which proposed cases were never ruled on.
  */
+/** The account a role's browser presented when the run switched to it. */
+export const roleIdentityRecordSchema = z.object({
+  ...baseFields,
+  kind: z.literal('role-identity'),
+  key: z.string().min(1),
+  runKey: z.string().min(1),
+  role: z.string().min(1),
+  /** What the site answered, which is the only accepted evidence of identity. */
+  account: z.string(),
+  detail: z.string().default(''),
+  verifiedAtMs: z.number().int().nonnegative().default(0),
+})
+
 export const casePlanRecordSchema = z.object({
   ...baseFields,
   kind: z.literal('case-plan'),
@@ -151,11 +164,13 @@ export const stepResultSchema = z.object({
   /** What the step was meant to do, from the confirmed case. */
   intent: z.string().min(1),
   /** What actually happened, in the model's own words. */
-  observed: z.string(),
+  /** Empty when the run did not supply it; the tool declares the field optional. */
+  observed: z.string().default(''),
   /** Whether the step's own expectation held. */
   outcome: z.enum(['passed', 'failed', 'skipped', 'blocked']),
   /** Absolute path of the screenshot captured for this step, when one was taken. */
-  evidencePath: z.string(),
+  /** Empty when the run did not supply it; the tool declares the field optional. */
+  evidencePath: z.string().default(''),
 })
 
 /** One assertion the model checked, and what it found. */
@@ -163,10 +178,12 @@ export const assertionResultSchema = z.object({
   /** What was expected, stated independently of the implementation. */
   expected: z.string().min(1),
   /** What the page actually showed. */
-  actual: z.string(),
+  /** Empty when the run did not supply it; the tool declares the field optional. */
+  actual: z.string().default(''),
   outcome: z.enum(['passed', 'failed', 'skipped', 'blocked']),
   /** Why the assertion could not be settled, when it was not passed or failed. */
-  reason: z.string(),
+  /** Empty when the run did not supply it; the tool declares the field optional. */
+  reason: z.string().default(''),
 })
 
 /** The structured outcome of one confirmed case. */

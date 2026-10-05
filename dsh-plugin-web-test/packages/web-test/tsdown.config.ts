@@ -57,6 +57,7 @@ const nodeLib: UserConfig = {
     'index': 'lib/types/index.js',
     'agent': 'lib/types/agent.js',
     'store-service': 'lib/types/store-service.js',
+    'role-browser': 'lib/types/role-browser.js',
   },
   outDir: 'lib',
   format: ['esm'],
