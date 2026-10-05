@@ -229,6 +229,28 @@ profile 因此装出第二份副本。`TOOL_RUNTIME_SCHEDULER` 是模块加载�
 模型看不到它是必填，连连省略；zod 侧又是 optional，两边不一致。改为 JSON Schema 与 zod
 都必填，去掉 schema 外的 `identityUrl` 别名。
 
+### 0.2.7：角色浏览器真的跑起来了
+
+提供方在 `ctx.on('agent/created')` 里，于 Agent **创建那一刻**在该 Agent 的 ctx 上定义 MCP 工具，
+没有给已存在的 Agent 补建的路径。所以浏览器必须在测试会话的 Agent 出现**之前**挂载。
+环境确认正是那个时刻：操作者先确认环境、再建测试会话。`putEnvironment` 现在在写库后为该环境
+声明的角色启动浏览器。（`start_run` 里的预取保留，覆盖启动时环境就已就绪的情况。）
+
+真实宿主证据（隔离 `DSH_HOME`、0.2.7、受控站点 8902）：
+
+- 角色浏览器打开页面：`- Page URL: http://127.0.0.1:8902/ - Page Title: 受控验收站点`
+- 打开身份页并取到真实快照
+- `assume_role` 带着必填的 `accountPage` 真实发出，插件读站点后**正确拒绝**：
+  `confirmed role "buyer" as "" ... The page said: the page carried no
+  data-webtest-account marker` —— 未登录页面没有被当成身份
+
+另外两处修复：`ensure` 记 `started` 在 `await` 之后，两次并发调用都会各自注册同名提供方，
+现在未完成的挂载先记进 `pending`，后来的调用等前一次；守卫文案里过时的 `identityUrl` 改成
+`accountPage`。
+
+尚未闭合：模型在本轮没有真正完成登录（试了几个不存在的 URL，均 404），因此
+`activeRole` 仍为空。A/B 隔离、跨角色、取消/恢复、授权代次、真实释放均未验证。
+
 ### 仍未闭合：角色浏览器工具没进 Agent 清单
 
 真实宿主上，模型从头到尾没有发起过一次 `mcp__playwright-role-<role>__*` 调用。角色浏览器在

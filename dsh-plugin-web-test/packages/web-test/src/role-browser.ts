@@ -82,6 +82,8 @@ export interface IdentityAnswer {
 export class RoleBrowserPool extends Service {
   /** Started role browsers, in the order they were created. */
   private readonly started = new Map<string, RoleBrowser>()
+  /** Roles whose mount is in flight, so a second caller waits for it. */
+  private readonly pending = new Map<string, RoleBrowser>()
 
   /** Disposers returned by `mountSessionMcp`, one per started role. */
   private readonly mounts = new Map<string, () => void>()
@@ -143,13 +145,64 @@ export class RoleBrowserPool extends Service {
    * @returns the role's browser resource.
    */
   async ensure(role: string): Promise<RoleBrowser> {
+    // A role already starting counts as started. Confirming an environment and
+    // loading the preset can both reach this, and the provider refuses a second
+    // registration under the same name, so the second caller waits for the first
+    // mount instead of issuing its own.
+    const pendingRole = this.pending.get(role)
+    if (pendingRole !== undefined) return pendingRole
     const existing = this.started.get(role)
     if (existing !== undefined) return existing
+    const browser: RoleBrowser = { role, serverName: `playwright-role-${role}`, toolNames: [] }
+    const settled = this.mountBrowser(role, browser)
+    this.pending.set(role, browser)
+    try {
+      await settled
+    } finally {
+      this.pending.delete(role)
+    }
+    return browser
     // Mounted against this pool's own context, never an agent's. The provider
     // reads `browserUse` off the context it is given, which an agent context
     // does not inject, and it scopes each server per agent itself, adopting
     // agents that already exist.
     const serverName = `playwright-role-${role}`
+    // The provider is loaded on demand rather than at import time: it pulls the
+    // MCP client's whole peer tree, which a unit test that never starts a
+    // browser should not have to load.
+    const { mountSessionMcp } = await import('@deepseek-ai/dsh-experimental-browser-use-runtime/mcp')
+    this.ctx.effect(() => {
+      // The provider registers a browser-use provider under the server's name
+      // and refuses a second one. A role confirmed again, or a second test
+      // session, reaches this path with the browser already up, so an existing
+      // registration is the expected outcome and not a failure.
+      mountSessionMcp(this.ctx, {
+        name: serverName,
+        // Each role owns its own Chromium, so no two roles contend for one
+        // attached browser and neither can land on the other's page.
+        exclusive: false,
+        command: process.execPath,
+        args: playwrightArgs(this.executablePath, this.headless),
+        env: {},
+      })
+      // The provider registers its own disposal against this context, so
+      // dropping the entry here is all the role release has to do; the Chromium
+      // itself goes with the provider's teardown.
+      return () => { this.mounts.delete(role) }
+    })
+    this.started.set(role, browser)
+    this.mounts.set(role, () => { this.started.delete(role) })
+    return browser
+  }
+
+  /**
+   * Mount one role's MCP server and record it as started.
+   * @param role - Declared role name.
+   * @param browser - The resource to record once the server is mounted.
+   * @returns once the server is mounted.
+   */
+  private async mountBrowser(role: string, browser: RoleBrowser): Promise<void> {
+    const serverName = browser.serverName
     // The provider is loaded on demand rather than at import time: it pulls the
     // MCP client's whole peer tree, which a unit test that never starts a
     // browser should not have to load.
@@ -169,18 +222,13 @@ export class RoleBrowserPool extends Service {
       // itself goes with the provider's teardown.
       return () => { this.mounts.delete(role) }
     })
-    const browser: RoleBrowser = {
-      role,
-      serverName,
-      toolNames: [],
-    }
     this.started.set(role, browser)
     this.mounts.set(role, () => { this.started.delete(role) })
-    return browser
   }
 
   /**
    * Every role browser this pool has started.
+   *
    *
    * Read at activation time: the provider registers an MCP server's tools when
    * a Session's agent activates, so a role started moments ago has none until
@@ -237,6 +285,25 @@ export class RoleBrowserPool extends Service {
    */
   async prefetch(roles: readonly string[]): Promise<void> {
     await Promise.all(roles.map(role => this.ensure(role)))
+  }
+
+  /**
+   * Start a browser for every role the operator has already confirmed.
+   *
+   * The provider defines an MCP server's tools on an agent's own context when
+   * that agent is created, and offers no way to add them to an agent that
+   * already exists. A role browser started after the session's agent exists
+   * therefore never reaches it. Mounting from the preset's agent row — which
+   * loads before any test session's agent — is the point where the servers are
+   * in place for the agents that follow.
+   *
+   * The roles come from confirmed environments, so an environment confirmed
+   * after a session already exists needs a new session to reach its roles.
+   * @param roles - Role names to start, across every confirmed environment.
+   * @returns once every role's mount call has returned.
+   */
+  async prefetchConfirmed(store: { confirmedRoles(): string[] }): Promise<void> {
+    await this.prefetch(store.confirmedRoles())
   }
 
   /**

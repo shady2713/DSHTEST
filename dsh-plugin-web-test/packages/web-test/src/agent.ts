@@ -175,7 +175,7 @@ export function guardReason(
     const grant = store?.browserGrantForSession(sessionId)
     if (grant === undefined) {
       return `web-test: this session has no run that may drive a browser. A run needs to be running and to have`
-        + ' called web_test_assume_role with its identityUrl, which is also how a cancelled or paused run gives up'
+        + ' called web_test_assume_role with its accountPage, which is also how a cancelled or paused run gives up'
         + ' its browser. Start a new run to work again.'
     }
     if (execution.name.startsWith(`mcp__playwright-role-${grant.role}__`)) return undefined
@@ -460,6 +460,14 @@ export function apply(ctx: Context): void {
   const pool = ctx.webTestRoleBrowsers
   const tools: ToolsService = ctx.tools
   const store = ctx.webTestStore
+
+  // Role browsers start here, while this preset's agent row is loading, so the
+  // provider has its MCP servers in place before any test session's agent is
+  // created — it defines a server's tools on an agent as that agent appears, and
+  // cannot add them to one that already exists.
+  void pool?.prefetchConfirmed(store).catch((error: unknown) => {
+    ctx.logger.warn(`web-test: role browsers did not all start: ${String(error)}`)
+  })
 
   ctx.effect(() => tools.register({
     name: `${TOOL_PREFIX}start_run`,

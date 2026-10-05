@@ -64,7 +64,7 @@ import type {
 } from './types.ts'
 
 /** Plugin version, matching this package's manifest. */
-export const PLUGIN_VERSION = '0.2.3'
+export const PLUGIN_VERSION = '0.2.7'
 
 /**
  * Host release this plugin's peer declaration accepts.
@@ -942,6 +942,24 @@ export class WebTestStore extends Service {
    * @param role - Role whose browser is being prepared.
    * @returns true when the session has a running run that declares the role.
    */
+  /**
+   * Every role any confirmed environment declares.
+   *
+   * A Web testing agent can drive exactly these roles. Environments confirmed
+   * later are not covered, because the provider only defines a server's tools
+   * on an agent as that agent is created.
+   * @returns role names, without duplicates and in a stable order.
+   */
+  confirmedRoles(): string[] {
+    const roles = new Set<string>()
+    for (const project of this.sorted(TABLE_PROJECTS) as ProjectRecord[]) {
+      for (const environment of this.listEnvironments(project.key)) {
+        for (const role of environment.roles) roles.add(role.name)
+      }
+    }
+    return [...roles].sort()
+  }
+
   mayPrepareIdentity(sessionId: string, role: string): boolean {
     if (role === '') return false
     for (const run of this.sorted(TABLE_RUNS) as RunRecord[]) {
