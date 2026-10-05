@@ -67,6 +67,7 @@ function operation(dispatch: OperationRecord['dispatch']): OperationRecord {
     operationKey: 'op-1',
     intent: 'create order #7',
     role: 'admin',
+    generation: 2,
     requestDigest: 'sha256:aa',
     dispatch,
   }
@@ -129,11 +130,17 @@ describe('unresolved operations in the report', () => {
     })
     expect(bundle.markdown).toContain('结果未确认的操作')
     expect(bundle.markdown).toContain('the connection dropped after the click')
+    // The role and generation travel with the line, so a report says which
+    // attempt of the operation this is rather than only that it is unresolved.
+    expect(bundle.markdown).toContain('角色 admin 第 2 代')
+    expect(bundle.html).toContain('角色 admin 第 2 代')
     expect(bundle.html).toContain('the connection dropped after the click')
     expect(bundle.json.unresolvedOperations).toEqual([
       {
         operationKey: 'op-1',
         intent: 'create order #7',
+        role: 'admin',
+        generation: 2,
         dispatch: 'unknown',
         reason: 'the connection dropped after the click',
       },

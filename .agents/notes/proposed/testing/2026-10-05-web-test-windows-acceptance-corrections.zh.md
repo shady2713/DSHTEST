@@ -1042,3 +1042,24 @@ Agent 早于启动就已存在，所以工具不在它的清单里。这与之�
 
 仍未验证：报告渲染与 Remote 描述是否与操作输出一致（第七节场景 12）、跨角色协作、
 浏览器断连期间的归属。普通会话工具泄漏仍是已知缺陷。
+
+### 0.6.9：报告三个面一致带上角色与代次
+
+第七节场景 12 要求"工具输出、render、Remote 描述及最终报告保持一致"。检查报告时发现
+**未确认操作的行只写了意图和派发状态，没有角色和代次**——同一个 `operationKey` 在一次运行
+的两代里各出现一次时，报告分不清是哪一次尝试。
+
+三面现在都带上，并且是同一份数据渲染出来的：
+
+- Markdown：`- \`op-1\` create order #7（角色 admin 第 2 代） — unknown：…`
+- HTML：同样一段
+- JSON：`unresolvedOperations[]` 增加 `role` 与 `generation` 字段
+
+`ReportJson` 的类型声明同步更新。测试 `carries an unknown operation into all three
+forms, with its reason` 扩展为同时断言 Markdown 与 HTML 都含"角色 admin 第 2 代"，
+这正是场景 12 要防的那个不一致。
+
+全量 **115 passed (115)**，类型检查通过。
+
+仍未验证：Remote 描述与工具输出一致性（需要一次真实调用比对）、跨角色协作、
+浏览器断连期间的归属。普通会话工具泄漏仍是已知缺陷。

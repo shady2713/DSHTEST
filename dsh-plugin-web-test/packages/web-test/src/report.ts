@@ -86,7 +86,7 @@ export interface ReportJson {
   /** Every proposed case and whether it produced a result, so a silent omission shows. */
   coverage: CaseCoverage[]
   /** Operations whose outcome was never established, which the report must not hide. */
-  unresolvedOperations: { operationKey: string, intent: string, dispatch: string, reason: string }[]
+  unresolvedOperations: { operationKey: string, intent: string, role: string, generation: number, dispatch: string, reason: string }[]
 }
 
 /** Report format version, so a consumer can tell the layout apart. */
@@ -120,6 +120,8 @@ export function buildReportBundle(input: ReportInput): ReportBundle {
       .map(operation => ({
         operationKey: operation.operationKey,
         intent: operation.intent,
+        role: operation.role,
+        generation: operation.generation,
         dispatch: operation.dispatch.kind,
         reason: operation.dispatch.kind === 'unknown' ? operation.dispatch.reason : '',
       })),
@@ -171,6 +173,9 @@ function renderHtml(json: ReportJson): string {
   const unresolved = json.unresolvedOperations.length === 0 ? '' : htmlSection('结果未确认的操作',
     json.unresolvedOperations.map(operation =>
       `<li><code>${escapeHtml(operation.operationKey)}</code> ${escapeHtml(operation.intent)}`
+      // The Markdown, the HTML and the JSON carry the same role and generation,
+      // so a reader of any one of them can tell which attempt this is.
+      + `（${escapeHtml(operation.role === '' ? '无角色' : `角色 ${operation.role} 第 ${operation.generation} 代`)}）`
       + ` — ${escapeHtml(operation.dispatch)}${operation.reason === '' ? '' : `：${escapeHtml(operation.reason)}`}</li>`))
   const questions = json.openQuestions.length === 0 ? '' : htmlSection('本次运行未能确认的问题',
     json.openQuestions.map(question => `<li>${escapeHtml(question)}</li>`))
@@ -331,7 +336,11 @@ function renderMarkdown(input: ReportInput, tally: Tally, questions: string[]): 
     lines.push(`## 结果未确认的操作`, ``)
     for (const operation of unresolved) {
       const reason = operation.dispatch.kind === 'unknown' ? `：${operation.dispatch.reason}` : ''
-      lines.push(`- \`${operation.operationKey}\` ${operation.intent} — ${operation.dispatch.kind}${reason}`)
+      // The role and generation are what make the line traceable: the same
+      // operation key can appear in two generations of one run, and only the
+      // generation says which attempt this is.
+      const as = operation.role === '' ? '无角色' : `角色 ${operation.role} 第 ${operation.generation} 代`
+      lines.push(`- \`${operation.operationKey}\` ${operation.intent}（${as}） — ${operation.dispatch.kind}${reason}`)
     }
     lines.push(``)
   }
