@@ -3895,3 +3895,39 @@ web_test_assume_role: Error: run "shop-acc-c7-seller-run1" confirmed role "selle
 本会话有一个 `running` 且未核验该角色的运行，**准备窗口开着**。
 
 **下一步就按这个流程跑。** 场景 4 仍记「部分通过」。
+
+### 0.7.29：**approver 核验通过**——0.7.28 的流程是对的
+
+按 0.7.28 定的流程（模型先在浏览器里走完登录表单，再调 `assume_role`）：
+
+```
+seller-g3__browser_snapshot: Page URL: http://127.0.0.1:8902/login
+web_test_assume_role: Run shop-acc-c7-seller-run1 now acts as seller; every operation
+  and case result records it. Present authority …
+seller-g3__browser_snapshot: Page URL: http://127.0.0.1:8902/account
+  Page Title: 当前账号
+
+运行: shop-acc-c7-seller-run1 | running | activeRole: 'seller'
+```
+
+**模型先登录 → 插件再读回账号 → 运行写入 `activeRole: 'seller'`。**
+**这条链路在第二个角色、第二个会话上完整成立。**
+
+#### 至此可以确认的几件事
+
+- **准备窗口在正确的前提下会开**：`acc-c7` 声明了 `seller`、
+  本会话有 `running` 且未核验该角色的运行，**模型的浏览器调用被放行**。
+  0.7.24 那次拒绝、0.7.25 判定的「自举失败」，
+  **根因都只是环境没声明那个角色**。
+- **插件不持有凭据，登录必须由模型完成**（0.7.28），这条成立。
+- **授权仍按运行与角色签发**，seller 拿到的是自己的授权串。
+
+#### 场景 4 只剩最后一步
+
+用 seller 的授权（**带 `authority` 参数**）驱动浏览器：
+`GET /orders` 确认 `59773afd` 的 `createdBy` 是 Alice Buyer，
+`POST /orders/approve` 审批它，核对返回的 `approvedBy` 是 **Bob Approver**；
+再回到 buyer 会话读同一张表，确认 `approvedBy` 变成了 Bob Approver。
+
+**只有这一步做完，「两个角色在同一业务对象上协作」才算取证完成。**
+现在**记为「部分通过」**。
