@@ -7606,3 +7606,47 @@ Chromium=0
 
 **只完成了清场，序列本身没跑。**
 **下一轮从 `Chromium=0` 的干净起点接着做，不需要重来。**
+
+### 0.8.8：**「取消 A → 新建未核验 B → B 驱动浏览器」现在被阻断了**
+
+0.8.7 只清了场，这轮把序列跑完。**起点是 0.7.83 复现出泄漏时的同一序列。**
+
+#### 三步
+
+```
+1. 建 s1 并核验            Chromium=10   s1 running, role 'buyer'
+2. 取消 s1                 Chromium=0    s1 cancelled
+3. 建 s2 不核验            Chromium=0    s2 running, role ''
+   在 s2 里驱动浏览器：
+   browser_navigate: Error: unknown tool "mcp__playwright-role-buyer__browser_navigate"
+```
+
+#### 与 0.7.83 的对照
+
+| | 0.7.83 | 0.8.8 |
+|---|---|---|
+| 取消 A 后 Chromium | **10**（浏览器还挂着） | **0** |
+| B 的浏览器调用 | `snapshot` / `evaluate` **成功**，读到 `Alice Buyer` | **被拒** |
+
+**差别在第 2 步：0.7.83 取消 A 之后 A 的浏览器还活着，B 够得着；
+现在取消即回收，B 面前根本没有浏览器可调。**
+
+#### 哪一条证据更硬
+
+**`unknown tool` 不是最硬的那条。**
+**0.7.6 的教训就在这里：它只说明该作用域查不到这个工具，
+不能证明没有 client 注册过。**
+
+**真正硬的是 `Chromium=0`**——
+**进程都不存在，B 无从驱动。**
+
+**两条一起给，比只报 `unknown tool` 强。**
+
+#### 一个附带事实
+
+```
+web_test_status: … Runs: 18. A previous host run was interrupted; these runs need …
+```
+
+**插件自己指出有运行因上次宿主被中断而需要处理。**
+**那是 0.8.7 那个残留宿主留下的，不是本轮的问题。**
