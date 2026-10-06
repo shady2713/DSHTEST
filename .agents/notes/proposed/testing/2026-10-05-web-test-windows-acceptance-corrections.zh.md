@@ -1628,3 +1628,32 @@ supplying browser use, Agents, tools"，它在**自己那套作用域**上登记
 
 **已回退到 0.6.7。** 两处不通过项的对外结论仍然是 0.6.23 那条（提供方把工具定义给此后
 创建的每个 Agent，公开接口没有按 Agent 限定的开关），那条有独立的契约证据，不受本轮影响。
+
+### 0.6.30：受控实验最可能的混淆项已排除
+
+0.6.29 的实验还有��个我该先查的混淆项：**profile 的 `cordis.patch.yml` 里可能残留着
+`{ id: web-test-role-browsers, disabled: false }`**（0.6.7 装的时候加的，插件管理器在后续
+`plugin add` 时可能重新写回）。如果 A、B 两组都带着这行，那根作用域的池实例就与"是否确认
+环境"无关，实验仍然是混淆的。
+
+实测该文件当前内容：
+
+```
+[
+  { id: web-test-storage-sqlite, disabled: false },
+  { id: web-test-store, disabled: false },
+  { id: web-test, disabled: false },
+  { id: web-test-browser-use, disabled: false },
+  { id: web-test-preset, disabled: false }
+]
+```
+
+**没有 `web-test-role-browsers` 行。** 插件管理器没有把它写回来，它在 0.6.8 包里只出现一次
+且在预设内部。
+
+所以 0.6.29 的结论站得住：**池在预设里就被判定泄漏，与它是否被使用无关**，而根作用域那个
+同名实例的来源仍未追到（不是 profile 的行，也不是我声明的 `inject`）。这一层留给下一轮，
+不下结论。
+
+**收口**：这条路到此为止。仓库回到 0.6.7，116 测试通过，交付材料齐备。两处不通过的对外
+结论仍是 0.6.23 那条有独立契约证据的说法。
