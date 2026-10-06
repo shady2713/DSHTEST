@@ -2553,3 +2553,94 @@ Done in 232ms using pnpm v11.7.0
 
 **给 Windows 复验方的说明**：这一项在 Ubuntu 上无法验证，**不要在 Windows 上假设它
 会通过**——那是同一个宿主行为，不是平台差异。
+
+### 0.7.0：两处归因被推翻，资源释放句柄修好，跨角色仍未通
+
+用户指出我把「某个 helper 的单提供方限制」等同于「宿主整体限制」，并给了
+`packages/experimental/browser-use-runtime/tests/host-runtime-duplication.spec.ts`。
+**那份 spec 直接推翻了此前的结论。**
+
+#### 归因错误一：存在公开的运行时禁用接口
+
+我此前记录「没有公开禁用接口」「Windows 必然失败」。**两处都错。**
+
+`ctx.pluginManager` 是 `@Remote` 服务：
+
+| 方法 | 位置 |
+|---|---|
+| `pluginManager/setPluginEnabled(id, enabled)` | `packages/boot/plugin-manager/src/index.ts:424-435` |
+| `pluginManager/setBundleEnabled(name, enabled)` | 同上 `:442-448` |
+
+**是否热生效由一行决定**（`:763`、`:776`）：
+
+```ts
+if (this.ownerContext.get('hmr') === undefined) return []
+result.application = this.ownerContext.get('hmr') !== undefined ? 'applied' : 'restart-required'
+```
+
+`hmr` 在 base-backed profile 默认启用（`packages/bundle/base/cordis.patch.yml:28-32`），
+所以正常结果是 `application: 'applied'`，**不是 restart-required**。
+链路：`writePluginEnabled` → `reconcileProfilePatches`（`app-boot/src/index.ts:289`）
+→ `EntryGroup.update`（`vendor/loader/src/config/group.ts:48-65`）
+→ 禁用时 `entry.fiber?.dispose()`（`vendor/loader/src/config/entry.ts:134-137`）。
+
+**我此前只试了 `dsh plugin remove`**（CLI 只跑 pnpm，无 IPC），**没查 `pluginManager`**。
+CLI 那条观察本身没错，但**它不是那个接口**。
+
+#### 归因错误二：普通会话看到 mcp 工具，不是缺陷
+
+那份 spec 的通过用例写明：
+
+```ts
+expect(toolNames(ctx)).toEqual([])                    // 全局视图
+for (const agent of [first.agent, second.agent])
+  expect(toolNames(ctx, agent)).toContain(TOOL)       // 按 Agent 作用域
+```
+
+`ToolRuntime.view`（`packages/core/tools/src/index.ts:1178-1218`）按
+`ScopedLayers.chainLayers/peek` 过滤，**不带 agent 参数就只读全局层**。
+**我此前用全局查询判「普通会话看到角色工具」，按设计全局本就该是空的。**
+
+#### 修复：releaseRole 释放的是空 effect
+
+用户指出 `releaseRole` 只释放外层空 effect——**确认属实**：
+
+```ts
+const mounted = this.ctx.effect(() => {
+  mountSessionMcp(this.ctx, {...})   // ← 注册在池的上下���上
+  return () => {}                    // ← 空 disposer
+})
+```
+
+`ctx.effect(execute)` 只回收**自己产出**的 disposer；`mountSessionMcp(this.ctx, ...)`
+的注册落在 `this.ctx` 上，**不在任何可释放的作用域里**。而且
+`mountSessionMcp` **返回 void**（`mcp.ts:100`），**调用方必须自己持有那个 Fiber**。
+
+改成在独立 fiber 上挂载：
+
+```ts
+const fiber = this.ctx.plugin({ inject: [...], apply(provider) { mountSessionMcp(provider, {...}) } })
+this.mounts.set(role, async () => { await fiber.dispose() })
+```
+
+`ctx.plugin()` 造的是 Cordis Fiber（`vendor/cordis/src/registry.ts:316-336`），
+`fiber.dispose()` 会卸载插件并**在清理完成后才 settle**。
+
+顺带修了 `switchTo`：它原本会**先释放上一个角色**再挂新角色（注释称「宿主只允许一个
+browser-use provider」）——**那个前提是错的**，provider 给每个 Agent 自己的 client，
+不同角色注册不同 `browserUse` 名字，可以并存。
+
+类型检查通过，**119 测试通过**。
+
+#### 跨角色：修复后仍未通
+
+0.7.0 真实宿主上 buyer 正常（`now acts as buyer`），**seller 报
+`unknown tool "mcp__playwright-role-seller__browser_navigate"`**。
+
+这个错误来自工具层而非本插件的守卫（守卫在 `agent.ts:186` 已放行登录类工具），
+说明**第二个角色的 MCP client 从未注册**。最可能的原因：`createScope(ctx, agent)`
+按 **Agent** 建作用域，而 seller's fiber 是在 Agent **已存在之后**挂载的，
+它的 `open(agent)` 没有被调用。**这一点尚未证实**，需要下一步定位。
+
+**所以当前不能说跨角色已通过。** 真实浏览器的隔离是对的（Chromium=10，buyer 可用），
+但第二角色拿不到工具。

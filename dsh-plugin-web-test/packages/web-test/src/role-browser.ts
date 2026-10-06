@@ -170,20 +170,18 @@ export class RoleBrowserPool extends Service {
   }
 
   /**
-   * Make a role the one this pool drives, releasing any other first.
+   * Make a role the one this pool drives, leaving any other mounted.
    *
-   * The host keeps a single browser-use provider, so a second role cannot be
-   * mounted alongside the first. Switching therefore closes the previous role's
-   * browser for real and starts a new one, which is also what keeps one role's
-   * login out of the next: the browser that held it is gone before the new one
-   * exists.
+   * A role's browser is kept once started. The provider gives every Agent its own
+   * MCP client under its own scope, and each role registers a distinct
+   * `browserUse` name, so two roles coexist rather than contending for one
+   * browser. Releasing the previous role here was what made cross-role work
+   * impossible: the first role's login and cookies were destroyed before the
+   * second role existed.
    * @param role - The role to act as.
    * @returns the role's browser resource.
    */
   async switchTo(role: string): Promise<RoleBrowser> {
-    if (this.activeRole !== undefined && this.activeRole !== role) {
-      await this.releaseRole(this.activeRole)
-    }
     const browser = await this.ensure(role)
     this.activeRole = role
     return browser
@@ -232,25 +230,29 @@ export class RoleBrowserPool extends Service {
     // MCP client's whole peer tree, which a unit test that never starts a
     // browser should not have to load.
     const { mountSessionMcp } = await import('@deepseek-ai/dsh-experimental-browser-use-runtime/mcp')
-    // Mounted against this pool's own context, never an agent's: the provider
-    // reads `browserUse` off the context it is given, which an agent context
-    // does not inject, and it scopes each server per agent itself.
-    const mounted = this.ctx.effect(() => {
-      mountSessionMcp(this.ctx, {
-        name: serverName,
-        // Each role owns its own Chromium, so no two roles contend for one
-        // attached browser and neither can land on the other's page.
-        exclusive: false,
-        command: process.execPath,
-        args: playwrightArgs(this.executablePath, this.headless),
-        env: {},
-      })
-      // The provider registers its own teardown against this context, so
-      // disposing this effect is what closes the browser. The disposer returned
-      // here runs before that one and has nothing left to do.
-      return () => {}
-    }, `web-test role browser ${role}`)
-    this.mounts.set(role, mounted)
+    // Mounted on its own plugin fiber, not on the pool's context. `mountSessionMcp`
+    // registers the browser-use provider, the per-Agent scopes and the MCP
+    // clients against whatever context it is handed, so handing it the pool's
+    // context put every registration outside any disposable the pool owned:
+    // releasing a role ran a disposer that had nothing to dispose and left the
+    // Chromium running. A fiber's `dispose()` unloads the plugin and settles only
+    // after its cleanup finished, so awaiting it is awaiting the closed browser.
+    const { executablePath, headless } = this
+    const fiber = this.ctx.plugin({
+      inject: ['browserUse', 'agents', 'tools', 'systemPrompt'],
+      apply(provider: Context) {
+        mountSessionMcp(provider, {
+          name: serverName,
+          // Each role launches its own Chromium, so no two roles contend for one
+          // attached browser and neither can land on the other's page.
+          exclusive: false,
+          command: process.execPath,
+          args: playwrightArgs(executablePath, headless),
+          env: {},
+        })
+      },
+    })
+    this.mounts.set(role, async () => { await fiber.dispose() })
     this.started.set(role, browser)
   }
 
