@@ -1700,3 +1700,35 @@ supplying browser use, Agents, tools"，它在**自己那套作用域**上登记
 **这一条也说明一件对交付有用的事**：`dshclean` 那个 profile 的 5 行是**我或更早的实验手工
 写进去的**，不是管理器写的。Windows 端用插件管理器安装时不会遇到这层，**但如果复验时手工
 往 profile patch 里加行，加什么行会直接影响装配结果**——这一条要写进 Windows 复验清单。
+
+### 0.6.32：受控实验重做，这次条件干净——0.6.29 成立
+
+按 0.6.30 写下的方法重做，全新 `DSH_HOME=/home/weetion/dshfresh2`：
+
+1. `dsh iso4 --from-default-profile web` 建 profile
+2. 装 `dsh-plugin-web-test-0.6.8.tgz`（浏览器行在预设内）
+3. **启动宿主之前**读 `profiles/iso4/cordis.patch.yml` → `[]`
+4. 同一个 home 跑两组，只变一个变量
+
+| 组 | 变量 | 池是否挂载 | `session/create` |
+|---|---|---|---|
+| A（端口 4600） | 未确认环境 | **否** | `Preset services require isolate realms: webTestRoleBrowsers` |
+| B（端口 4610） | 先 `putEnvironment` | 是 | 同上 |
+
+A 组跑完后**再读一次** profile patch，仍是 `[]`（运行期没有回写）。
+包内 `web-test-role-browsers` 只出现一次，在预设内。
+
+**这一次没有混淆项**：全新 home、启动前读取、单变量、运行后复验。
+所以 0.6.29 的结论**成立**：
+
+> **只要池在预设里，宿主就判定它泄漏，与它有没有被使用无关。**
+
+也就是"把浏览器行移进预设"这条路在当前宿主上不成立。0.6.27（挂载触发）和
+0.6.30/0.6.31（profile 行回写）两种解释都已被排除。
+
+**仍未回答的**：根作用域那个同名实例从哪来。不是 profile 的行，不是 `inject`，不是使用。
+**能确定的是它在池被构造之前就已经存在**（A 组根本没调用 `ensure`），所以它来自插件根入口
+加载 `cordis.patch.yml` 时的注册路径——**这一层没有再查，不下结论**。
+
+**已回退到 0.6.7。** 交付材料不受影响；两处不通过的对外结论仍是 0.6.23 那条有独立契约
+证据的说法。
