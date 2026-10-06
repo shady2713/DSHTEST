@@ -5888,3 +5888,39 @@ w4-keep   | running
 | `finish_run` → `cancelled` / `blocked` 释放 | 走同一 `putRun` 路径，**未单独实测** |
 
 **0.7.70 记的「终态不释放」缺陷已闭环修复并验证。**
+
+### 0.7.73：**三终态在当前包上全部实测**，0.7.72 标的缺口补齐
+
+0.7.72 把 `cancelled` 与 `blocked` 标为「走同一路径，未单独实测」。
+这轮用同一宿主把它们各测一遍。
+
+#### `blocked`
+
+```
+起点 Chromium=10（w4-keep 处于 running）
+finish blocked 后 Chromium=0   宿主=1
+w4-keep | blocked
+```
+
+#### `cancelled`
+
+```
+finish cancelled 后 Chromium=0   宿主=1   用户Chrome=27
+w4-cancel | cancelled
+```
+
+（`w4-cancel` 是新建并完整核验过的运行，
+所以 0 是 finish 造成的，不是浏览器没起来。）
+
+#### 三终态在 `f1ff5403…` 上的完整证据
+
+| 终态 | 起点 | 结果 | 轮次 |
+|---|---|---|---|
+| `completed` | Chromium 10 | **0** | 0.7.72 |
+| `blocked` | Chromium 10 | **0** | 0.7.73 |
+| `cancelled` | Chromium 10 | **0** | 0.7.73 |
+
+**三个起点都是 10，终点都是 0，宿主始终 1，用户浏览器 27 个未动。**
+
+**0.7.43 那条「三终态都释放」的实测来自旧包；
+0.7.72 与本轮把它在当前包上重做了一遍，现在这条结论有当前构建的证据。**
