@@ -2937,3 +2937,67 @@ read: <path>/etc/hostname</path>
 那些工具挂在各自 Agent 的作用域层下，普通会话的 Agent 根本没有该层。
 **按 Agent 隔离 ≠ 按预设选择**，两者是不同机制，这次改的是 guard 的管辖范围，
 不是工具的可见性。
+
+### 0.7.6：`pluginManager` 禁用/重新启用**实测完成**——推翻我此前「无公开接口」的说法
+
+用实际插件管理入口在**运行中的宿主**上测，插件先起了一个角色浏览器（Chromium=10）。
+
+#### 单行禁用（`include:web-test-role-browsers` → false）
+
+```
+application: failed   changed: true
+诊断: dsh: warning: 1 entry did not activate
+      web-test (dsh-plugin-web-test)
+
+include:web-test-store          | enabled: True  | fiberPhase: active
+include:web-test                | enabled: True  | fiberPhase: pending   ← 没起来
+include:web-test-role-browsers  | enabled: False | fiberPhase: null
+```
+
+| 指标 | 禁用前 | 禁用后 |
+|---|---|---|
+| 插件自有 Chromium | **10** | **0** |
+| 宿主进程 | 1 | 1 |
+| 用户自己的 Chrome | 25 | **25** |
+
+**独立 fiber 的源码修复拿到了真实回收证据**：禁用使 `ctx.effect` 的 disposer 跑起来，
+Chromium 从 10 归零，宿主存活，用户浏览器一个没动。
+
+`application: failed` 的原因也清楚了：主行 `web-test` 注入了 `webTestRoleBrowsers`，
+依赖行被禁用后它无法激活。**这是真实的组合依赖行为，不是缺陷**，但复验方需要知道。
+
+#### 单行重新启用
+
+```
+application: applied   changed: True
+include:web-test-store          | enabled: True | fiberPhase: active
+include:web-test                | enabled: True | fiberPhase: active
+include:web-test-role-browsers  | enabled: True | fiberPhase: active
+```
+
+**组合完全恢复。**
+
+#### 整包禁用（bundle 名是 `dsh-plugin-web-test`，不是 `web`）
+
+```
+application: applied   changed: True
+禁用后 Chromium=0  宿主=1  用户Chrome=25
+```
+
+禁用期间 `listPlugins` 里**已无任何 web-test 行**。重新启用：
+
+```
+application: applied   changed: True
+三行 fiberPhase 全部 active
+```
+
+#### 归因纠正
+
+我此前写「没有公开禁用接口」「Windows 必然失败」——**两处都错**。
+接口是 `pluginManager/setPluginEnabled` 与 `pluginManager/setBundleEnabled`（`@Remote`），
+**本机实测 `application: applied`，确实热生效**，不是 restart-required。
+我当时只试了 `dsh plugin remove`（CLI 只跑 pnpm，无 IPC）就下了结论。
+
+**「Windows 必然失败」没有依据**：这是插件自身的释放逻辑，
+在 Ubuntu 上用公开接口已验证禁用即回收；Windows 上要复验的是同一件事，
+但**没有已知的机制性理由说它会失败**。
