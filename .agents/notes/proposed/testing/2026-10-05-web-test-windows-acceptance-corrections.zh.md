@@ -4186,3 +4186,43 @@ setPluginEnabled → ok: True | changed: true | application: "failed"
 
 - **Windows 上禁用/启用的 `application` 取值与 fiber 语义**
 - **Windows 上进程退出的判定方式**（任务管理器/句柄，与 Linux 的进程树不同）
+
+### 0.7.35：插件源码的仓库门禁——**lint 零告警，duplication 零标记**
+
+上一轮只补了文档门禁，**插件源码本身从没跑过 lint 和 duplication**，这轮补上。
+
+#### duplication
+
+本轮改动的三个源文件：
+
+```
+web-test/src/agent.ts
+web-test/src/role-browser.ts
+web-test/src/store-service.ts
+```
+
+`pnpm run duplication` **对这三个文件的标记数为 0**。
+门禁本身仍以退出码 1 结束，标出的是既有包
+（`experimental/browser-use-web-test`、`web-test/web-test-conversation`、
+`web-test/web-test-runtime`），**不是本轮改动引入的**。
+
+#### lint
+
+```
+$ oxlint dsh-plugin-web-test/packages/web-test/src/{agent,role-browser,store-service}.ts     dsh-plugin-web-test/packages/web-test/tests/
+Found 0 warnings and 0 errors.
+Finished in 843ms on 15 files with 90 rules using 20 threads.
+```
+
+**15 个文件、90 条规则，零告警零错误。**
+
+#### 顺带确认：宿主零改动
+
+```
+$ git diff --stat origin/codex/web-test-plugin-s0~30..HEAD -- packages/ apps/ vendor/
+（无输出）
+```
+
+**本轮及此前全部改动都在 `dsh-plugin-web-test/` 内，
+宿主源码、`packages/`、`apps/`、`vendor/` 一行未动。**
+这是「不修改宿主」这条约束的直接证据。
