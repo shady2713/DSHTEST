@@ -5399,3 +5399,66 @@ web_test_propose_cases: Proposed 1 case(s): buyer-signin-account.
 **两阶段的第一阶段与「未确认前拒绝执行」这一条，已有 0.8.0 上的实测。**
 **「确认之后即可执行」那一半仍未测**，
 因为确认走的是操作者通道（`webTest/*`），**本轮未走**。
+
+### 0.7.64：**取消走操作者通道不释放浏览器——两条路径行为不一致**
+
+0.7.63 留下「坏状态下释放路径能否救回来」这个问题。**用操作者通道
+`webTest/controlRun` 取消两个运行来试，结果发现的是一个更基础的不一致。**
+
+#### 实测
+
+```
+取消前 Chromium=20
+webTest/controlRun shop-buyer-alice-1 cancel → {"ok":true, …}
+取消 buyer 后 Chromium=20
+webTest/controlRun shop-seller-bob-1 cancel → {"ok":true, …}
+取消 seller 后 Chromium=20
+宿主=1  用户Chrome=27
+```
+
+**两次取消都返回成功，运行记录也更新了，浏览器一个都没释放。**
+
+#### 原因：释放只挂在模型工具上
+
+```
+$ grep -c "releaseRun" src/client/remote.ts
+0
+$ grep -n "releaseRun" src/agent.ts
+719:        await pool.releaseRun(input.runKey)
+1467:          await pool?.releaseRun(input.runKey)
+```
+
+**`releaseRun` 在 `remote.ts` 里出现 0 次，只在 `agent.ts` 的两处。**
+模型工具 `web_test_control_run` 与 `finish_run` 走那两处，**所以会释放**
+（0.7.43 实测 `cancelled` 与 `blocked` 各把 Chromium 从 10 降到 0）。
+
+**操作者通道 `webTest/controlRun` 只改 store 状态，不碰资源。**
+
+#### 这是今天发现的第二处「两个入口判据不一致」
+
+| 入口 | 行为 |
+|---|---|
+| `putEnvironment` | 允许环境挂在不存在的项目下 |
+| `start_run` | 拒绝，报错还指错字段（0.7.60 已修） |
+| **模型工具 `web_test_control_run`** | **取消会释放浏览器** |
+| **操作者 `webTest/controlRun`** | **取消不释放，浏览器留着** |
+
+**操作者通道正是「人在界面��取消一个运行」的那条路**——
+**它最该回收资源，却恰恰不回收。**
+浏览器会一直留到宿主退出为止。
+
+#### 影响范围
+
+- 0.7.43 那条「三终态都释放」的实测**只覆盖了模型工具路径**，
+  **不能推广到操作者路径**。
+- Windows 清单里「禁用/整包禁用」那些条目**也需按入口分别核对**。
+
+#### 修还是不修
+
+**这是插件自己的两个入口不一致，不是宿主问题，改动只在插件内。**
+但**修法有两种，取决于意图**：
+把释放下沉到 store 的状态转换里（**所有入口自动一致**），
+或者在 `remote.ts` 的 `controlRun` 里补一次释放（**最小改动，但两处仍可能再分叉**）。
+
+**本轮上下文已尽，不改。** 记为**待处理项：操作者通道取消不释放资源**，
+并把「三终态都释放」这条结论**限定到模型工具路径**。
