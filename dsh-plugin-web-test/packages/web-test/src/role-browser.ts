@@ -257,7 +257,7 @@ export class RoleBrowserPool extends Service {
     // void, so the caller that mounts it is the only possible owner.
     const fiber = this.ctx.plugin({
       inject: ['agents', 'tools'],
-      apply(provider: Context) {
+      async apply(provider: Context) {
         // One scope per Agent, per role. `createScope` takes any object as its
         // key, and the tool layer is looked up under that key, so a client
         // mounted under an Agent's key contributes tools to that Agent only. Two
@@ -276,11 +276,13 @@ export class RoleBrowserPool extends Service {
           }))
         }
         const scopes = new Map<Agent, Scope>()
+        // Opened for every Agent the pool has seen, and awaited, so this role's
+        // tools are registered by the time the fiber is ready. Leaving these
+        // unawaited let `ensure` return while the client was still connecting,
+        // and the first browser call arrived before its tool existed and was
+        // refused as unknown — which says nothing about whether a client exists.
+        await Promise.all([...knownAgents].map(agent => open(agent)))
         provider.on('agent/created', async ({ agent }) => { await open(agent) })
-        // A role started after its Agent already exists must still come up, so
-        // the Agents seen so far are opened now. The list is this pool's own
-        // record of Agents the host announced; nothing is invented.
-        for (const agent of knownAgents) void open(agent)
       },
     })
     try {

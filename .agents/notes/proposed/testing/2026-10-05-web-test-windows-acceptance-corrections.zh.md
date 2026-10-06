@@ -2819,3 +2819,58 @@ client 注册之间的竞态**——正是用户提醒的那一点。
 **下一步：`ensure` 必须等到该角色的工具在该 Agent 层里可见再返回。**
 
 类型检查通过，**124 测试通过**。
+
+### 0.7.4：**两个角色同时登录并来回切换——跨角色隔离成立**
+
+#### 竞态的真正来源
+
+0.7.3 里角色 fiber 内对已存在 Agent 的补开是**即发即忘**的：
+
+```ts
+for (const agent of knownAgents) void open(agent)      // ← 没有 await
+```
+
+`ensure` 只等 fiber 激活，而 `open()` 里的 `await scope.ctx.plugin(McpClient, ...)`
+还没跑完，`ensure` 就返回了。**于是第一次浏览器调用抢在工具注册之前**，被报成
+`unknown tool`。
+
+改成 `apply` 异步、`await Promise.all([...knownAgents].map(agent => open(agent)))`。
+`ctx.plugin()` 返回的对象其 `then` 走 `fiber.await()`
+（`vendor/cordis/src/registry.ts:331-335`），**覆盖 `apply` 的异步体**，
+所以 await fiber 确实等到了 client 注册完成。
+
+#### 真实宿主结果（干净 home，环境声明已修正为站点真实账号）
+
+```
+web_test_start_run:     Run run-shop-rolecheck is running.
+web_test_assume_role:   confirmed role "buyer" as "" …            ← 空账号被拒
+web_test_assume_role:   now acts as buyer.  Present authority "56f54b1e-…"
+web_test_assume_role:   confirmed role "seller" as "" …           ← 空账号被拒
+web_test_assume_role:   now acts as seller. Present authority "8fb3b228-…"
+web_test_assume_role:   now acts as buyer.  Present authority "1a7cbfa1-…"   ← 切回
+web_test_finish_run:    Run run-shop-rolecheck closed as completed.
+```
+
+**没有 `unknown tool`**，竞态消失。
+
+**三条关键事实**：
+
+1. **两个角色各自通过真实站点核验**——seller 读到的正是站点为 bob 账号声明的
+   `Bob Approver`（我把环境声明改成与站点一致后放行）。
+2. **切回 buyer 时没有重新登录**——它直接再次核验通过，说明 **buyer 的浏览器
+   在 seller 工作的整个过程中保留着自己的登录状态**。
+3. **两次核验签发了不同的授权**（`56f54b1e…` / `8fb3b228…` / `1a7cbfa1…`），
+   授权随角色切换重新签发，不是复用。
+
+**这是第七节场景 3「A/B 同时登录不同账号，Cookie 和存储不串用」的第一个真实证据。**
+
+上一轮 0.7.3 的 `Chromium=20` 证明两个浏览器并存；这一轮证明**它们各自持有并保持
+自己的登录态**。
+
+#### 仍未完成
+
+- 场景 4「A 创建业务记录，B 按其权限处理同一记录」：**能力已具备**（两个独立登录的
+  浏览器可来回切换），但还没有跑通具体的跨角色业务协作。
+- 场景 5「关闭一个运行要释放它拥有的资源，同时保留其他运行和普通会话的资源」：
+  资源键目前仍按**角色名**，未按项目/环境/运行/Agent 区分。
+- 第 5 项 `pluginManager` 禁用/重新启用**尚未实测**。
