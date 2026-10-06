@@ -6918,3 +6918,49 @@ async releaseRole(role: string): Promise<void> {
 ```
 typecheck 干净   134 tests passed   lint 0 warnings 0 errors
 新包 sha256 f6621d41ff3920eabaf5ef4346691d9d2655355feba08f3f7a33b08b4d11bafd
+
+### 0.7.94：**泄漏修复在新包上实测通过**——两个运行挂同一角色，逐个取消都归零
+
+0.7.93 的修复只有单测覆盖。这轮在全新宿主 `dshw6`、新包 `f6621d41…` 上实测。
+
+#### 触发的正是泄漏条件：**一个角色挂两把 key**
+
+```
+会话: session-269fd433
+r1 核验后  Chromium=10   run r1 | running
+r2 核验后  Chromium=10   run r1 | cancelled   run r2 | running
+```
+
+**第二段是本轮的实测价值所在**：r2 挂上后，`keysByRole['buyer']` 记的是 r2 那把，
+**而 r1 那把按旧代码已经没人记得了**。
+
+#### 逐个取消
+
+```
+取消前        Chromium=10
+取消 r2 后    Chromium=0   宿主=1   用户Chrome=27
+r1 | cancelled   r2 | cancelled
+```
+
+**全归零。** 按旧代码，r2 取消时只会释放它自己那把，
+**r1 的那把会留下，Chromium 应停在 10**。
+
+#### 一个附带观察
+
+**`putEnvironment` 建好 `acc-w6` 之后 `Chromium=0`**——
+**`index.ts` 注释说它在确认环境时就预启动浏览器，实际这里没起。**
+**与 0.7.88 是同一类问题：注释与实现不符。**
+**本轮只记下，不下结论**（可能是 fiber 注册后未真正挂载）。
+
+#### 各项在新包上的状态
+
+| 项 | 结果 |
+|---|---|
+| 同一角色跨运行挂两次后取消 | ✅ **0.7.94，Chromium 归零** |
+| r1 取消不误伤 r2 的浏览器 | ✅ 0.7.94（r2 仍能用） |
+| 用户自己的 27 个浏览器 | ✅ 未受影响 |
+
+**0.7.68 / 0.7.72 / 0.7.73 的释放结论仍需在新包上逐条重测，
+本轮只覆盖了「双挂载」这一条最关键的场景。**
+
+新包 sha256 f6621d41ff3920eabaf5ef4346691d9d2655355feba08f3f7a33b08b4d11bafd
