@@ -499,10 +499,6 @@ const settleOperationInputSchema = z.object({
   runKey: z.string().min(1),
   operationKey: z.string().min(1),
   outcome: z.enum(['observed-success', 'observed-absent']),
-  // Settling is part of acting as the run, so it carries the same authority the
-  // dispatch did. It is echoed back so the browser calls after a settlement do
-  // not need a fresh one.
-  authority: z.string().min(1),
 })
 
 /** The operation-unknown tool's arguments. */
@@ -1081,7 +1077,7 @@ export function apply(ctx: Context): void {
         return [{ type: 'text', text: `Operation ${result.operationKey} is ${result.dispatch}. ${result.note}` }]
       },
     },
-    async execute(args) {
+    async execute(args, exec) {
       refusing()
       const input = settleOperationInputSchema.parse(args)
       const record = await store.settleOperation(input.runKey, input.operationKey, input.outcome)
@@ -1092,7 +1088,11 @@ export function apply(ctx: Context): void {
         runKey: record.runKey,
         operationKey: record.operationKey,
         dispatch: settled.kind,
-        authority: input.authority,
+        // The run's live authority, read back so the browser calls that follow a
+        // settlement use the token `web_test_assume_role` issued rather than one
+        // the model carried through. It is empty when the run no longer holds a
+        // verified role, which is the same refusal `requireAuthority` would give.
+        authority: store.currentAuthority(record.runKey, requireAgentId(exec))?.token ?? '',
         note: settled.kind === 'settled'
           ? `Recorded as ${settled.outcome}; it will appear in the report and cannot be settled again.`
           : 'The operation was not settled.',

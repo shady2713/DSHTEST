@@ -923,6 +923,32 @@ export class WebTestStore extends Service {
   }
 
   /**
+   * The authority one run's current Agent already holds, without minting one.
+   *
+   * A later step in the same run has to act with the token `assume_role` issued,
+   * and it should not have to be handed back and forth as an argument: echoing a
+   * token through the model both widens what the model can assert and lets a
+   * stale token be replayed. This reads the live token and re-checks it exactly
+   * as `requireAuthority` would, so a run that restarted, lost its verified role or
+   * changed generation yields nothing.
+   * @param runKey - Run whose authority is wanted.
+   * @param agentId - Agent asking, so another Agent's token is never returned.
+   * @returns the live token, or undefined when the run has none.
+   */
+  currentAuthority(runKey: string, agentId: string): AuthorityToken | undefined {
+    const run = this.getRun(runKey)
+    if (run === undefined || run.status !== 'running') return undefined
+    for (const authority of this.authority.values()) {
+      if (authority.runKey !== runKey || authority.agentId !== agentId) continue
+      if (authority.generation !== run.generation) continue
+      if (authority.role !== run.activeRole) continue
+      if (this.verifiedAccount(runKey, authority.role) === '') continue
+      return authority
+    }
+    return undefined
+  }
+
+  /**
    * Check a token against the run it names, right now.
    *
    * The run's own status and generation decide, so a token minted before a run

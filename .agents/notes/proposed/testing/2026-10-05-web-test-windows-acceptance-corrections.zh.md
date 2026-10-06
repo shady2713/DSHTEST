@@ -2644,3 +2644,54 @@ browser-use provider」）——**那个前提是错的**，provider 给每个 A
 
 **所以当前不能说跨角色已通过。** 真实浏览器的隔离是对的（Chromium=10，buyer 可用），
 但第二角色拿不到工具。
+
+### 0.7.1：工具契约一致性——`settle_operation` 的输入与内部要求矛盾
+
+`settle_operation` 注册的 `parameters` 是
+
+```ts
+required: ['runKey', 'operationKey', 'outcome']
+```
+
+**不含 `authority`**，而 `execute` 里
+
+```ts
+const settleOperationInputSchema = z.object({ ..., authority: z.string().min(1) })
+const input = settleOperationInputSchema.parse(args)
+```
+
+**`parse` 要求 `authority`。** 也就是说：模型**只要遵守对外声明的契约**（不传 `authority`），
+这次调用就会被工具自己的解析拒绝。之前的真实宿主测试之所以通过，是模型碰巧多传了。
+
+#### 修法：授权从运行取，不从模型收
+
+`settleOperationInputSchema` 去掉 `authority`；输出里的 `authority` 改为
+`store.currentAuthority(runKey, requireAgentId(exec))?.token ?? ''`。
+
+新增 `WebTestStore.currentAuthority`：只返回**已存在且当前仍然有效**的令牌，逐项复核
+`status === 'running'`、`generation` 一致、`role` 一致、身份已核验、`agentId` 匹配。
+
+**为什么不用现成的 `mintAuthority`**：它每次调用都铸一枚**新**令牌。在落定这一步铸新令牌
+等于让一个记账动作刷新授权，绕过了代次检查——暂停/重启后本该作废的授权会被重新签发。
+`currentAuthority` 只读，不铸。
+
+**副作用**：模型不必再把令牌在参数里来回传，也就少了一条「模型能自己断言授权」的路径。
+
+#### 覆盖面：`operationResultSchema` 被七个工具共用
+
+`begin_operation`、`settle_operation`、`operation_unknown`、`assume_role`、`wait`、
+`resume_wait` 共用同一个 `output.schema`，`required` 固定为
+`['runKey','operationKey','dispatch','authority','note']`。
+**只要其中任何一个函数体少返回一个字段，那次调用就必然失败**——`settle_operation` 之前正是这样。
+
+#### 新增真实执行测试
+
+`tests/tool-execution.spec.ts`：记录插件**实际注册**的 definition，用**真实 store** 逐个驱动
+`execute`，再用**该 definition 自己声明的** `output.schema` 校验返回值。
+
+- 不读源码、不比对 schema 常量——**故障只存在于函数体运行时返回的那个值里**
+- 真实 `ToolsService` 无法在此工作区运行时导入（会拉入 `dsh-sandbox`），所以用录制式
+  `tools.register`；被测对象是插件自己的注册载荷与自己的 `execute` 函数体
+- 带**防空转**断言：若没有任何工具体产出值则直接失败并列出各自拒绝原因
+
+类型检查通过，**122 测试通过**（新增 3 条）。
