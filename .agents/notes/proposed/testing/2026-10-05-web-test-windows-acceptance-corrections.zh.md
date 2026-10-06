@@ -3741,3 +3741,47 @@ Error: role "approver"'s browser failed
 去 `GET /orders` 确认 `approvedBy`。
 
 **不要再让模型自己登录。**
+
+### 0.7.25：**新会话里首个运行无法自举角色——真缺陷**
+
+按 0.7.24 定的流程，只让模型发两个调用：
+
+```
+web_test_start_run:    Run shop-acc-c6-seller-1 is running.
+web_test_assume_role:  Error: role "seller"'s browser failed
+  mcp__playwright-role-seller-g2__browser_navigate:
+  web-test: this session has no run that may drive a browser …
+```
+
+**这次被拒的不是模型自己发起的调用，而是 `assume_role` 内部的登录调用。**
+`readAccount` 由插件自己执行，**插件自己被自己的守卫挡下了。**
+
+**这是真缺陷，不是提示问题。**
+
+#### 为什么之前没暴露
+
+0.7.6 那次 run-2 成功，是因为**同一会话里已经有 run-1 在跑**，
+`browserGrantForSession` 拿得到授权，插件的内部调用**带授权通过**。
+
+新会话里**只有这一个运行**，它尚未扮演任何角色，**没有可出示的授权**，
+于是内部调用被拒——**角色的首次核验无法自举**。
+
+**换句话说：这套设计目前只能在「会话里已经有另一个运行在跑」时完成新角色的首次核验。**
+这在 0.6.12 时代不成立（那时每个会话独立跑单角色闭环，实测通过），
+**是引入归属绑定之后才出现的回退。**
+
+#### 缺陷的准确描述
+
+**准备窗口本应在 grant 之前就已放行**（授权正是核验的产物，
+首次登录不能依赖核验结果），我此前也这样改过。
+但在这个场景下它没有生效——**需要下一轮定位是哪一环**：
+
+1. 该运行的状态是否被对账置成了 `resuming`（若是，`mayPrepareIdentity` 的
+   `status !== 'running'` 判据就会把它排除）
+2. `ownerOf('seller')` 是否拿到了别的运行（若是，`mayPrepareIdentity`
+   会因为 owner 不属于本会话而返回 false）
+3. 还是内部子调用根本没有经过守卫，而是走了另一条路径
+
+**在定位之前，不把这一项记为通过，也不下结论说是哪一环。**
+
+**场景 4 仍记为「部分通过」**，剩下的 approver 步骤被这个缺陷挡住。
