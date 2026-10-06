@@ -7269,3 +7269,50 @@ tail -1 /tmp/s6pair.txt > /tmp/sB.txt             # 同样是第 2 行
 **B 的输出明显是 A 的运行与 authority，日志里一眼能看出运行名相同——
 如果不去对照运行名和 authority 字符串，
 很容易把「B 拿到了 A 的 authority」写成「两个会话各自持有自己的 authority」。**
+
+### 0.8.1：**回归 3 仍未跑成，这次卡点不同且已定位**
+
+#### 这轮的前提是对的
+
+```
+A=session-b3003d8f…   B=session-ef2d239b…   ✅ 两个会话号确实不同
+```
+
+**先显式比对再使用**——0.8.0 就是没做这一步才出的错。
+
+A 会话也顺利拿到 buyer 运行：
+
+```
+xa2 | now acts as buyer
+A authority: 9c22819a-2dbf-4538-9432-28508ea9ac5a
+```
+
+#### B 会话卡在角色被占
+
+```
+web_test_assume_ro: Error: role "approver"'s browser failed
+  mcp__playwright-role-approver-g4__browser_navigate
+web_test_finish_ru: Run xb2 closed as blocked.
+browser_snapshot: Error: this session has no run that may drive a browser
+```
+
+**`g4` 说明这是 approver 的第四次挂载。**
+**0.7.99 建的 `g3`（approver，属于另一个会话）还占着这个角色，
+所以 B 的准备窗口不成立——`mayPrepareIdentity` 认定 approver 另有主人。**
+
+**这是设计内行为：一个角色只绑定一个运行。**
+**但它让跨角色回归没法在旧运行还在的情况下直接跑。**
+
+#### 与 0.8.0 的区别
+
+| | 0.8.0 | 0.8.1 |
+|---|---|---|
+| 卡在哪 | 两个会话其实是同一个 | 角色被旧运行占用 |
+| 性质 | **我的前提错** | **插件的既定行为** |
+
+**这次的前提是查过的，失败原因也定位到了具体是哪条规则。**
+
+#### 下一轮该做的
+
+**先把 `g3` 取消（或换一个未被占用的角色名），再让 B 核验。**
+**订单 `ab64a606` 仍在站点上等审批，站点没重启。**
