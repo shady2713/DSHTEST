@@ -2355,3 +2355,38 @@ web_test_finish_run:     Run shop-acc-fin-buyer-1 closed as completed.
 | 静态门禁覆盖共用 schema | 无 | 有 |
 
 **仍未通过的两处不变**：跨角色协作、普通会话无额外角色工具。
+
+### 0.6.48：0.6.10 上的重启恢复复测通过
+
+0.6.47 的重启恢复是在 0.6.9 上测的，0.6.10 改过 `agent.ts`（新增工具、修 schema），
+所以必须在交付版本上重测。
+
+先确认**已完成的运行不受重启影响**——这本身是对的：
+
+```
+shop-acc-fin-buyer-1 | status: completed | gen: 1     ← 前后一致
+```
+
+再用一个**未完成**的运行（`shop-acc-w1-buyer`）做中断：
+
+| 阶段 | 状态 |
+|---|---|
+| 中断前 | `running \| gen: 1` |
+| 杀宿主后重启、对账 | **`resuming \| gen: 1 \| activeRole: ''`** |
+| `web_test_control_run action=continue` | **`now running at generation 2. Act as a role again before the next operation; the previous authority is void.`** |
+| 随后 `web_test_assume_role` | 仍可调用（先是 `accountPage` 格式错误，模型再调整参数） |
+
+**第七节场景 9 在 0.6.10 上完整成立**：宿主重启 → 对账置 `resuming` 并清空角色 →
+运维决定继续 → 回到 `running` 但**代次 +1**，重启前签发的授权作废，必须重新 `assume_role`。
+模型没有卡住，也没有出现 0.6.43 那种反复读 `status` 的死循环。
+
+**所以 0.6.10 的两处关键能力都在交付版本上实测过**：
+完整闭环（0.6.47）与重启恢复（本节）。
+
+**仍未复测的两项**：
+- 跨角色协作——已知的提供方限制，本轮没有新路径可试
+- 普通会话无额外角色工具——0.6.8 的 `isolate` 能修好但会破坏身份接管，记录已警告不要用
+
+**还发现一个次要问题**（不影响本轮结论）：模型给 `assume_role` 传的 `accountPage`
+有时不是合法 URL，工具按 schema 拒绝并给出 `invalid_format`，这是**正确的校验**，
+但说明工具描述应更明确地要求绝对 URL。**下一轮可以改进描述**，不影响当前候选。
