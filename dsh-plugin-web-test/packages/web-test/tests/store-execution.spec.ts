@@ -105,6 +105,30 @@ describe('run control', () => {
     await expect(h.store.controlRun('run-1', 'await-user')).rejects.toThrow(/is paused and cannot await-user/)
   })
 
+  it('refuses an environment whose project was never stored', async () => {
+    // `putEnvironment` used to accept it, so an operator saw the environment
+    // listed as ready while `start_run` refused it later and named the project
+    // instead. The two entry points have to agree.
+    const { store, dispose } = await harness({
+      seed: seedOf({ projects: { shop: project('shop') } }),
+    })
+    try {
+      const { projectKey: _omitted, ...withoutProject } = environment('orphan', ['buyer'])
+      await expect(store.putEnvironment({
+        ...withoutProject,
+        projectKey: 'no-such-project',
+      } as never)).rejects.toThrow(
+        /names project "no-such-project", which is not stored; stored projects are \[shop\]/,
+      )
+      // The same environment under the stored project is accepted.
+      await expect(store.putEnvironment(environment('ok', ['buyer'])))
+        .resolves.toMatchObject({ key: 'ok' })
+    } finally {
+      await dispose()
+      cleanupHomes()
+    }
+  })
+
   it('announces a terminal status written through putRun', async () => {
     // The release used to hang off the model tool's handler, then off the four
     // status writers. The terminal write through `finish_run` was not one of

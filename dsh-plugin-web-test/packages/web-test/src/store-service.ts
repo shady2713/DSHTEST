@@ -318,9 +318,18 @@ export class WebTestStore extends Service {
    * @param environment - Validated environment revision, keyed by its own `key`.
    * @returns the stored revision.
    */
-  putEnvironment(environment: EnvironmentRevisionRecord): Promise<EnvironmentRevisionRecord> {
-    return this.write(TABLE_ENVIRONMENT_REVISIONS, environment.key, environment)
-      .then(() => environment)
+  async putEnvironment(environment: EnvironmentRevisionRecord): Promise<EnvironmentRevisionRecord> {
+    // An environment that names a project which was never stored cannot be
+    // started from, so accepting it left an operator believing the environment was
+    // ready while `start_run` refused it later and named the project instead.
+    const projects = this.listProjects()
+    if (!projects.some(project => project.key === environment.projectKey)) {
+      throw new Error(`web-test: environment ${JSON.stringify(environment.key)} names project`
+        + ` ${JSON.stringify(environment.projectKey)}, which is not stored;`
+        + ` stored projects are [${projects.map(project => project.key).join(', ')}]`)
+    }
+    await this.write(TABLE_ENVIRONMENT_REVISIONS, environment.key, environment)
+    return environment
   }
 
   /**

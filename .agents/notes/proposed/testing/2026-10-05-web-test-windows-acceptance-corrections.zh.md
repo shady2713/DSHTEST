@@ -5969,3 +5969,59 @@ Error: web-test: environment "acc-other" belongs to project "other", not "shop"
 
 **0.7.60 的修复在真实宿主上闭环。**
 **0.7.61 那次是「间接触发」（模型自己撞上），这次是「主动构造」两个分支分别验证。**
+
+### 0.7.75：**`putEnvironment` 现在也要求项目存在**——三处入口不一致收掉第二处
+
+0.7.61 与 0.7.64 记的「两个入口判据不一致」，第二处这轮修掉。
+
+#### 改前
+
+```ts
+putEnvironment(environment) {
+  return this.write(TABLE_ENVIRONMENT_REVISIONS, environment.key, environment)
+    .then(() => environment)
+}
+```
+
+**直接写，不看项目存不存在。**
+而 `start_run` 会拒绝——**操作者在准备阶段看到环境「已就绪」，
+真正用的时候才被拒，且报错指的是环境而不是项目。**
+
+#### 改后
+
+```ts
+async putEnvironment(environment) {
+  const projects = this.listProjects()
+  if (!projects.some(p => p.key === environment.projectKey)) {
+    throw new Error(`web-test: environment … names project …, which is not stored;
+      stored projects are […]`)
+  }
+  await this.write(TABLE_ENVIRONMENT_REVISIONS, environment.key, environment)
+  return environment
+}
+```
+
+**两个入口现在一致：环境必须挂在已存项目下，报错都说项目。**
+
+#### 夹具没有被打破，原因值得记
+
+**131 个测试原本全过**，改完仍全过——
+因为 0.7.60 那轮加的 `withImpliedProjects` **已经让每个被种的环境都有对应项目**。
+**上一轮的修复顺手把这一轮的地基铺好了。**
+
+#### 新测试
+
+```ts
+await expect(store.putEnvironment({ …orphan, projectKey: 'no-such-project' }))
+  .rejects.toThrow(/names project "no-such-project", which is not stored; stored projects are \[shop\]/)
+await expect(store.putEnvironment(environment('ok', ['buyer']))).resolves.toMatchObject({ key: 'ok' })
+```
+
+```
+132 passed   typecheck 干净   lint 0 warnings 0 errors
+新包 sha256 05e904980f6f04728b0aebd0beef44ba5fba6056117002be339e3ec02b1d4722
+```
+
+#### 还没实测
+
+**这条同样只有单测，没有真实宿主实测。** 下一轮补。
