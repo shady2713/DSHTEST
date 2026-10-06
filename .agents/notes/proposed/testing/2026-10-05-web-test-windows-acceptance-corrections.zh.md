@@ -5233,3 +5233,59 @@ sha256 ffe5bbd3833c478cad1cc6af1160e4227e819dc2d712a99c9c64dcfac7217f59
 **这是文档修正那两版之后的第一个含 JavaScript 差异的包。**
 改动只涉及入口校验与两处兜底，**状态机、守卫、资源归属均未动**，
 并在交付记录里**明确写出这一点**——不再沿用「只差文档」那句话。
+
+### 0.7.61：新包上重跑闭环，**新校验当场抓出一个真实缺口**
+
+新包含 JavaScript 变更，**之前的实测证据全部来自旧包**，
+不重跑就等于交付物与证据脱节。这轮在新宿主 `dshw2` 上从零重跑。
+
+#### 三个环境坑，都不是插件缺陷
+
+1. `--from-default-profile web` **没把 `@deepseek-ai/dsh-web-app` 加进 bundles**，
+   少了它 `web-test` 预设不存在，`session/create` 直接失败。
+   **两次都没加进去**，最后直接改 `package.json` 的 `dsh.profile.bundles` 才成。
+2. `plugins/` 不在 home 根而在 profile 下，**`ls $A/plugins` 看不到就以为没装上**——
+   实际 `dsh plugin list` 明确显示 `dsh-plugin-web-test@0.8.0` 已在依赖里。
+   **又是「没查就下结论」。**
+3. 新包是新 home，**要重新拷凭据**。
+
+#### 新校验抓到的真问题
+
+第一次跑，`start_run` 直接被拒：
+
+```
+web_test_start_run: Error: web-test: project "shop" is not stored; stored projects are []
+```
+
+查库：
+
+```
+u_web_test_projects              行数: 0
+u_web_test_environment_revisions 行数: 1
+   acc-w2 | projectKey: shop
+```
+
+**`putEnvironment` 不要求项目存在**——环境可以挂在一个根本没建过的项目下。
+**旧版不会报，运行会建起来，然后一路推迟到 `declaredRoles` 才炸，还炸在错的字段上。**
+
+**这正是 0.7.60 那条修复要暴露的东西，现在在真实宿主上暴露出来了。**
+
+#### 补上项目后回归①通过
+
+```
+项目已建: shop
+回归① 核验后 Chromium=10
+运行: shop-buyer-alice-1 | running | activeRole: 'buyer'
+```
+
+**新包的闭环重新成立。**
+
+#### 一个连带问题，值得单列
+
+`putEnvironment` **允许建在不存在���项目下**，
+而 `start_run` 现在会拒绝。**两个入口的判据不一致**：
+一个是「照收」，一个是「拒绝」。
+
+**这不该留着**——要么 `putEnvironment` 也要求项目存在，
+要么 `start_run` 放宽。**哪个才对取决于意图，本轮不下结论**，
+但**记录下来**，因为它会让操作者在准备阶段以为环境已就绪。
