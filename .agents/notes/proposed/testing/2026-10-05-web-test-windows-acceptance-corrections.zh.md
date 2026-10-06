@@ -1273,3 +1273,33 @@ dsh plugin --profile iso2 add .../dsh-plugin-web-test-0.6.7.tgz
    这与 0.6.15/0.6.16 的跨角色失败是**同一个机制**：提供方绑定的是"挂载那一刻存在的
    Agent"。之前所有单角色实测之所以成功，都是因为环境先于会话装载。Windows 复验时
    顺序错了会看到同样的错误，交付说明里必须写明。
+
+### 0.6.18：浏览器断连期间的归属——通过
+
+`run-E` 核验成功（`running | role: 'buyer' | gen: 1`），此时插件的浏览器是
+`~/.cache/ms-playwright/chromium-1243/chrome-linux64/chrome`，**12 个进程**。用这个可执行
+路径精确定位并 `kill -9`，**12 → 3**；同时用户自己的 `/opt/google/chrome/chrome`
+**保持 23 个不变**——只处理插件自己的资源。
+
+断连后：
+
+- 立刻再调 `assume_role`：被拒，理由是
+
+  ```
+  web-test: run "run-E" confirmed role "buyer" as "", but that role is bound to
+  "Alice Buyer" in environment "acc-d1"; sign that account in before switching.
+  ```
+
+  身份读取读到空账号，**核验不通过**——不是"沿用旧结论"。
+
+- 浏览器恢复后同一调用：核验通过，签发新令牌 `17f542a6-…`。
+
+- 不带令牌的业务调用：拒绝（`this action needs the authority …`）。
+
+所以断连不会让旧核验继续有效，也不会让归属错位：断连期间核验失败，恢复后重新核验才拿到
+新授权。第七节场景 8 的"断连不破坏资源归属"这一半，现在有证据了。
+
+**顺带记一条定位纪律**：隔离环境浏览器的可用标记是
+`~/.cache/ms-playwright/chromium-1243/...` 这个**可执行路径**。我先用
+`playwright-mcp-profile` 这个 user-data-dir 名字去数，得到 3——那是 grep 自身加噪声，
+差点据此以为浏览器早就死了。计数必须用可执行路径，并且用 `grep -v grep | wc -l` 复核。
