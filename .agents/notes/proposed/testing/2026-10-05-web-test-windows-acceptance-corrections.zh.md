@@ -6767,3 +6767,30 @@ typecheck 干净   133 tests passed   lint 0 warnings 0 errors
 新包 sha256 f87bb2556a589e5313642f6790d3ad35b73ff98cc3bcdc98e03242ec9f36b1f9
 dist 51 个 tarball，旧包全部保留
 ```
+
+### 0.7.91：**给 `assume_role` 也钉了一条**——挂载点只有一个，两个方向都固定住
+
+0.7.90 只钉了「`start_run` 不挂载」。**只钉一半不够**：
+**如果没有「`assume_role` 确实挂载」这条，注释被改成相反的说法也不会有测试发现。**
+
+#### 新测试
+
+
+
+**顺带钉住了「问的是哪个角色」**——传 `approver`，记录里就是 `approver`，
+**环境声明了两个角色，挂载只认传进来的那个。**
+
+#### 同样验证了区分力
+
+
+
+**两条测试现在互为反面：**
+- `start_run` 挂载 → 第一条失败
+- `assume_role` 不挂载 → 第二条失败
+
+**注释再怎么漂移，至少有一条会红。**
+
+```
+typecheck 干净   134 tests passed
+新包 sha256 f87bb2556a589e5313642f6790d3ad35b73ff98cc3bcdc98e03242ec9f36b1f9
+```
