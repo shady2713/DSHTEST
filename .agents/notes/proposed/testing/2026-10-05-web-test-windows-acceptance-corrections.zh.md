@@ -1234,3 +1234,42 @@ Error: web-test: role "buyer"'s browser failed
 1. 环境装载时挂载 → 单角色可用，跨进程交接时 `belongs to another Session`
 2. `agent/created` 时挂载 → 同样 `belongs to another Session`
 3. 派生作用域挂载（0.3.8）→ 工具完全进不了任何 Agent 的清单
+
+### 0.6.17：干净环境安装检查通过，并确认了一个装配顺序约束
+
+在**开发检出目录之外**新建 `/home/weetion/dshclean`，用插件管理器安装 tarball：
+
+```
+dsh plugin --profile iso2 add .../dsh-plugin-web-test-0.6.7.tgz
+```
+
+依赖检查（安装后的 `package.json`）：
+
+- 全部是发布版本号：`@deepseek-ai/dsh-browser-use@0.2.0-rc.2`、
+  `…experimental-browser-use-playwright-mcp@0.2.0-rc.2`、`…-runtime@0.2.0-rc.2`、
+  `…storage-sqlite@0.2.0-rc.2`、`@playwright/mcp@0.0.80`、`zod@^4.4.3`
+- **无** `workspace:` 或 `file:` 依赖
+- 宿主导入错误数：**0**，`session/create` 用 `web-test` 预设成功
+
+干净环境完整闭环：`run-D: running | role: 'buyer' | gen: 1`。
+
+**中间踩到的两件事，都要写进交付说明：**
+
+1. **干净 home 没有凭证**。第一轮四次 prompt 全部零 `tool/call`，看起来像插件坏了。日志里
+   实际是 `MISSING_CREDENTIAL: llm-deepseek: no API key for provider route`——模型请求
+   根本没发出去。把 `.credentials.yaml`（`-rw-------`，只在本机、未提交）复制过去之后
+   才正常。**"模型不派发工具"有两种完全不同的原因，排查时先看日志里的 `code`。**
+
+2. **装配顺序是硬约束**：`putEnvironment`（装载环境、挂载角色浏览器）**必须在
+   `session/create` 之前**。反过来做，浏览器挂到了一个已经存在的 Agent 上，
+   `assume_role` 立刻失败：
+
+   ```
+   web-test: role "buyer"'s browser failed
+   mcp__playwright-role-buyer__browser_navigate: playwright-role-buyer:
+   browser tool belongs to another Session
+   ```
+
+   这与 0.6.15/0.6.16 的跨角色失败是**同一个机制**：提供方绑定的是"挂载那一刻存在的
+   Agent"。之前所有单角色实测之所以成功，都是因为环境先于会话装载。Windows 复验时
+   顺序错了会看到同样的错误，交付说明里必须写明。
