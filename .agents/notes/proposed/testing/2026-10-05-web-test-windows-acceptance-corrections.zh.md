@@ -3534,3 +3534,48 @@ alice（Buyer）有 `canCreate`、bob（Approver）有 `canApprove`，
 
 **下一步**：直接用现有表面跑场景 4，
 不需要改夹具，也不需要改宿主。
+
+### 0.7.20：场景 4 第一步——**操作流程在 buyer 授权下走通，但站点上的记录没被观察到**
+
+在 `run-shop-acc-c6-buyer-2`（扮演 buyer）里让它在 `/orders` 建一张 `Widget-X`：
+
+```
+Operation create-order-widget-x of run run-shop-acc-c6-buyer-2 is dispatching.
+  Perform the change now, observe the result independently, then call
+  web_test_settle_operation.
+Operation create-order-widget-x is settled. Recorded as observed-absent; it will
+  appear in the report and cannot be settled again.
+```
+
+**插件侧的操作流程本身是通的**：在 buyer 的授权下 `begin_operation` 派发，
+`settle_operation` 结算，且**结算后不可重复结算**——这条约束成立。
+
+**但结算结果是 `observed-absent`**，而浏览器的快照停在首页：
+
+```
+- Page URL: http://127.0.0.1:8902/
+- Page Title: 受控验收站点
+- generic: Alice Buyer
+```
+
+**订单在站点上没有出现，模型没有看到它**。
+也就是说：**插件按角色派发操作的能力有，但模型没有把浏览器的真实变化观察成结果。**
+
+**这正是插件要求「独立观察后再结算」的原因**——它**没有**替模型把操作标成成功，
+而是如实记成未见。**这个行为是正确的**，但它意味着**场景 4 还没有证据**：
+没有一个「两个角色在同一业务对象上协作」的可核对结果。
+
+#### 下一步该做什么
+
+不要继续让模型自由操作。**分两步、各自独立**：
+
+1. **buyer 侧**：显式要求「先 `browser_navigate` 到
+   `http://127.0.0.1:8902/orders`，再填表提交，**把返回的 JSON 原文贴出来**」——
+   **必须看到 `createdBy` 与 `key`**，否则不算完成。
+2. **approver 侧**：用该 `key` 调 `/orders/approve`，
+   **同样要求贴出返回 JSON**，并核对 `approvedBy` 是 Bob Approver。
+3. **权限差异**：让 buyer 也试一次审批，**必须得到 403「无权审批」**——
+   这一条能把「两个角色权限不同」变成实测结论，而不是从站点源码推断。
+
+**这三条都拿到输出后，场景 4 才能记为通过。** 现在**记为「部分通过」**：
+操作派发与结算约束成立，**跨角色业务对象协作尚未取证**。
