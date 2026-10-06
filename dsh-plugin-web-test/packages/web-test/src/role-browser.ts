@@ -26,11 +26,6 @@ import { ToolCallId } from '@deepseek-ai/dsh-llm'
 import type { ToolExecutionToken } from '@deepseek-ai/dsh-tools'
 import { z } from 'zod'
 
-/** The part of the store this pool reads: which roles the operator confirmed. */
-interface EnvironmentReader {
-  latestEnvironment(): { roles: { name: string }[] } | undefined
-}
-
 /** Loader identity of this service's row. */
 export const name = 'webTestRoleBrowsers'
 
@@ -139,28 +134,6 @@ export class RoleBrowserPool extends Service {
     ctx.effect(() => async () => {
       await this.releaseAll()
     })
-    {
-      // `ctx.get` is a lookup, so naming the store here does not pull it into
-      // this scope; declaring it in `inject` would.
-      const store = this.store()
-      const role = store?.latestEnvironment()?.roles[0]?.name
-      if (role !== undefined && role !== '') {
-        this.ensure(role).catch((error: unknown) => {
-          this.startError = error instanceof Error ? error.message : String(error)
-        })
-      }
-    }
-  }
-
-  /** Why the constructor's mount failed, so a later call reports it. */
-  private startError: string | undefined
-
-  /**
-   * The confirmed environments, looked up rather than injected.
-   * @returns the store when one is mounted, otherwise `undefined`.
-   */
-  private store(): EnvironmentReader | undefined {
-    return this.ctx.get('webTestStore') as EnvironmentReader | undefined
   }
 
   private readonly executablePath: string | undefined
@@ -185,11 +158,6 @@ export class RoleBrowserPool extends Service {
     if (pendingRole !== undefined) return pendingRole
     const existing = this.started.get(role)
     if (existing !== undefined) return existing
-    if (this.startError !== undefined) {
-      const message = this.startError
-      this.startError = undefined
-      throw new Error(`web-test: the browser for role ${JSON.stringify(role)} did not start: ${message}`)
-    }
     const browser: RoleBrowser = { role, serverName: `playwright-role-${role}`, toolNames: [] }
     const settled = this.mountBrowser(role, browser)
     this.pending.set(role, browser)
