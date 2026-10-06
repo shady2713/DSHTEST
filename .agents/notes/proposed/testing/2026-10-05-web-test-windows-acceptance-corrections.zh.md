@@ -1812,3 +1812,36 @@ A 组(池在 agent 之前) → 失败: Preset services require isolate realms: w
 插件侧的公开接口里没有对应手段，也没有配置项能影响它。
 
 **本插件侧的路走到这里已经穷尽。** 已回退到 0.6.7。
+
+### 0.6.35：再确认两个静态事实，以及 `withinFiber` 的语义
+
+1. **包内没有 `cordis.yml`**（只有 `cordis.patch.yml`）。所以插件的装载入口**只**由 patch
+   决定，没有第二处会把 `dsh-plugin-web-test/agent` 或 `/role-browser` 装到根。
+2. **`web-test-browser-use` 这一行是宿主包** `@deepseek-ai/dsh-browser-use`（patch 第 44–45 行），
+   不引用本插件的池。也就是说 0.6.7 的根行里，只有 `web-test-role-browsers`（第 31 行）
+   会把池装到根。
+
+`withinFiber` 的语义也读清楚了：
+
+```js
+function withinFiber(fiber, root) {
+    let current = fiber;
+    while (true) {
+        if (current === root) return true;
+        const parent = current.fiber.parent;
+        if (parent === current) return false;
+        current = parent;
+    }
+}
+```
+
+从服务自己的 fiber **向上**找 `root`，所以判据是"**`mount` 是该服务的祖先**"。
+`mount` 是预设服务自己的 fiber，预设的 `tree.root` 是它的子 fiber，所以**预设里的每一个服务
+都满足这一条**。
+
+于是剩下的问题精确到一句话：**为什么 `ctx.root[Context.isolate]['webTestRoleBrowsers']`
+等于预设里那个 symbol**。另外预设里的 `web-test-agent` 同样满足第一条却没被点名，
+说明根 isolate 表并不是"预设里有什么就有什么"——**两者的差异就是下一轮要查的那一处**，
+而且可以纯静态读 `PresetTree` 的构造与 cordis 的 isolate 创建来定位。
+
+**本插件侧的公开接口路径确认穷尽**（六条候选均已排除并留证）。已回退到 0.6.7。
