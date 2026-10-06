@@ -1070,12 +1070,17 @@ export class WebTestStore extends Service {
     return [...roles].sort()
   }
 
-  mayPrepareIdentity(sessionId: string, role: string): boolean {
+  mayPrepareIdentity(sessionId: string, role: string, ownerRunKey?: string): boolean {
     if (role === '') return false
     for (const run of this.sorted(TABLE_RUNS) as RunRecord[]) {
       if (run.ownerSessionId !== sessionId) continue
       if (run.status !== 'running') continue
       if (!this.declaredRoles(run.key).includes(role)) continue
+      // The caller is asking on behalf of the run that owns this role's browser.
+      // Naming it here is what keeps a call queued against a cancelled run from
+      // walking in through whichever run is unverified and running now. A caller
+      // that cannot name an owner is refused rather than allowed on the session.
+      if (ownerRunKey !== undefined && ownerRunKey !== run.key) continue
       // The window is open only until this role is the verified one. Leaving it
       // open afterwards let every browser call skip the authority check, because
       // preparation is exactly what a call without authority is allowed to do.

@@ -73,7 +73,12 @@ export class WebTestService extends TypertRemoteService {
         if (!store.accepting && execution.name !== `${TOOL_PREFIX}status`) {
           return `web-test: the plugin is ${store.state} and refuses new test actions`
         }
-        return guardReason(execution, store, execution.agent?.id ?? '')
+        return guardReason(
+          execution,
+          store,
+          execution.agent?.id ?? '',
+          role => ctx.webTestRoleBrowsers?.ownerOf(role),
+        )
       }),
       'web-test: execution guard',
     )

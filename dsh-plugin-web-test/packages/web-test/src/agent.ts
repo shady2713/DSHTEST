@@ -154,9 +154,10 @@ export function guardReason(
     holdForSession: (sessionId: string) => { runKey: string, status: string } | undefined
     browserGrantForSession: (sessionId: string) => { runKey: string, status: string, role: string } | undefined
     requireAuthority: (token: string, agentId: string) => { runKey: string, role: string }
-    mayPrepareIdentity: (sessionId: string, role: string) => boolean
+    mayPrepareIdentity: (sessionId: string, role: string, runKey?: string) => boolean
   },
   sessionId = '',
+  ownerOf?: (role: string) => { runKey: string, generation: number } | undefined,
 ): string | undefined {
   // A run the operator paused, or that a restart interrupted, stops dispatching
   // here, in the execution path, so a model that ignores the pause still cannot
@@ -187,11 +188,15 @@ export function guardReason(
     // a role's own browser is reachable for identity work while the run is
     // executing, and every other tool still needs the verified role.
     const preparing = LOGIN_TOOLS.has(execution.name.slice(ROLE_BROWSER_PREFIX.length).split('__')[1] ?? '')
-    if (preparing && store?.mayPrepareIdentity(sessionId, role)) return undefined
     // One authorisation decides every other browser call: the run it belongs to
     // must be executing, and its role must have been confirmed against the
     // site. A cancelled run therefore loses its browser, a later run gets its
     // own, and another session is judged on its own run.
+    // Preparation is admitted before the grant is consulted, because the grant
+    // is what verification produces: the first sign-in cannot require the result
+    // of the sign-in. The window is bounded by the owning run, so it is that
+    // run's own declaration and status that decide it, not the session's.
+    if (preparing && store?.mayPrepareIdentity(sessionId, role, ownerOf?.(role)?.runKey)) return undefined
     const grant = store?.browserGrantForSession(sessionId)
     if (grant === undefined) {
       return `web-test: this session has no run that may drive a browser. A run needs to be running and to have`
@@ -205,7 +210,6 @@ export function guardReason(
       // call must present the token `web_test_assume_role` issued, so a call
       // queued before the run was cancelled or restarted cannot act on the role
       // a later start granted.
-      if (preparing && store?.mayPrepareIdentity(sessionId, role)) return undefined
       const presented = (execution.arguments as { authority?: unknown } | undefined)?.authority
       if (typeof presented !== 'string' || presented === '') {
         return 'web-test: this action needs the authority web_test_assume_role issued.'
@@ -1216,6 +1220,9 @@ export function apply(ctx: Context): void {
       // the site did not confirm.
       const verified = await verifyRoleIdentity(tools, exec, pool, parsed.role, parsed.accountPage)
       const run = await store.assumeRole(parsed.runKey, parsed.role, verified)
+      // The role's browser now belongs to this run and generation, so a call
+      // queued against an earlier run cannot prepare an identity on it.
+      pool?.claim(parsed.role, run.key, run.generation)
       // The authority names the generation it was minted in, so a call that was
       // queued before a restart cannot act under the authority a later start
       // produces. It is unforgeable: the run it names is re-read on every use.

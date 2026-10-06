@@ -30,7 +30,7 @@ describe('browser dispatch authorisation', () => {
       // A verified role's own calls now need the authority it was issued.
       const token = (): string => store.mintAuthority('run-1', 'owner')?.token ?? ''
     try {
-      const reason = guardReason({ name: ALICE_BROWSER, arguments: { authority: token() }, agent: { id: 'owner' } }, store, 'owner')
+      const reason = guardReason({ name: ALICE_BROWSER, arguments: { authority: token() }, agent: { id: 'owner' } }, store, 'owner', ownedBy('run-1'))
       expect(reason).toContain('no run that may drive a browser')
       expect(reason).toContain('cancelled')
     } finally {
@@ -52,13 +52,13 @@ describe('browser dispatch authorisation', () => {
     try {
       await store.controlRun('run-1', 'resume')
       await store.assumeRole('run-1', 'buyer', { account: 'Alice Buyer', detail: '/whoami' })
-      expect(guardReason({ name: ALICE_BROWSER, arguments: { authority: token() }, agent: { id: 'owner' } }, store, 'owner')).toBeUndefined()
+      expect(guardReason({ name: ALICE_BROWSER, arguments: { authority: token() }, agent: { id: 'owner' } }, store, 'owner', ownedBy('run-1'))).toBeUndefined()
       await store.controlRun('run-1', 'pause')
       // A paused run names the pause, which is more useful than the generic
       // no-grant wording, and it is still a refusal.
       expect(guardReason({ name: ALICE_BROWSER, arguments: { authority: token() }, agent: { id: 'owner' } }, store, 'owner')).toContain('is paused and refuses new test actions')
       await store.controlRun('run-1', 'resume')
-      expect(guardReason({ name: ALICE_BROWSER, arguments: { authority: token() }, agent: { id: 'owner' } }, store, 'owner')).toBeUndefined()
+      expect(guardReason({ name: ALICE_BROWSER, arguments: { authority: token() }, agent: { id: 'owner' } }, store, 'owner', ownedBy('run-1'))).toBeUndefined()
     } finally {
       await dispose()
       cleanupHomes()
@@ -85,7 +85,7 @@ describe('browser dispatch authorisation', () => {
       expect(fresh.status).toBe('running')
       await store.assumeRole('run-2', 'buyer', { account: 'Alice Buyer', detail: '/whoami' })
       expect(store.verifiedAccount('run-2', 'buyer')).toBe('Alice Buyer')
-      expect(guardReason({ name: ALICE_BROWSER, arguments: { authority: token() }, agent: { id: 'owner' } }, store, 'owner')).toBeUndefined()
+      expect(guardReason({ name: ALICE_BROWSER, arguments: { authority: token() }, agent: { id: 'owner' } }, store, 'owner', ownedBy('run-1'))).toBeUndefined()
     } finally {
       await dispose()
       cleanupHomes()
@@ -109,7 +109,7 @@ describe('browser dispatch authorisation', () => {
       await store.controlRun('run-theirs', 'resume')
       await store.assumeRole('run-theirs', 'buyer', { account: 'Alice Buyer', detail: '/whoami' })
       expect(guardReason({ name: ALICE_BROWSER, arguments: { authority: token() }, agent: { id: 'theirs' } }, store, 'theirs')).toBeUndefined()
-      expect(guardReason({ name: ALICE_BROWSER }, store, 'mine')).toContain('no run that may drive a browser')
+      expect(guardReason({ name: ALICE_BROWSER }, store, 'mine', ownedBy('run-1'))).toContain('no run that may drive a browser')
     } finally {
       await dispose()
       cleanupHomes()
@@ -130,10 +130,10 @@ describe('browser dispatch authorisation', () => {
       await store.assumeRole('run-1', 'buyer', { account: '', detail: 'the site reported no account' })
       // The sign-in itself stays reachable: the run is running and declares the
       // role, even though nothing has been verified yet.
-      expect(guardReason({ name: ALICE_BROWSER, }, store, 'owner')).toBeUndefined()
-      expect(guardReason({ name: 'mcp__playwright-role-buyer__browser_click' }, store, 'owner')).toBeUndefined()
+      expect(guardReason({ name: ALICE_BROWSER, }, store, 'owner', ownedBy('run-1'))).toBeUndefined()
+      expect(guardReason({ name: 'mcp__playwright-role-buyer__browser_click' }, store, 'owner', ownedBy('run-1'))).toBeUndefined()
       // Another role's browser is not reachable for the same preparation.
-      expect(guardReason({ name: 'mcp__playwright-role-approver__browser_navigate' }, store, 'owner'))
+      expect(guardReason({ name: 'mcp__playwright-role-approver__browser_navigate' }, store, 'owner', ownedBy('owner')))
         .toContain('no run that may drive a browser')
     } finally {
       await dispose()
@@ -198,6 +198,35 @@ describe('a role browser that cannot start', () => {
   })
 })
 
+
+  it('refuses a preparation that names a run other than the one being asked about', async () => {
+    // Two runs in one session can each declare `buyer`. `mayPrepareIdentity` used
+    // to answer for whichever run was running, so a call queued against a
+    // cancelled run was let in through the other one's open window. The owner is
+    // now part of the question: the store only answers for the run that holds the
+    // browser the call would drive.
+    const { store, dispose } = await harness({
+      seed: seedOf({
+        runs: {
+          'run-a': run('run-a', 'owner', { status: 'cancelled', activeRole: '' }),
+          'run-b': run('run-b', 'owner', { status: 'running', activeRole: '' }),
+        },
+        'environment_revisions': { 'shop-test': environment('shop-test', ['buyer']) },
+      }),
+    })
+    try {
+      // B is the session's running run. Asking about B answers for B.
+      expect(store.mayPrepareIdentity('owner', 'buyer', 'run-b'))
+        .toBe(store.mayPrepareIdentity('owner', 'buyer'))
+      // Asking about A does not, even though A and B sit in the same session and
+      // declare the same role. This is the pairing that let a queued call through.
+      expect(store.mayPrepareIdentity('owner', 'buyer', 'run-a')).toBe(false)
+    } finally {
+      await dispose()
+      cleanupHomes()
+    }
+  })
+
 })
 
 /**
@@ -219,4 +248,13 @@ function identity(runKey: string, role: string): Record<string, unknown> {
     label: `${role} as Alice Buyer`,
     updatedAtMs: 1,
   }
+}
+
+/**
+ * The run that owns a role's browser, as the pool records it.
+ * @param runKey - Run that claimed the role.
+ * @returns An owner lookup for the guard to consult per role.
+ */
+function ownedBy(runKey: string): (role: string) => { runKey: string, generation: number } {
+  return () => ({ runKey, generation: 1 })
 }

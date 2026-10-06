@@ -103,6 +103,37 @@ export class RoleBrowserPool extends Service {
   readonly knownAgents = new Set<Agent>()
 
   /**
+   * Which run and generation each started role browser belongs to.
+   *
+   * A role name is not an owner: two runs in one session can each declare
+   * `buyer`, and a call queued against the first must not be allowed to prepare
+   * an identity on the second. The claim is recorded when a run starts acting as
+   * a role and dropped with the browser, so preparation can be judged against the
+   * run that actually owns the resource the call would drive.
+   */
+  private readonly claims = new Map<string, { runKey: string, generation: number }>()
+
+  /**
+   * Record which run and generation owns a role's browser.
+   * @param role - The role being acted as.
+   * @param runKey - Run that switched to the role.
+   * @param generation - Run generation at the moment of the switch.
+   */
+  claim(role: string, runKey: string, generation: number): void {
+    if (role === '') return
+    this.claims.set(role, { runKey, generation })
+  }
+
+  /**
+   * The run and generation that own a role's browser.
+   * @param role - The role to look up.
+   * @returns the owner, or undefined when no run has claimed the role.
+   */
+  ownerOf(role: string): { runKey: string, generation: number } | undefined {
+    return this.claims.get(role)
+  }
+
+  /**
    * @param ctx - Owning context, which supplies the tools and browser services
    * the provider rows need.
    * @param executablePath - Chromium the role browsers launch; the host
@@ -225,6 +256,7 @@ export class RoleBrowserPool extends Service {
     const mounted = this.mounts.get(role)
     this.mounts.delete(role)
     this.started.delete(role)
+    this.claims.delete(role)
     this.pending.delete(role)
     if (this.activeRole === role) this.activeRole = undefined
     if (mounted === undefined) return
