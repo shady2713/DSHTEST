@@ -1329,3 +1329,40 @@ gateway/service-unavailable: typert gateway: webTest/getRun: …
 这是宿主能力限制，按 shady 已定的产品决定记录：**授权释放是真的（派发被拦、令牌被拒），
 进程回收只在宿主退出时成立（12 → 0）**。不把"释放"弱化成"不再授权"，也不在浏览器没关之前
 报告已关闭。
+
+### 0.6.20：把浏览器行移进 preset —— 半步成功，全案不成立，已回退
+
+这一轮读到一条之前漏掉的事实：池**根本没有调用**宿主的 `tools.restrict`。插件头注释里
+写着用它做角色隔离，实际隔离全在 `guardReason` 的派发路径上。这说明"用宿主机制隐藏工具"
+这条路我此前没走。
+
+于是试了正确的做法：把 `web-test-role-browsers` 从顶层 loader 行**移进 `web-test-preset`
+的 `plugins:`**。依据是 preset 行的注释本来就写着浏览器行本该在里面，而实测它在外面——
+注释和实现不一致，这是个真缺陷。
+
+**半步成功**：普通会话的 `mcp__` 命名空间**一个都没有了**，泄漏消失。
+
+**但整案不成立**。宿主立刻报：
+
+```
+Preset services require isolate realms: webTestRoleBrowsers
+```
+
+查 `dsh-agent-preset-registry/lib/types/mount.js` 的 `leakedServices()`：preset 里的服务
+如果**在根作用域也存在同名实例**，就算泄漏。所以池必须只存在于 preset 里。
+
+于是把 `webTestRoleBrowsers` 从 `index.ts` 的 `static inject` 移除、`putEnvironment`
+不再触碰池、池改为在构造时读 `latestEnvironment()` 自己挂载角色，并给池补上
+`webTestStore` 的 inject 声明。中间确实推进了一步（错误从"泄漏"变成
+`cannot get property "webTestStore" without inject`），但补完 inject 之后**泄漏又回来了**：
+`webTestStore` 本身是根作用域的行，池声明依赖它就会在根被拉起。
+
+**结论**：在这个宿主上，"浏览器只在预设里"与"池需要读存储"两个要求互相冲突——除非存储
+也能在预设作用域内提供，那是更大的组合改动，超出本轮范围。
+
+**已回退到 0.6.7**（实测走通的状态），代码改动没有留在分支上。
+
+**这轮最有价值的产出是那条线索**：`tools.restrict` 是 `dsh-tools` 的公开方法
+（`restrict(filter): () => void`），作用是"限制**调用方作用域**的全局工具"，而角色浏览器
+工具正是全局注册的。**如果能让普通会话的作用域调用一次 deny 掩码，泄漏就能在不动组合的
+前提下解决。**这是下一步该查的方向，不是本轮能收口的。
