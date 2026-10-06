@@ -3829,3 +3829,36 @@ web_test_assume_role:  Error: role "seller"'s browser failed
 **必须用一个同时声明 buyer 与审批角色的环境**再跑场景 4 的最后一步。
 `acc-q1` / `acc-c2` 之类建过 buyer+seller 的环境可以复用，
 **不要复用 `acc-c6`。**
+
+### 0.7.27：0.7.26 的诊断得到确认——**换成双角色环境后内部登录不再被拒**
+
+建了一个同时声明两个角色的环境：
+
+```
+环境 acc-c7 角色: ['buyer', 'seller']
+写入数: 1
+```
+
+再让一个新会话扮演 `seller` 并把 `accountPage` 指向
+`http://127.0.0.1:8902/orders`：
+
+```
+web_test_start_run:   Run shop-acc-c7-seller-run1 is running.
+web_test_assume_role: Error: run "shop-acc-c7-seller-run1" confirmed role "seller" as "",
+                       but that role is bound to "Bob Approver" in environment …
+```
+
+**关键差别：不再出现「this session has no run that may drive a browser」。**
+插件内部的登录调用**顺利执行到了读回账号这一步**。
+**0.7.26 的诊断成立，0.7.25 的「自举失败」确实是环境只声明一个角色所致。**
+
+**现在卡在下一环：读回的账号是空串。**
+空账号被拒绝这条规则本身是对的（站点没确认身份就不许写入），
+**但它说明 `accountPage` 指向的页面没有把账号报出来**。
+
+`/orders` 对未登录请求返回 401 JSON，**不是一个声明账号的页面**；
+夹具里声明账号的是 `/account`（`/whoami` 亦可）。
+**下一次 `accountPage` 应指向 `/account`，或先登录再读 `/orders`。**
+
+**这仍是提示与数据的选择问题，不是插件缺陷。**
+**场景 4 保持「部分通过」。**
