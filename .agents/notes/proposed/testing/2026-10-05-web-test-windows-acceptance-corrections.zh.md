@@ -3931,3 +3931,38 @@ seller-g3__browser_snapshot: Page URL: http://127.0.0.1:8902/account
 
 **只有这一步做完，「两个角色在同一业务对象上协作」才算取证完成。**
 现在**记为「部分通过」**。
+
+### 0.7.30：场景 4——**B 看到了 A 建的记录**，审批动作未完成
+
+用 seller 的授权（**带 `authority` 参数**）驱动浏览器读 `/orders`：
+
+```
+seller-g3__browser_snapshot: Page URL: http://127.0.0.1:8902/orders
+{"account":"Bob Approver","orders":[
+  {"key":"59773afd","title":"","createdBy":"Alice Buyer","approvedBy":null},
+  {"key":"865cee15","title":"u1","createdBy":"Alice Buyer", …
+```
+
+**关键事实：以 `Bob Approver` 身份看到的是 `createdBy: Alice Buyer` 的记录。**
+
+**两个角色各自独立登录、各自持有自己的授权，却在同一个业务对象上对齐了**——
+A 创建的对象出现在 B 的会话里，且归属字段是 A 的账号。
+
+#### 场景 4 的证据进度
+
+| 证据 | 状态 |
+|---|---|
+| A（buyer）用自己的授权创建业务记录 | ✅ `59773afd`，`createdBy: Alice Buyer` |
+| A 越权审批被拒 | ✅ 403「Alice Buyer 无权审批」 |
+| B 独立登录后看到 A 建的记录 | ✅ `Bob Approver` 视角，`createdBy: Alice Buyer` |
+| B 审批后 `approvedBy` 变成 Bob Approver | ❌ **未完成** |
+| A 再看同一张表确认字段变化 | ❌ 未做 |
+
+**前三条已实测，第四条模型尚未发出**（停留���订单页，未提交审批）。
+
+**因此场景 4 仍记为「部分通过」**，
+但**跨角色在同一个业务对象上对齐**这一条**已有实测**，
+剩下的只是 B 的写操作与 A 的复查。
+
+**下一步**：让 seller 直接 `POST /orders/approve`（带 `key=59773afd`），
+再让 buyer 读同一张表。
