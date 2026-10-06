@@ -6025,3 +6025,51 @@ await expect(store.putEnvironment(environment('ok', ['buyer']))).resolves.toMatc
 #### 还没实测
 
 **这条同样只有单测，没有真实宿主实测。** 下一轮补。
+
+### 0.7.76：**`putEnvironment` 的新规则在真实宿主上实测通过**——三个分支
+
+0.7.75 标了「只有单测，没有实测」。这轮在新包 `05e90498…` 上建全新宿主 `dshw5`。
+
+**起点特意选在「一个项目都没有」的状态**：
+
+```
+起始项目数: 0
+```
+
+#### 分支一：不存在的项目 → 拒绝，且不落库
+
+```
+ok: False
+error: web-test: environment "acc-orphan" names project "nope", which is not stored;
+       stored projects are []
+环境表行数: 0        ← 拒绝了就没写进去
+```
+
+**`stored projects are []` 而不是列一个不存在的项目**——
+**在零项目的宿主上，报错如实说「一个都没有」。**
+
+#### 分支二：项目建好之后，同一个错项目仍被拒
+
+```
+web-test: environment "acc-orphan" names project "nope", which is not stored;
+          stored projects are [shop]
+```
+
+**列表从 `[]` 变成 `[shop]`，说明它读的是当前真实目录**，不是写死的。
+
+#### 分支三：正确的项目 → 接受
+
+```
+ok: True | key: acc-ok
+环境表: acc-ok 属于 shop
+```
+
+#### 闭环情况
+
+| 入口不一致 | 状态 |
+|---|---|
+| `putEnvironment` 照收 / `start_run` 拒绝 | ✅ 0.7.75 修，0.7.76 实测 |
+| 操作者取消不释放 / 模型工具释放 | ✅ 0.7.67 修，0.7.68 实测 |
+| 终态不释放 | ✅ 0.7.71 修，0.7.72/73 实测 |
+
+**0.7.65 找到的「入口各自为政」，三处已全部修完并逐项在真实宿主上验证。**
