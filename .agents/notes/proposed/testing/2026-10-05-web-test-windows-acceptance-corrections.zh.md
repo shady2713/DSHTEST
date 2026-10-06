@@ -7468,3 +7468,63 @@ web_test_status: Web testing plugin 0.8.0 (active). Projects: 0. Runs: 0.
 **Ubuntu 上装成功不等于 Windows 上验收通过。**
 
 新包 sha256 f6621d41ff3920eabaf5ef4346691d9d2655355feba08f3f7a33b08b4d11bafd
+
+### 0.8.5：**「启动失败不写入 started」在真实宿主上验证了**
+
+0.8.3 定的未测项：这轮测掉了。
+
+#### 怎么让它真的失败
+
+**`executablePath` 是可配置项**（cordis.patch.yml 里那一行），
+**在 profile 的 patch 层把它指向不存在的路径**：
+
+```yaml
+- id: web-test-role-browsers
+  config:
+    executablePath: /nonexistent/chrome-that-cannot-start
+```
+
+**这是宿主支持的公开配置路径，不改插件也不改宿主。**
+
+#### 宿主没有崩
+
+```
+状态 303   宿主=1
+```
+
+**挂载会失败的配置下，宿主照常起来。**
+
+#### 失败被如实抛给调用方
+
+```
+browser_navigate:  Error: async createBrowserWithInfo: Failed to launch chromium
+  because executable doesn't exist at /nonexistent/chrome-that-cannot-start
+web_test_assume_role: Error: role "buyer"'s browser failed
+  mcp__playwright-role-buyer__browser_navigate: … Failed to launch chromium …
+Chromium=0
+```
+
+**报的是真实原因与真实路径，不是「浏览器起不来」这种含糊话。**
+
+#### 关键：失败没有留下 `started`
+
+```
+运行 bad1 | status: running | activeRole: ''
+
+失败后再驱动浏览器:
+Error: this session has no run that may drive a browser.
+  A run needs to be running and to have called web_test_assume_role with its accountPage
+```
+
+**`activeRole` 是空串，不是 buyer；**
+**之后再驱动浏览器被守卫拒绝。**
+**所以失败的挂载没有留下可用记录——这正是第 3 项的主张。**
+
+#### 一处需要写明的事实
+
+**`putEnvironment` 在这个配置下返回 `ok: True`。**
+**环境建成了，尽管它的浏览器挂载随后会失败。**
+
+**这与第 3 项的「失败不得写入 started」不冲突**——
+**那条讲的是挂载失败后的浏览器状态，不是环境记录该不该存在。**
+**但把这条事实写进记录，免得后来人以为环境那步也失败了。**
