@@ -3493,3 +3493,44 @@ web_test_assume_role: Error: role "buyer"'s browser failed
 然后用 buyer 建记录、approver 处理的顺序实测。
 
 **在补之前，场景 4 记为「未取证」，不声称通过，也不记为失败。**
+
+### 0.7.19：0.7.18 看错了文件——**站点的业务表面本来就在**
+
+0.7.18 查的是 `/tmp/site/index.html`，那是个**早期残留的副本**（只有登录表单）。
+真正在跑的服务是：
+
+```
+$ ss -ltnp | grep 8902
+LISTEN 127.0.0.1:8902  users:(("MainThread",pid=3884503,fd=21))
+
+$ tr '\0' ' ' < /proc/3884503/cmdline
+node server.mjs
+
+$ readlink /proc/3884503/cwd
+/home/weetion/桌面/webtest/.acceptance/site
+```
+
+**`/proc/<pid>/cwd` + `cmdline` 直接给出了真实夹具位置**：
+`.acceptance/site/server.mjs`（118 行，仓库内）。
+
+它的路由里本来就有完整的跨角色业务表面：
+
+| 路由 | 方法 | 权限 |
+|---|---|---|
+| `/orders` | POST | `me.canCreate`，否则 403「无权创建订单」 |
+| `/orders` | GET | 任意登录用户，返回**全部**订单与 `createdBy` / `approvedBy` |
+| `/orders/approve` | POST | `me.canApprove`，否则 403「无权审批」 |
+
+首页还按登录用户显示 `可创建：${me.canCreate}｜可审批：${me.canApprove}`。
+
+**所以场景 4 需要的一切都已经在那里**：
+alice（Buyer）有 `canCreate`、bob（Approver）有 `canApprove`，
+**两个角色对同一份订单的权限不同，这正是场景 4 要证明的东西。**
+
+0.7.18 说「站点没有业务记录表面」是**错的**，
+错因是**查了一个不在服务路径上的残留文件**，而不是没查前提——
+**查了，但查错了对象**。这和之前几次是同一类错误的变体，
+**从进程反查真实来源**比从猜测的文件路径找要可靠。
+
+**下一步**：直接用现有表面跑场景 4，
+不需要改夹具，也不需要改宿主。
