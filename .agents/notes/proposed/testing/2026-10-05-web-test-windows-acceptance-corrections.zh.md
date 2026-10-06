@@ -6358,3 +6358,61 @@ environment "acc-w4" is not stored under project "shop"
 
 **记这一条是因为：0.7.81 明确写了「没有证据就不写成因」，
 这轮的证据推翻了其中每一个——包括我自己当时最怀疑的那个。**
+
+### 0.7.83：**「取消 A → 新建未核验 B → A 的旧调用到达」复现出来了，守卫是部分拦截**
+
+这轮用**这个宿主的真实键**（`shop` + `acc-ok`）重做，0.7.81 那次是我的键写错。
+
+#### 复现步骤与结果
+
+```
+1. 建 A 并核验      Chromium=20   run-A | running  | activeRole: 'buyer'
+2. 取消 A            Chromium=10   run-A | cancelled
+3. 新建 B 不核验      Chromium=10   run-B | running  | activeRole: ''
+```
+
+**第 3 步正是要复现的场景：B 在运行、A 已取消、B 尚未核验。**
+
+#### 模型在 B 里驱动浏览器的实际结果
+
+```
+browser_navigate:  Error: unknown tool "mcp__playwright-role-buyer-g2__browser_navigate"
+browser_snapshot:  ### Page URL: http://127.0.0.1:8902/account  当前账号
+browser_evaluate:  { "url": "http://127.0.0.1:8902/account",
+                     "account": "Alice Buyer",
+                     "text": "当前账号
+Alice Buyer
+可创建：true｜可审批：false" }
+```
+
+#### 结论：**部分拦截，不是完全拦截**
+
+| 层面 | 结果 |
+|---|---|
+| 工具作用域 | ✅ **拦住了**——`browser_navigate` 报 `unknown tool` |
+| 已挂载浏览器的其他工具 | ❌ **没拦住**——`snapshot` / `evaluate` **拿到了 A 的登录态** |
+
+**B 未核验，却读到了 A 以 `Alice Buyer` 身份登录后的页面。**
+
+**这与「复现并阻断」的验收要求不符：B 不该看见 A 的登录态。**
+
+#### 但要注意两点，不要过度解读
+
+1. **`browser_navigate` 的 `unknown tool` 正是 0.7.6 那轮学到的教训**——
+   **它只说明当前作用域查不到这个工具，不能直接证明 client 从未注册**
+   （A 的 client 确实注册过，只是 B 的作用域里没有）。
+   **所以「作用域层拦住」这条，证据强度不如看上去。**
+2. **A 的浏览器在 A 取消后仍在**（`Chromium` 从 20 降到 10 而不是 0，
+   且 B 建起后仍是 10）——**说明 A 的浏览器没有被 B 接管，而是继续挂着**，
+   工具名带 `-g2` 也印证它是 A 那一代的挂载。
+
+**所以真正的问题是「未核验的 B 能读到已取消的 A 的浏览器」，
+而不是「A 的旧调用排队到达 B」——后者没发生。**
+
+#### 记为待处理项
+
+**未核验的运行不得驱动任何属于其他运行的浏览器工具。**
+单测 0.7.47 覆盖的是「准备窗口按拥有者绑定」，
+**但没有覆盖「已取消运行的浏览器仍可被别的运行调用」。**
+
+**本轮上下文已尽，不改。**
