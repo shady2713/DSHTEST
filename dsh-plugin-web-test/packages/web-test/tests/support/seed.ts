@@ -22,7 +22,18 @@ export function project(key = 'shop'): Record<string, unknown> {
 }
 
 /** An environment revision declaring the roles cases may act as. */
-export function environment(key = 'shop-test', roles = ['admin']): Record<string, unknown> {
+/**
+ * A confirmed environment revision.
+ * @param key - Revision key.
+ * @param roles - Declared role names, each bound to `ref:<name>`.
+ * @param accounts - Per-role `accountRef`, overriding the `ref:<name>` default.
+ * @returns the record to seed.
+ */
+export function environment(
+  key = 'shop-test',
+  roles = ['admin'],
+  accounts?: Record<string, string>,
+): Record<string, unknown> {
   return {
     schemaVersion: 3,
     kind: 'environment-revision',
@@ -35,7 +46,7 @@ export function environment(key = 'shop-test', roles = ['admin']): Record<string
     url: 'http://127.0.0.1:5173/',
     nature: 'test',
     dataOperations: 'business-entry-writes',
-    roles: roles.map(name => ({ name, accountRef: `ref:${name}` })),
+    roles: roles.map(name => ({ name, accountRef: accounts?.[name] ?? `ref:${name}` })),
     scopeNotes: 'local test page',
     modelRef: '',
     viewport: { width: 1280, height: 800 },

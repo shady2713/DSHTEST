@@ -138,6 +138,36 @@ describe('browser dispatch authorisation', () => {
       cleanupHomes()
     }
   })
+
+  it('binds a role name per environment, so the same name elsewhere is a different identity', async () => {
+    const { store, dispose } = await harness({
+      seed: seedOf({
+        runs: {
+            'run-a': run('run-a', 'owner', { environmentRevisionKey: 'shop-one' }),
+            'run-b': run('run-b', 'owner', { environmentRevisionKey: 'shop-two' }),
+          },
+        'environment_revisions': {
+          'shop-one': environment('shop-one', ['buyer'], { buyer: 'Alice Buyer' }),
+          'shop-two': environment('shop-two', ['buyer'], { buyer: 'Bob Seller' }),
+        },
+      }),
+    })
+    try {
+      const a = store.getRun('run-a')
+      const b = store.getRun('run-b')
+      if (a === undefined || b === undefined) throw new Error('seeded runs missing')
+      // Same role name in two confirmed environments: each run is bound to its
+      // own environment's account, so one run's verification never stands in for
+      // the other's.
+      expect(store.expectedAccount(a, 'buyer')).toBe('Alice Buyer')
+      expect(store.expectedAccount(b, 'buyer')).toBe('Bob Seller')
+    }
+    finally {
+      await dispose()
+      cleanupHomes()
+    }
+  })
+
 })
 
 /**
