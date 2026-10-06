@@ -638,17 +638,13 @@ export function apply(ctx: Context): void {
         // stops the session that started it and leaves other sessions working.
         ownerSessionId: exec.agent?.id ?? '',
       })
-      // Start a browser for every role the environment declares, before the
-      // model asks to act as one. The browser provider hands an MCP server's
-      // tools to an Agent when that Agent is created, so a browser started
-      // mid-turn is not callable until the following turn; starting them here
-      // means the next turn can already drive each role's account.
+      // Recording the run is the last thing this tool does. It mounts no role
+      // browser: `assume_role` owns that, and a browser mounted here would not
+      // be callable in this turn, because the provider hands an MCP server's
+      // tools to an agent as that agent is created. Starting one per declared
+      // role was the intent of an earlier revision; it is not implemented, and
+      // `assume_role` is the single place a role browser is mounted.
       await store.putRun(record)
-      // Role browsers are started in the background, not awaited here. Awaiting
-      // them made this tool wait for a Chromium launch per role, which ran past
-      // the tool timeout and left the run unrecorded. The browser provider
-      // hands an MCP server's tools to an Agent when that Agent is created, so
-      // starting them now is what makes the next turn able to drive them.
       if (pool === undefined) {
         ctx.logger.warn(`web-test: this build has no role browser pool, so run ${input.runKey} has no browser`)
       }

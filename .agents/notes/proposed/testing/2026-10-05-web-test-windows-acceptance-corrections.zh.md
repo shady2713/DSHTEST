@@ -6671,3 +6671,50 @@ const dir = store.ensureEvidenceDir(input.runKey)
 **按仓库规约，注释应描述行为，不描述没发生的事。**
 **修法是把注释改成实际行为，或补上实现。**
 **本轮上下文已尽，不改。**
+
+### 0.7.89：**注释改成了描述实际行为**，并如实记下测试没写成
+
+0.7.88 定的修法是「改注释或补实现」。**这轮选了改注释。**
+
+#### 为什么不补实现
+
+**补实现是行为变更**：为每个声明角色挂浏览器会多开 Chromium、
+改变挂载时机与数量，**需要先定清意图再补测试与宿主实测**。
+**在上下文将尽的一轮里改行为，是拿未验证的改动换进度。**
+
+**改注释则没有这个风险**：它只让文字与代码一致。
+
+#### 改后的注释
+
+```
+// Recording the run is the last thing this tool does. It mounts no role
+// browser: `assume_role` owns that, and a browser mounted here would not
+// be callable in this turn, because the provider hands an MCP server's
+// tools to an agent as that agent is created. Starting one per declared
+// role was the intent of an earlier revision; it is not implemented, and
+// `assume_role` is the single place a role browser is mounted.
+```
+
+**保留了「为什么浏览器不能中途挂」这个理由**（提供者只在 Agent 创建时交付工具），
+**删掉了不存在的三件事**（每角色一个、后台不 await、await 会超时），
+**并写明「这是早期版本的意图，尚未实现」。**
+
+#### 想加的测试没写成
+
+**原计划**：钉住「`start_run` 不挂浏览器」，防止注释再漂移。
+**实际没写成**，两个原因都查过了：
+
+1. `tests/support/harness.ts` **不接受注入 pool**，所以拿不到桩；
+2. 现有测试里**没有任何一处调用 `start_run`**——
+   `grep -rn "startRun\|start_run" tests/*.spec.ts` 无结果。
+
+**所以这个测试要从零搭一条「真实注册的工具执行路径」，
+而不是加一个断言了事。上下文已尽，写了一半的桩文件已删掉。**
+
+**记为未完成项，不当作已加。**
+
+#### 已验证的部分
+
+```
+typecheck 干净   132 tests passed
+```
