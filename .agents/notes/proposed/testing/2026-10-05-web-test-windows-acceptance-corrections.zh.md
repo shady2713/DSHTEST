@@ -3666,3 +3666,42 @@ key 59773afd，account "Alice Buyer"
 **仍记为「部分通过」。** 下一步只剩两件事：
 用站点返回的**真实 key** 让 approver 审批并核对 `approvedBy`；
 再让 buyer 对**存在的**订单试一次审批，**必须拿到 403「无权审批」**。
+
+### 0.7.23：场景 4——**buyer 越权被拒已实测**（403）
+
+用站点返回的**真实订单号**再跑一次，buyer（Alice Buyer）对**存在的**订单发起审批：
+
+```
+{"status": 403, "contentType": "application/json; charset=utf-8",
+ "body": "{\"error\":\"Alice Buyer 无权审批\"}"}
+```
+
+**403「Alice Buyer 无权审批」——实测结果，不是从站点源码推断出来的。**
+
+同一轮读回订单表，确认记录的归属字段：
+
+```
+{ "key": "59773afd", "title": "", "createdBy": "Alice Buyer", "approvedBy": null }
+{ "key": "865cee15", "title": "u1", "createdBy": "Alice Buyer", "approvedBy": null }
+```
+
+`createdBy` 是 **Alice Buyer**，`approvedBy` 仍为 `null`。
+
+**这补上了 0.7.22 里那条「404 不构成越权证据」的缺口**：
+上一轮拿到的是记录不存在的 404，**这一轮是对存在记录的 403**，
+**两个角色对同一业务对象的权限差异现在是实测结论。**
+
+#### 场景 4 当前状态
+
+- ✅ **A（buyer）用自己的授权创建了业务记录**（createdBy = Alice Buyer）
+- ✅ **A 对该记录的审批被拒**（403 无权审批）——权限差异实测
+- ❌ **B（approver）处理同一条记录**：仍未做
+
+**只剩一步**：让 approver 签入后对 `59773afd` 发起审批，
+核对返回的 `approvedBy` 是 **Bob Approver**，
+**并且 buyer 之后再看这张表，`approvedBy` 应变成 Bob Approver**——
+**这一步才能证明「两个角色在同一业务对象上协作」**，
+而不只是「两个角色各做各的」。
+
+订单在站点进程的内存里，**只要站点进程不重启就还在**，
+因此下一步可以在**另一个会话**里以 approver 身份审批同一张订单。
