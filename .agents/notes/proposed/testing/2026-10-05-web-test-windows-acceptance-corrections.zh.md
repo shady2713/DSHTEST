@@ -5142,3 +5142,39 @@ throw new Error(`web-test: run … names environment … which is not stored, so
 （而不是等到 `declaredRoles` 才炸）**还没查**。**先记下来，不顺手改。**
 
 **记为待处理项：报错指错字段。**
+
+### 0.7.59：查完了 0.7.58 留的第二个问题——**`start_run` 根本不校验这两项**
+
+```
+const startRunInputSchema = runRecordSchema
+  .pick({ projectKey: true, environmentRevisionKey: true })
+  .extend({ runKey: z.string().min(1), label: z.string().optional() })
+```
+
+**只是两个字符串。** 处理函数随后建运行、给环境声明的每个角色起浏览器，
+**全程没有查过这个项目存不存在，也没有查过这个环境是不是属于这个项目。**
+
+插件自己是知道这两个目录的——`putProject`、`putEnvironment`、`listProjects`、
+`listEnvironments` 都在，`webTest/*` 那面还直接暴露了它们。
+**能力齐备，只是 `start_run` 没在入口处用。**
+
+**后果就是 0.7.57 那一串**：错的 `projectKey` 被原样存进运行记录，
+错误一路推迟到 `declaredRoles` 才炸，**还炸在错的字段上**。
+
+#### 修复范围已经清楚，不需要再猜
+
+1. `start_run` 入口处校验：`listProjects` 里有没有这个 `projectKey`；
+   该项目下有没有这个 `environmentRevisionKey`。
+2. 环境若存在于**别的项目**下，**说出是哪个项目**——
+   这正是 0.7.58 里指错的字段。
+3. `declaredRoles` 与 `requireDeclaredRole` 保留原样作为兜底，
+   但文案改成与入口一致。
+
+**这三条不涉及宿主、不改验收条件、不动状态机**，
+且**有现成目录可查**，属于插件自己的输入校验。
+
+#### 仍不在本轮做
+
+改动本身不大，但**它会改用户可见的拒绝文案与一个工具的入口行为**，
+需要配套测试、重建包、更新三处标识符。
+**本轮上下文已近，不做半截改动**——记录清楚范围，下一轮一次性做完。
