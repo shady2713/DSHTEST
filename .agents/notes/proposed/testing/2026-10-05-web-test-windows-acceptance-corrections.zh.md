@@ -6964,3 +6964,47 @@ r1 | cancelled   r2 | cancelled
 本轮只覆盖了「双挂载」这一条最关键的场景。**
 
 新包 sha256 f6621d41ff3920eabaf5ef4346691d9d2655355feba08f3f7a33b08b4d11bafd
+
+### 0.7.95：**三终态在新包上重测，全部归零**——而且每个运行都挂过两次
+
+0.7.94 标了 0.7.68 / 0.7.72 / 0.7.73 的释放结论需在新包上重测。**本轮补测。**
+
+#### 三个终态
+
+```
+t1 completed  后  Chromium=0
+t2 blocked    后  Chromium=0
+t3 cancelled  后  Chromium=0
+r1 cancelled  r2 cancelled  t1 completed  t2 blocked  t3 cancelled
+```
+
+#### 关键：「0」不是因为浏览器没起来
+
+日志显示每个运行都是**先失败一次、再成功一次**：
+
+```
+web_test_assume_role : Error: run "t1" confirmed role "buyer" as "", but that role is bound …
+web_test_assume_role : Run t1 now acts as buyer; … Present …
+web_test_finish_run  : Run t1 closed as completed.
+（t2、t3 同样各有一次失败一次成功）
+```
+
+**第一次失败是「一个角色只绑定一个运行」那条守卫在拦**，
+模型改用该运行的正确身份后第二次成功。
+
+**所以每个运行都经历过挂载尝试**，**`Chromium=0` 是 finish 造成的。**
+而且 t1 的快照确实抓到了 `/account` 页面。
+
+#### 这比原计划更强的覆盖
+
+**这轮无意中覆盖了「每个运行挂两次再关闭」的场景**——
+**正是 0.7.93 修复的那条路径，在三个终态上都验证了一遍。**
+
+| 项 | 包 | 轮次 |
+|---|---|---|
+| 三终态释放（单挂载） | `f1ff5403…` | 0.7.72 / 0.7.73 |
+| 双挂载后逐个取消归零 | `f6621d41…` | 0.7.94 |
+| **三终态释放（含双挂载）** | **`f6621d41…`** | **0.7.95** |
+| 操作者暂停/取消释放 | `f1ff5403…` | 0.7.68，**新包未重测** |
+
+新包 sha256 f6621d41ff3920eabaf5ef4346691d9d2655355feba08f3f7a33b08b4d11bafd
