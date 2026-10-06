@@ -1903,3 +1903,45 @@ symbol realm**，而不是宿主根的 realm——**这正是 `leakedServices` �
 
 **下一轮第一件事**：用 `web_test_*` 工具在会话里跑一遍单角色闭环，确认隔离改动没有破坏
 登录/核验/动作；再重新评估跨角色（池与 agent 现在共享 realm，提供方的绑定时机是否也变了）。
+
+### 0.6.37：0.6.8 复测——工具通了，运行没建立
+
+复测 0.6.8（`isolate` 方案），干净 home `/home/weetion/dshfresh4`：
+
+1. 启动前读 profile patch → `[]`
+2. `putEnvironment` 确认环境 `acc-p10`（成功，返回记录）
+3. `session/create` 用 `web-test` 预设 → **成功** `session-5e5bf673`
+4. `session/prompt`（方法名是 `session/prompt`，参数是
+   `{requestId, sessionId, mode, content:[{type:'text',text}]}`）→ **accepted**
+5. 会话日志里工具**确实被调用并返回**：
+
+```
+web_test_status ×5, web_test_start_run, web_test_wait, web_test_settle_operation,
+web_test_resume_wait, web_test_report_case
+```
+
+工具集完整：`assume_role`、`begin_operation`、`finish_run`、`operation_unknown`、
+`propose_cases` 都在。`tool/result` 与 `turn/end` 都在，**没有工具错误**。
+
+**但 `web_test_status` 返回的是：**
+
+```
+Web testing plugin 0.6.8 (active). Projects: 0. Runs: 0.
+```
+
+**运行没建立。** 原因指向 `isolate` 方案的一个副作用：池现在在**独立的 symbol realm** 里，
+它的 `ctx.get('webTestStore')` **查不到根作用域的存储**（realm 隔离也隔离了名字解析），
+所以构造时读不到已确认环境、不会自启角色，`start_run` 也就没有环境可用。
+
+**所以 0.6.8 目前的状态是：**
+
+| 项 | 状态 |
+|---|---|
+| 普通会话无 `mcp__` 工具（场景 10） | **通过** |
+| 预设可加载、会话可创建 | **通过** |
+| 工具集完整、可调用、返回正常 | **通过** |
+| 单角色闭环（登录/核验/动作） | **不通过**（运行未建立） |
+
+**0.6.8 仍然不是交付候选。** 下一轮要解决的是"池在独立 realm 里怎么拿到环境"：
+可能的做法是让 `isolate` 只作用于池、而存储通过行配置传入角色名（不依赖 `ctx.get`），
+或者把角色名放到池的 `Config` 上由运维写明。**两者都还没验证。**
