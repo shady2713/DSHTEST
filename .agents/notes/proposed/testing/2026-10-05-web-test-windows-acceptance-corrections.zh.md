@@ -4060,3 +4060,67 @@ Chromium=10
 1. **重启受控站点**，让订单表清零，**所有证据必须来自本轮新建的订单**
 2. 在 0.8.0 上完整跑一次跨角色协作（建单 → 审批）
 3. 查清 `Chromium 20 → 10` 是哪个浏览器被释放、由什么触发
+
+### 0.7.33：**0.8.0 全回归通过**，候选成立
+
+先重启受控站点清空订单表，确认起点为零：
+
+```
+{"account":"Alice Buyer","orders":[]}
+```
+
+#### 0.7.32 里 `Chromium 20 → 10` 的原因查清了
+
+```
+运行: buyer-login-run | paused
+运行: seller-login-run | running
+```
+
+**buyer 运行被暂停，其角色浏览器随之释放；seller 运行不受影响。**
+不是 bug，是暂停的既定行为。
+
+#### 额外测到的：暂停 → 恢复路径（此前未在候选版上测过）
+
+```
+起步 Chromium=10
+恢复 buyer 后 Chromium=20
+运行: buyer-login-run | running | gen: 2 | activeRole: 'buyer'
+运行: seller-login-run | running | gen: 1 | activeRole: 'seller'
+```
+
+**`paused`（代次 1）→ `resume` → `running`（代次 2），浏览器重新挂载，角色重新核验。**
+**代次递增与角色重核验都按设计工作。**
+
+#### 回归③：跨角色协作 —— 通过（本轮新建的订单）
+
+```
+{"status": 200, "body":
+ "{\"key\":\"1c6eb1e4\",\"title\":\"Final-1\",
+   \"createdBy\":\"Alice Buyer\",\"approvedBy\":\"Bob Approver\"}"}
+```
+
+**订单 `1c6eb1e4` 是站点重启后新建的**，因此这条输出属于本轮，
+不是 0.7.32 那次跨轮次残留的数据。
+
+**同一张订单：`createdBy` = Alice Buyer，`approvedBy` = Bob Approver。**
+
+#### 0.8.0 回归总表
+
+| # | 回归项 | 结果 |
+|---|---|---|
+| ① | 登录 + 身份核验，签发授权 | ✅ |
+| ② | 同一会话两个角色各自持有授权 | ✅ `Chromium=20` |
+| ③ | 跨角色在同一业务对象上协作 | ✅ `1c6eb1e4` |
+| ④ | 暂停释放浏览器、恢复重新挂载、代次递增 | ✅ `gen 1 → 2` |
+
+**候选版本 0.8.0，源码 `86d7d494df`，
+包 `sha256 80c48832e3243147629dd72dca40afb693bd1cc75a426bb117415cba03bbf94f`。**
+
+#### 仍单列为未验证的项
+
+- **Windows 桌面端验收**（`0.2.0-rc.2`）——**Ubuntu 的结果不能替代**
+- **Windows ACL 行为**——**未测**
+- **Windows 上资源回收路径**（Chromium 进程树在 Windows 上的形态与 Linux 不同）
+- **多轮回归在 Windows 上是否一致**
+
+**以上四项不进候选结论，单列待验。**
