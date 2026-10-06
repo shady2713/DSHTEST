@@ -7223,3 +7223,49 @@ g3 | running | generation: 1 | role: 'approver' ← 未受影响
 **记为未跑，不拿别的轮次的结果顶替。**
 
 新包 sha256 f6621d41ff3920eabaf5ef4346691d9d2655355feba08f3f7a33b08b4d11bafd
+
+### 0.8.0：**回归 3 未跑成**——前半做对了，后半我把两个会话号取成了同一个
+
+#### 前半是真的
+
+站点订单表在内存里（`const orders = new Map()`，无重置端点），
+**重启站点即清空**，这一步成立。
+
+A 会话以 buyer 登录、核验、拿到 authority
+`aa5cd1c3-c493-4145-9d37-84ccf17733a7`，
+并在站点上建出订单（快照原文）：
+
+```
+{"account":"Alice Buyer","orders":[
+  {"key":"f7b4c78f","title":"","createdBy":"Alice Buyer","approvedBy":null},
+  {"key":"ab64a606","title":"XA-1","createdBy":"Alice Buyer","approvedBy":null}]}
+```
+
+#### 后半的前提错了
+
+```
+B 核验: Run xa now acts as buyer
+B 的 authority: aa5cd1c3-c493-4145-9d37-84ccf17733a7
+```
+
+**「B」拿到的是 A 的运行 `xa`、A 的 authority。**
+
+原因是我取会话号的方式：
+
+```sh
+head -2 /tmp/s6pair.txt | tail -1 > /tmp/sA.txt   # 文件只有 2 行 → 第 2 行
+tail -1 /tmp/s6pair.txt > /tmp/sB.txt             # 同样是第 2 行
+```
+
+**两个文件写的是同一个会话号。**
+**所以不存在「两个会话」，也就没有跨角色协作可言。**
+
+#### 结论
+
+**回归 3 这轮未跑成。**
+**已建出的订单 `ab64a606` 停在 `approvedBy: null`，没人去审批。**
+
+**值得记的是：错误没被当成结果。**
+**B 的输出明显是 A 的运行与 authority，日志里一眼能看出运行名相同——
+如果不去对照运行名和 authority 字符串，
+很容易把「B 拿到了 A 的 authority」写成「两个会话各自持有自己的 authority」。**
