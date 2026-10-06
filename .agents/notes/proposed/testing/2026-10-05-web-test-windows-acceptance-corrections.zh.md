@@ -5289,3 +5289,61 @@ u_web_test_environment_revisions 行数: 1
 **这不该留着**——要么 `putEnvironment` 也要求项目存在，
 要么 `start_run` 放宽。**哪个才对取决于意图，本轮不下结论**，
 但**记录下来**，因为它会让操作者在准备阶段以为环境已就绪。
+
+### 0.7.62：新包回归① ② 通过，**③ 没做成**——不补测也不粉饰
+
+#### ① 通过
+
+```
+起点 Chromium=10（上一轮的 buyer 运行还在）
+→ 新建会话，签入 alice，start_run + assume_role
+Chromium=10  运行 shop-buyer-alice-1 | acc-w2 | running | activeRole: 'buyer'
+```
+
+#### ② 通过
+
+建双角色环境 `acc-two`（buyer + seller），在同一会话里以 seller 另起一个运行：
+
+```
+回归② 后 Chromium=20
+shop-buyer-alice-1  | acc-w2  | running | activeRole: 'buyer'
+shop-seller-bob-1   | acc-two | running | activeRole: 'seller'
+```
+
+**同一会话两个角色各持一个浏览器，与旧包上的结果一致。**
+
+#### ③ **没做成**
+
+让模型先以 buyer 建单 `W2-One`，再以 seller 审批同一条。实际调用：
+
+```
+web_test_control_run:  Error: run "shop-buyer-alice-1" is running and cannot continue
+browser_navigate:      Error: run shop-buyer-alice-1 acts as role "buyer"; the browser tool
+                       "mcp__playwright-… refused
+web_test_assume_role:  Error: role "seller"'s browser failed …: w…
+```
+
+**模型把两个运行搞混了**：拿 buyer 的运行去 `control_run`，
+拿 seller 的角色去驱动 buyer 的浏览器。
+
+**查站点与插件两侧的真实数据，都没有这条订单：**
+
+```
+站点 /orders（alice 登录后）：无 W2-One
+u_web_test_case_results 行数: 0
+u_web_test_operations    行数: 0
+```
+
+**所以回归③在新包上不成立。**
+
+#### 为什么停下而不是重试
+
+不是失败证据不够清楚，而是**这一轮已经连续跑了三段长会话**，
+每段四分钟上下，**上下文也接近用尽**。
+
+**更关键的是：旧包上的③是实测通过的，差异只在 `start_run` 的入口校验**，
+**它不触碰业务动作路径**。**在上下文耗尽时反复重试一条已知能过的回归，
+不如把「这一版未重测」这件事如实记下来。**
+
+**记为：新包① ② 实测通过，③ 未重测通过，不得引用旧包结果冒充。**
+**Windows 清单里那条跨角色协作仍然单列未验证。**
