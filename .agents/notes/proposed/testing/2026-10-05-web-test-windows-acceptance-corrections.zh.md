@@ -3043,3 +3043,49 @@ web_test_finish_run:  closed as completed.
 本次只测了**单个运行结束 → 自己的资源全释放**。
 **两个运行并存、结束其一而另一个的浏览器仍存活**尚未在真实宿主上测，
 `releaseRun` 按归属过滤的设计支持这一点，但**没有实测，不声称通过**。
+
+### 0.7.8：两运行并存测了——**「结束其一，另一个仍可执行」不成立**
+
+上一轮明确留空的那项，这次实测了，**结果是不通过**。
+
+#### 两运行并存本身成立
+
+```
+两个运行后 Chromium=20
+运行: shop-run-1 | status: running | activeRole: 'seller'
+运行: shop-run-2 | status: running | activeRole: ''
+```
+
+**两个 Chromium 同时在跑**（单浏览器时是 10），两个运行并存没有问题。
+
+#### 结束其中一个之后：另一个的浏览器也没了
+
+```
+web_test_finish_run: Run shop-run-1 closed as completed.
+结束后一个运行 Chromium=0
+运行: shop-run-1 | status: completed
+运行: shop-run-2 | status: running
+```
+
+**run-2 仍是 `running`，但它的浏览器也没了。**
+
+`releaseRun` 按 `claims` 过滤，claims 记录的是「哪个运行认领了哪个角色」，
+所以它**只应该释放 run-1 认领的角色**。实际两个都没了，说明问题不在过滤逻辑，
+而在更下面：**角色的 fiber 与 MCP scope 是从池的上下文派生的，
+释放其中一个角色的 fiber 时，另一个角色的浏览器也一起没了。**
+
+可能的原因有两个，**都还没验证**：
+
+1. `createScope(provider, agent)` 的 `provider` 是各自 fiber 的上下文，
+   但 **`Scope.dispose()` 会 quiesce 该 fiber 的 inertia**；
+   如果两个角色的 client 挂在同一条 fiber 链上，释放其一就会波及另一个。
+2. `knownAgents` 的补开是在**各自 fiber 内**做的，但 Agent 是同一个，
+   两个角色可能因此注册到同一个 scope 层上——**层键是 Agent，两个角色其实在同一个
+   `Scope` 对象家族里**，`createScope` 对同一 Agent 可能返回同一 scope。
+
+**第 2 条更可能**：键是 Agent，而两个角色为**同一个 Agent** 建了 scope。
+若 `createScope(ctx, agent)` 对同一 agent 第二次调用返回**同一个 scope**，
+那么两个角色的 client 就在同一个 scope 里，释放其一即释放全部。
+
+**这一项因此从「未测」变为「已测，不通过」**，
+并且给出了下一步要查的具体位置。**不能按 0.7.7 的说法声称它应当成立。**
