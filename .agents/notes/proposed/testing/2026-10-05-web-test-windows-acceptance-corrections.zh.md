@@ -5516,3 +5516,54 @@ agent.ts    pool 引用:            4    store 调用: 5
 **本轮不改**——这是本会话涉及面最大的一处结构性改动，
 **需要重新设计事件契约、覆盖全部 19 个接口的测试、重建包、更新标识符**。
 记为**待处理项，且是三处入口不一致的共同根因**。
+
+### 0.7.66：把下沉方案**落到具体改动点**——**四处，五步**
+
+0.7.65 记了根因与方向。这轮把 store 侧查清楚，**方案不再是方向，是可执行的改动清单。**
+
+#### 现状
+
+```
+$ grep -nE "ctx\.emit|EventMap" src/store-service.ts
+（只有 declare module 里注册 webTestStore，没有任何事件）
+```
+
+**store 一个事件都不发。** 而改运行状态的地方共**五处**：
+
+| 行 | 方法 | 变成 |
+|---|---|---|
+| 370 | `controlRun` | `nextStatus(run, action)` 的结果 |
+| 420 | `waitRun` | `awaiting-business-time` |
+| 444 | `resumeWait` | `running` |
+| 1189 | 重启用对账 | `resuming` |
+
+**五处都是 store 的方法，所以只要在 store 内部统一收口，19 个接口自动都对。**
+
+#### 改动清单
+
+1. **加事件**：`declare module` 里给 `Events` 加一条
+   `web-test: run-status-changed`，载荷 `{ runKey, from, to, generation }`。
+2. **在 store 内收口**：加一个私有 `applyStatus(run, next, generation)`，
+   写回记录后 `this.ctx.emit(...)`。
+   **上面四处全部改走它**——这是关键，**收口必须在 store，不在调用方**。
+3. **pool 订阅**：`role-browser.ts` 或 `agent.ts` 里
+   `ctx.on('web-test: run-status-changed', …)`，
+   在 `to` 属于 `{paused, awaiting-user, awaiting-business-time, cancelled, completed, blocked, resuming}`
+   时调 `releaseRun`。
+4. **删掉 agent.ts 里那两处 `releaseRun`**——
+   **否则会双重释放**。这步最容易漏。
+5. **测试**：19 个接口的取消/暂停各测一次，
+   断言**资源确实被释放**，而不只是状态改了。
+
+#### 为什么这样切
+
+- **只改插件内部**，不碰宿主，符合约束。
+- **事件在 store 内部收口**，新增接口不会漏——
+  **这正是 0.7.65 根因所指的「归属跟着调用方走」。**
+- 释放与状态转换**同一处发生**，不会出现「状态变了但资源没动」的窗口。
+
+#### 仍不在本轮做
+
+第 4 步（删除旧的两处释放）和第 5 步（19 个接口的测试）**必须与前 3 步同时落地**——
+**只做前三步会双重释放，只做前两步事件没人订阅**。
+**上下文已尽，不做半截改动**。下一步按此清单一次做完。
