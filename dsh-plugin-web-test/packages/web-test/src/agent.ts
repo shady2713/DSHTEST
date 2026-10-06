@@ -520,7 +520,7 @@ const waitInputSchema = z.object({
 })
 
 /** What every operation tool returns, so the model sees the recorded state. */
-const operationResultSchema = z.object({
+export const operationResultSchema = z.object({
   runKey: z.string(),
   operationKey: z.string(),
   dispatch: z.string(),

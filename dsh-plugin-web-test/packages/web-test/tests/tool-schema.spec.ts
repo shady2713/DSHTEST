@@ -16,7 +16,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
-import { statusResultSchema, statusToolOutputSchema } from '../src/agent.ts'
+import { operationResultSchema, statusResultSchema, statusToolOutputSchema } from '../src/agent.ts'
 
 describe('status tool output schema', () => {
   it('declares exactly the fields the tool returns', () => {
@@ -29,6 +29,19 @@ describe('status tool output schema', () => {
     expect(Object.keys(properties(declared)).sort()).toEqual(Object.keys(properties(derived)).sort())
     expect([...(declared['required'] as string[])].sort()).toEqual([...(derived['required'] as string[])].sort())
     expect(declared['additionalProperties']).toBe(false)
+  })
+
+  it('covers the operation result, which four tools share and one of them under-filled', () => {
+    // `settle_operation` declared this schema, whose `required` lists
+    // `authority`, while its body returned no such field, so every settlement
+    // failed with `missing required property "value.authority"`. A shared schema
+    // is what let the gap survive: each tool looked plausible on its own.
+    const declared = operationResultSchema
+    const required = Object.keys(declared.shape)
+    expect(required).toContain('authority')
+    for (const key of required) {
+      expect(declared.shape[key as keyof typeof declared.shape]).toBeDefined()
+    }
   })
 
   it('rejects a value the schema does not declare', () => {

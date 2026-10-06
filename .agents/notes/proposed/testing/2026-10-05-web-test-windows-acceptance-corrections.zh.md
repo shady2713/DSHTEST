@@ -2305,3 +2305,53 @@ web_test_assume_role: Error: confirmed role "buyer" as "", but that role is boun
 这类检查**单元测试覆盖不到**（工具输出 schema 只在宿主加载时生效），**下一轮应该加一条
 静态门禁：扫描 `tools.register` 的每个 `output.schema.required` 与其 `execute` 的返回
 字段是否一致**。
+
+### 0.6.47：**完整闭环在交付产物上跑通了——0.6.10 成为交付候选**
+
+0.6.46 指出"一条提示一个工具"会让模型停住。改成**一条提示里把七步按顺序排好**，
+全新 home `/home/weetion/dshfinal`，装重建后的 0.6.10：
+
+```
+web_test_start_run:      Run shop-acc-fin-buyer-1 is running.
+web_test_assume_role:    Error: confirmed role "buyer" as "", but that role is bound
+                         to "Alice Buyer"          ← 空账号被真实拒绝
+web_test_assume_role:    Run shop-acc-fin-buyer-1 now acts as buyer; present authority …
+web_test_begin_operation: Operation create-order-1 … is dispatching.
+web_test_settle_operation: Operation create-order-1 is settled. Recorded as
+                         observed-success; it will appear in the report and cannot be
+                         settled again.                ← value.authority 不再报错
+web_test_finish_run:     Run shop-acc-fin-buyer-1 closed as completed.
+```
+
+存储：
+
+```
+运行: shop-acc-fin-buyer-1 | status: completed | activeRole: 'buyer' | gen: 1
+操作: create-order-1 | dispatch: {"kind":"settled","outcome":"observed-success"}
+身份: buyer → 'Alice Buyer'
+```
+
+**第七节场景 2「单角色登录、身份核验和获准动作成功」现在有完整真实宿主证据**，
+而且中途**真实拒绝了一次空账号**（第四节要求）。之前 0.6.9 卡在 `settle_operation`
+的 schema 错误上，这一步是第一次真正跑过去。
+
+**同时加上了 0.6.46 说的静态门禁**：`tool-schema.spec.ts` 现在覆盖 `operationResultSchema`
+——那个被 `begin_operation`、`settle_operation`、`operation_unknown`、`resume_wait`
+**四个工具共用**的 schema。共用正是当初让缺口存活的原因：每个工具单看都说得通。
+类型检查通过，**118 测试通过**。
+
+产物：`dsh-plugin-web-test-0.6.10.tgz`，
+`sha256 a4141ca3dec8cb5adc1c76807f2073a12c2331782185618080c697033871f19f`
+（重建后的这份，就是上面实测的字节）。
+
+干净环境核对：启动前 profile patch 为 `[]`，安装包内 **0 个 `workspace:`/`file:` 依赖**。
+
+**0.6.10 取代 0.6.9 成为交付候选**：
+
+| | 0.6.9 | 0.6.10 |
+|---|---|---|
+| 单角色闭环（含落定） | **卡在 schema 错误** | **通过** |
+| 重启恢复 | 通过 | 通过（0.6.9 实测，代码未变） |
+| 静态门禁覆盖共用 schema | 无 | 有 |
+
+**仍未通过的两处不变**：跨角色协作、普通会话无额外角色工具。
