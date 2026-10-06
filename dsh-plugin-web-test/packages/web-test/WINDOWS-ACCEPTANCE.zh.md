@@ -144,15 +144,21 @@
 | 项 | 执行人 | 日期 | 结果 | 备注 |
 |---|---|---|---|---|
 | 1–15 |  |  |  |  |
+| 0.8.0 新增 1–5 |  |  |  |  |
 
 ## 0.8.0 新增覆盖项
 
-0.6.12 时代的清单没有覆盖三个后来出现的工具，补上。
-**三项全部未验证。**
+0.6.12 时代的清单没有覆盖后来出现的 `web_test_control_run`、`web_test_finish_run`
+与 `web_test_propose_cases`，也没有覆盖整包禁用。这五条在 Ubuntu 上都有实测，
+**在 Windows 上全部未验证。**
+
+**关于第 3 条的判定方式**：Ubuntu 上的证据是数插件自带的 Chromium 进程（12 → 0 或 10 → 0）。
+Windows 上**没有对应的进程计数**，请改用任务管理器或句柄确认插件自带的浏览器进程已经消失，
+并同时确认宿主进程仍在运行。**不要把 Ubuntu 的进程数当作验收标准。**
 
 - [ ] `web_test_control_run` 的 `pause` 之后该会话的浏览器调用被拒，且**其他会话不受影响**
 - [ ] `web_test_control_run` 的 `resume` / `continue` 使运行进入**下一代**并作废旧授权，重新核验角色后浏览器回来
-- [ ] `web_test_finish_run` 在 `completed` / `cancelled` / `blocked` 三种终态下**都释放插件自有的 Chromium**
+- [ ] `web_test_finish_run` 在 `completed` / `cancelled` / `blocked` 三种终态下**都释放插件自带的浏览器进程**（Windows 上按进程或句柄判断，不按数量）
 - [ ] `web_test_propose_cases` 在有运行与无运行两种情形下都返回符合其 `output.schema` 的值
 - [ ] 整包禁用用 bundle 名 `dsh-plugin-web-test`（**不是 `web`**，后者报 cannot resolve profile bundle），恢复后三行插件条目回到 `active`
 
