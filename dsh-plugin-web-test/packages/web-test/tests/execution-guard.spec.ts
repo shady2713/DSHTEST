@@ -125,18 +125,21 @@ describe('tool allowlist', () => {
     expect(unverified).toContain('no run that may drive a browser')
   })
 
-  it('refuses a shell tool even when the composition offers it, and names it', () => {
-    const reason = guardReason({ name: 'bash' })
-    expect(reason).toContain('may only call web_test_* and the active role')
-    expect(reason).toContain('"bash"')
+  it('leaves a shell tool to the host', () => {
+    expect(guardReason({ name: 'bash' })).toBeUndefined()
   })
 
-  it('refuses another MCP server\'s tools, so a global browser provider stays outside', () => {
-    expect(guardReason({ name: 'mcp__other-browser__navigate' })).toMatch(/outside the test execution policy/)
+  it('leaves another MCP server\'s tools to their own provider', () => {
+    // This plugin owns the `playwright-role-` browsers only. A different MCP
+    // server in the same process belongs to another contribution, and refusing it
+    // here would break a composition that mounts both.
+    expect(guardReason({ name: 'mcp__other-browser__navigate' })).toBeUndefined()
   })
 
-  it('refuses a file-writing tool', () => {
-    expect(guardReason({ name: 'fs_write' })).toMatch(/outside the test execution policy/)
+  it('leaves a file-writing tool to the host', () => {
+    // The plugin never granted a file tool to anyone; refusing it was the host's
+    // business being taken over by a guard that runs on every execution.
+    expect(guardReason({ name: 'fs_write' })).toBeUndefined()
   })
 })
 
@@ -158,25 +161,12 @@ describe('operator holds', () => {
     }
   })
 
-  it('leaves a session that owns no held run working', () => {
-    // Another session's pause must not stop this one's test work, including its
-    // browser, as long as that browser belongs to a role this session verified.
-    const store: GuardStore = {
-      holdForSession: (sessionId: string) => (sessionId === 'owner' ? { runKey: 'run-1', status: 'paused' } : undefined),
-      browserGrantForSession: () => ({ runKey: 'run-1', status: 'running', role: 'alice' }),
-      mayPrepareIdentity: () => false,
-      requireAuthority: () => ({ runKey: 'run-1', role: 'alice' }),
-    }
-    expect(guardReason(
-      { name: 'mcp__playwright-role-alice__browser_navigate', arguments: { authority: 'tok' }, agent: { id: 'other' } },
-      store, 'other')).toBeUndefined()
-    // A tool of no role at all is still outside the policy, rather than
-    // something the guard waves through.
-    expect(guardReason({ name: 'mcp__other-browser__navigate' }, store, 'other')).toMatch(/outside the test execution policy/)
-    // The stub holds a valid grant, so its own role's browser is reachable even
-    // though another session's run is paused; a foreign namespace is not.
-    expect(guardReason({ name: 'mcp__playwright-role-bob__browser_navigate' }, store, 'other'))
-      .toContain('belongs to another role')
+  it('leaves a session that owns no held run working, including its own tools', () => {
+    // Unchanged in substance: with no held run the plugin has nothing to stop.
+    // It now also stops refusing the host's tools, which is what a session with
+    // no run would reach first.
+    expect(guardReason({ name: 'read_file' }, undefined, 'plain-session')).toBeUndefined()
+    expect(guardReason({ name: 'web_test_status' }, undefined, 'plain-session')).toBeUndefined()
   })
 
   it('admits a sign-in before the role is verified, including pressing its button', () => {
@@ -213,8 +203,17 @@ describe('operator holds', () => {
     expect(reason).toContain('web_test_status')
   })
 
-  it('still enforces the allowlist for a session with no hold at all', () => {
-    expect(guardReason({ name: 'bash' }, undefined, 'owner')).toMatch(/outside the test execution policy/)
+  it('leaves the host\'s own tools alone for a session that never asked for a test run', () => {
+    // The guard is registered on the host's shared tool runtime, so every
+    // execution in the process passes through it. Refusing anything that is not a
+    // `web_test_` or role-browser tool denied `read_file`, `bash` and the rest of
+    // the host's tools to ordinary DSH conversations that never opened a test
+    // session. Checking that the role tools were absent from a plain session's
+    // list never exercised this path, because the fault is in execution.
+    expect(guardReason({ name: 'read_file' })).toBeUndefined()
+    expect(guardReason({ name: 'fs_write' })).toBeUndefined()
+    expect(guardReason({ name: 'bash' })).toBeUndefined()
+    expect(guardReason({ name: 'mcp__other-browser__navigate' })).toBeUndefined()
   })
 
   it('keeps run control reachable while a run is held, so an interrupted run can be continued', () => {
@@ -222,6 +221,23 @@ describe('operator holds', () => {
     // `web_test_status` tells the operator it needs continuing. Without a
     // control tool the session can read that forever and never act on it.
     expect(HELD_RUN_ALLOWED_TOOLS).toContain('web_test_control_run')
+  })
+
+
+  it('leaves a held run from stopping the host tools of its own session', () => {
+    // The hold exists so a paused or interrupted run cannot keep driving the
+    // browser. It does not own the conversation around that run: a session that
+    // started one can still read a file, and losing that would be a worse
+    // breakage than the one the hold prevents.
+    const store = {
+      holdForSession: () => ({ runKey: 'run-a', status: 'paused' }),
+      browserGrantForSession: () => undefined,
+      requireAuthority: () => ({ runKey: 'run-a', role: 'buyer' }),
+      mayPrepareIdentity: () => false,
+    }
+    expect(guardReason({ name: 'read_file' }, store, 'session-a')).toBeUndefined()
+    expect(guardReason({ name: 'mcp__playwright-role-buyer__browser_navigate' }, store, 'session-a'))
+      .toContain('is paused and refuses new test actions')
   })
 
 })

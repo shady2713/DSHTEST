@@ -166,7 +166,11 @@ export function guardReason(
   // running, the held run keeps its own boundaries through `requireAuthority`
   // and the preparation check, and holding the whole session would leave a
   // restarted run able to block the session forever.
-  const held = store?.holdForSession(sessionId)
+  // The hold is scoped to what a test run can act through: the plugin's own
+  // tools and the role browsers. The host's tools stay available to the session,
+  // which owns its run but not the conversation around it.
+  const testAction = execution.name.startsWith(TOOL_PREFIX) || execution.name.startsWith(ROLE_BROWSER_PREFIX)
+  const held = testAction ? store?.holdForSession(sessionId) : undefined
   const running = store?.browserGrantForSession(sessionId)?.status === 'running'
   if (held !== undefined && !running && !HELD_RUN_ALLOWED_TOOLS.includes(execution.name)) {
     return `web-test: run ${held.runKey} is ${held.status} and refuses new test actions. `
@@ -218,8 +222,13 @@ export function guardReason(
       + ` "${execution.name}" belongs to another role's account, or is not a login step. Switch role with`
       + ' web_test_assume_role, and act only after it has confirmed the account.'
   }
-  return `web-test sessions may only call ${TOOL_PREFIX}* and the active role's ${ROLE_BROWSER_PREFIX}* tools; `
-    + `"${execution.name}" is outside the test execution policy`
+  // Any other `mcp__` tool belongs to another provider, not to this plugin, so
+  // it is left alone. Tools the host gives every session — reading a file,
+  // writing a todo — are likewise not this plugin's to refuse: the guard runs on
+  // the host's shared tool runtime, so denying them here would break ordinary
+  // DSH conversations that never asked for a test session. What the plugin owns
+  // is the role browsers, and the branch above has already judged those.
+  return undefined
 }
 
 /** Arguments of the run-control tool. */

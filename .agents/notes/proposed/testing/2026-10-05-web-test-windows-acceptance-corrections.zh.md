@@ -2874,3 +2874,66 @@ web_test_finish_run:    Run run-shop-rolecheck closed as completed.
 - 场景 5「关闭一个运行要释放它拥有的资源，同时保留其他运行和普通会话的资源」：
   资源键目前仍按**角色名**，未按项目/环境/运行/Agent 区分。
 - 第 5 项 `pluginManager` 禁用/重新启用**尚未实测**。
+
+### 0.7.5：根级 guard 正在**拒绝整个宿主的普通工具**——已修
+
+`src/index.ts:71-79` 把 guard 注册在**宿主共享的工具运行时**上，所以**进程内每一次工具
+执行都会经过它**。而 `guardReason` 的兜底分支（`agent.ts:221`，改前）是：
+
+```ts
+return `web-test sessions may only call ${TOOL_PREFIX}* and the active role's
+  ${ROLE_BROWSER_PREFIX}* tools; "${execution.name}" is outside the test execution policy`
+```
+
+**任何不是 `web_test_*`、也不是本插件角色浏览器的调用都被拒绝**——包括
+`read_file`、`bash`、`fs_write`，以及**别的插件的 `mcp__other-*` 工具**。
+
+**普通 DSH 会话只要装了本插件，它的普通工具就全部不可用。**
+
+#### 为什么一直没发现
+
+我此前的「普通会话」验证**只看工具列表**——角色工具不在列表里，就算通过。
+**但故障在执行路径上，列表检查根本碰不到它。** 用户明确警告过这一点。
+
+#### 修法
+
+1. 兜底分支改为 `return undefined`。本插件只拥有 `playwright-role-` 这几个浏览器，
+   别的 `mcp__` 工具属于别的提供方，**不该由这个 guard 代管**；
+   宿主给每个会话的工具更不是插件能拒的。上面的分支已经判完了角色浏览器。
+2. **hold 也收窄到测试动作**：
+
+```ts
+const testAction = execution.name.startsWith(TOOL_PREFIX)
+  || execution.name.startsWith(ROLE_BROWSER_PREFIX)
+const held = testAction ? store?.holdForSession(sessionId) : undefined
+```
+
+hold 的目的是让暂停/中断的运行**不能继续开浏览器**，不是让整个会话瘫痪。
+
+#### 旧测试改的是**错误策略**，一并更正
+
+5 条旧断言要求 guard 拒绝 `bash`、`fs_write`、`mcp__other-browser__navigate`
+和「无 hold 的会话」的非测试工具。**那编码的是我自己的错误设计**，不是需求。
+按仓库规则「改行为要改测试并说明原因」，已改为断言新的正确行为，并新增一条：
+**被 hold 的运行不能停掉自己会话的宿主工具**（`read_file` 放行，
+角色浏览器仍被拒）。
+
+类型检查通过，**125 测试通过**。
+
+#### 真实宿主验证：普通会话**实际执行**了原有工具
+
+`standard` 预设（非 web-test）的新会话，提示它读 `/etc/hostname`：
+
+```
+read: <path>/etc/hostname</path>
+<content>
+1: weetion
+(End of file - total 1 lines)
+```
+
+**它真的调了 `read` 工具并拿到了内容。** 这是执行层面的证据，不是列表层面的。
+
+**验收要求未被撤销**：普通会话**不出现**插件角色工具这一点仍然成立——
+那些工具挂在各自 Agent 的作用域层下，普通会话的 Agent 根本没有该层。
+**按 Agent 隔离 ≠ 按预设选择**，两者是不同机制，这次改的是 guard 的管辖范围，
+不是工具的可见性。
