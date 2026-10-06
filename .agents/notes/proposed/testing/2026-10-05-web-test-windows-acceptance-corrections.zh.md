@@ -1929,9 +1929,32 @@ web_test_resume_wait, web_test_report_case
 Web testing plugin 0.6.8 (active). Projects: 0. Runs: 0.
 ```
 
-**运行没建立。** 原因指向 `isolate` 方案的一个副作用：池现在在**独立的 symbol realm** 里，
-它的 `ctx.get('webTestStore')` **查不到根作用域的存储**（realm 隔离也隔离了名字解析），
-所以构造时读不到已确认环境、不会自启角色，`start_run` 也就没有环境可用。
+**0.6.38 更正**：我先前把这条当成"realm 隔离导致池读不到存储"，**那个诊断是错的**。查了
+插件的 SQLite：
+
+```
+u_web_test_environment_revisions 行数: 2
+u_web_test_projects                   行数: 0
+u_web_test_runs                       行数: 0
+环境: [('acc-n10', 'buyer'), ('acc-p10', 'buyer')]
+```
+
+**两条已确认环境都在存储里**，`putEnvironment` 写进去了；`Projects: 0` 是**准确的**，因为
+项目记录本来就是在 `start_run` 时才创建的。所以**不是读不到**。
+
+真正的原因是模型**主动拒绝启动**。它的原话：
+
+> The plugin is loaded and active, but its storage is empty — **0 projects and 0 runs** —
+> so there's nothing I can legitimately start yet. `web_test_start_run` won't accept a
+> guessed project, and it requires a **confirmed environment declaration** …
+
+也就是说 `web_test_status` 报的 0 projects 让模型判定"没有可用的环境"，于是只调了 `status`
+就结束。**这是提示与状态输出的问题，不是 realm 隔离破坏了存取**——0.6.4 早就记录过
+"一个动作配一条短提示模型才立刻派发，长提示会让它叙述"，这次是同一类现象的反面：状态输出
+误导了它。
+
+**这意味着 0.6.8 的单角色闭环很可能是好的，只是没被正确驱动。** 下一轮要做的不是改代码，
+而是用一条**明确指出环境已确认**的提示直接驱动 `start_run`，再判闭环。
 
 **所以 0.6.8 目前的状态是：**
 
@@ -1942,6 +1965,5 @@ Web testing plugin 0.6.8 (active). Projects: 0. Runs: 0.
 | 工具集完整、可调用、返回正常 | **通过** |
 | 单角色闭环（登录/核验/动作） | **不通过**（运行未建立） |
 
-**0.6.8 仍然不是交付候选。** 下一轮要解决的是"池在独立 realm 里怎么拿到环境"：
-可能的做法是让 `isolate` 只作用于池、而存储通过行配置传入角色名（不依赖 `ctx.get`），
-或者把角色名放到池的 `Config` 上由运维写明。**两者都还没验证。**
+**0.6.8 仍然不是交付候选**，但理由变了：不是 realm 隔离的副作用，而是**闭环尚未被正确驱动
+并复测**。把"池在独立 realm 里怎么拿到环境"当成待解问题是没有依据的，那条诊断已撤回。
