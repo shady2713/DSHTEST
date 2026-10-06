@@ -6804,3 +6804,69 @@ typecheck 干净   134 tests passed
 新包 sha256 f87bb2556a589e5313642f6790d3ad35b73ff98cc3bcdc98e03242ec9f36b1f9
 f87bb2556a589e5313642f6790d3ad35b73ff98cc3bcdc98e03242ec9f36b1f9
 ```
+
+### 0.7.92：**0.7.86 定位的那一行不可达；真正的泄漏是「一个角色只记一个 key」**
+
+0.7.86 说泄漏在收养路径的空句柄。**这轮把它证伪了，并找到真正的地方。**
+
+#### 先证伪：`mounted ?? (async () => {})` 永远取不到左边
+
+`started` 全文件只有两处写入：
+
+```
+264:  this.started.set(key, preStarted)      ← 收养分支
+417:  this.started.set(key, browser)         ← mountBrowser
+```
+
+而 `mountBrowser` 里 `mounts` 与 `started` 是**紧挨着成对设置**的：
+
+```
+416:  this.mounts.set(key, async () => { await fiber.dispose() })
+417:  this.started.set(key, browser)
+```
+
+**所以 `started` 里存在一个 key 时，`mounts` 里必然也有。**
+收养分支读到的 `mounted` **永远不为 undefined**，
+**那个空句柄是一条走不到的分支**——**它不是泄漏的成因。**
+
+#### 真正的泄漏：`keysByRole` 一个角色只记一个 key
+
+```
+265:  this.keysByRole.set(role, key)     ← 收养
+418:  this.keysByRole.set(role, key)     ← 挂载
+501:  const live = this.started.get(this.keysByRole.get(role) ?? '')
+```
+
+**三个写入点都是 `set`，都是覆盖。**
+**同一个角色挂载两次，就有两把 key，而 map 里只剩最后一把。**
+
+再看释放：
+
+```ts
+async releaseRole(role: string): Promise<void> {
+  const key = this.keysByRole.get(role)          // 只有最后一把
+  const mounted = this.mounts.get(key)
+  this.mounts.delete(key); this.started.delete(key)
+  this.keysByRole.delete(role)
+```
+
+**只按那把 key 释放一次。**
+**先前那把 key 的条目永远留在 `mounts` 与 `started` 里，没人再碰。**
+
+#### 这与 0.7.85 的观测完全吻合
+
+```
+起点          Chromium 0
+assume_role   Chromium 20   ← buyer 挂了两把 key（gen1、gen2）
+取消          Chromium 10   ← 只释放了 keysByRole 里那把
+```
+
+`mountCount` 按**角色**递增，第二次挂载必然产生新 key——
+**所以「一个角色被挂过两次」就足以泄漏，且第二次必然换 key。**
+
+#### 修法方向
+
+**`keysByRole` 改成角色 → key 集合**，挂载时 add、`releaseRole` 时全部 dispose。
+**501 行那种「查当前活的那把」也要改成取集合里最后一个或任意一把。**
+
+**本轮上下文已尽，不改。**
