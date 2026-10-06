@@ -7372,3 +7372,50 @@ A authority: 9c22819a-…      ← 两把不同
 **四项回归现在全部在交付包上跑过：1、2、3、4。**
 
 新包 sha256 f6621d41ff3920eabaf5ef4346691d9d2655355feba08f3f7a33b08b4d11bafd
+
+### 0.8.3：**核对了第 1 项那条测试确实在跑真实注册路径**——12 个工具全部执行
+
+六项都有了新包上的证据，这轮回头核对第 1 项本身，
+**因为它声称「测试必须覆盖真实注册的工具执行路径」。**
+
+#### 它怎么调的
+
+```
+grep -c "tool.execute" tests/tool-execution.spec.ts → 1
+```
+
+**调的是 `tool.execute(args, { agent })`，不是读 schema 常量，也不是读源码。**
+
+#### 它有没有防「全跳过也通过」
+
+```ts
+// A suite that skipped every body would pass while proving nothing, so the
+// tools that actually produced a value are named in the failure output.
+expect(checked.length, `只执行了 ${checked.length} 个工具: …`)
+if (checked.length === 0) throw new Error(`no tool produced a value; all refused: …`)
+```
+
+**两个断言防空洞：数量为 0 直接抛错。**
+
+#### 实测它到底跑了几个
+
+在测试里临时加一行打印（跑完即删）：
+
+```
+实际执行的工具: 12
+web_test_start_run | web_test_finish_run | web_test_propose_cases | web_test_report_case
+| web_test_begin_operation | web_test_settle_operation | web_test_operation_unknown
+| web_test_assume_role | web_test_wait | web_test_resume_wait | web_test_status
+| web_test_control_run
+```
+
+**12 个全部真正执行，不是 12 个被登记然后跳过。**
+
+**第 1 项点名的四个都在其中**：
+`web_test_settle_operation`、`web_test_operation_unknown`、`web_test_wait`、`web_test_resume_wait`。
+
+#### 一个方法上的提醒
+
+**「测试存在」不等于「测试在跑东西」。**
+**所以这轮不是读测试代码就下结论，而是加了一行打印看它实际执行了几个**，
+**跑完把那行删掉。**
