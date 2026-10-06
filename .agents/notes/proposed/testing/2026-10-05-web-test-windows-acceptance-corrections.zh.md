@@ -3427,3 +3427,39 @@ web_test_assume_role: Error: role "buyer"'s browser failed
 **顺带一条数据**：`Chromium=10` 说明 B 的浏览器**确实起来了**——
 **浏览器能起，只是调用方拿着旧名字去喊它。** 这与 0.7.4 之前
 「第二角色注册不上」是不同的问题，**不要混为一谈**。
+
+### 0.7.17：**取消序列全程通过**（0.7.7）
+
+0.7.16 定位到的缺陷已修：`readAccount` 不再按角色名拼工具名，
+改用**该角色当前挂载的 serverName**（`this.started` 里存的 `RoleBrowser.serverName`）。
+
+**全新宿主、全新会话，逐步驱动：**
+
+```
+① 取消后 Chromium=10                      ← run-1 的浏览器仍在自己手上
+② web_test_start_run:    Run run-shop-acc-c6-buyer-2 is running.
+③ web_test_assume_role:  confirmed role "buyer" as "" …        ← 空账号被拒
+④ web_test_assume_role:  Run run-shop-acc-c6-buyer-2 now acts as buyer.
+   Present authority "15098…"
+最终 Chromium=10
+
+运行: run-shop-acc-c6-buyer   | blocked | activeRole: ''
+运行: run-shop-acc-c6-buyer-2 | running | activeRole: 'buyer'
+```
+
+**第七节场景 6 与 7 现在全链路成立**：
+
+- ✅ run-1 核验通过并持有授权
+- ✅ run-1 结束后释放自己的浏览器（`Chromium 12 → 0`）
+- ✅ run-2 正常启动，**在重挂载后的新 server 名下完成身份核验**
+- ✅ 拿到**新的授权**（`15098…`），旧授权未复活
+- ✅ 空账号声明仍被拒绝
+
+**这一项从「不通过」转为「通过」。**
+
+**一处如实标注**：run-1 的终态是 `blocked` 而非 `cancelled`——
+模型这一轮用的不是 cancel 动作。**`blocked` 是否同样释放资源没有单独测过**，
+上面的释放是在 0.7.6 上以 `cancelled` 实测的（`取消后 Chromium=0`）。
+**不把两件事混为一谈。**
+
+类型检查通过，**127 测试通过**。旧包 0.7.4 / 0.7.5 / 0.7.6 全部保留。

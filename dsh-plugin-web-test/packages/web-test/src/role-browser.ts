@@ -495,7 +495,13 @@ export class RoleBrowserPool extends Service {
     role: string,
     identityUrl: string,
   ): Promise<IdentityAnswer> {
-    const namespace = RoleBrowserPool.namespaceOf(role)
+    // The namespace comes from the mount that is running, not from the role name:
+    // a re-mount takes a suffixed server name, and asking for the name derived
+    // from the role alone reaches a tool that was never registered under it.
+    const live = this.started.get(this.keysByRole.get(role) ?? '')
+    const namespace = live === undefined
+      ? RoleBrowserPool.namespaceOf(role)
+      : `mcp__${live.serverName}__`
     // `ToolsRuntime` resolves a tool with `view(scope)`, so the call has to
     // name the same Agent the model used. Without `agent` the lookup falls
     // back to the global view, where an MCP server's tools are not registered
