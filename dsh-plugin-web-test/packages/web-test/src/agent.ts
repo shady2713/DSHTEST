@@ -499,6 +499,10 @@ const settleOperationInputSchema = z.object({
   runKey: z.string().min(1),
   operationKey: z.string().min(1),
   outcome: z.enum(['observed-success', 'observed-absent']),
+  // Settling is part of acting as the run, so it carries the same authority the
+  // dispatch did. It is echoed back so the browser calls after a settlement do
+  // not need a fresh one.
+  authority: z.string().min(1),
 })
 
 /** The operation-unknown tool's arguments. */
@@ -1088,6 +1092,7 @@ export function apply(ctx: Context): void {
         runKey: record.runKey,
         operationKey: record.operationKey,
         dispatch: settled.kind,
+        authority: input.authority,
         note: settled.kind === 'settled'
           ? `Recorded as ${settled.outcome}; it will appear in the report and cannot be settled again.`
           : 'The operation was not settled.',

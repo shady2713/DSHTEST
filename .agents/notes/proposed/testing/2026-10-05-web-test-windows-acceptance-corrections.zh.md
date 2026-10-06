@@ -2222,3 +2222,40 @@ if (action === 'continue') return run.status === 'awaiting-user' ? 'running' : u
 
 **0.6.9 取代 0.6.7 成为交付候选**：单角色闭环在交付产物上已端到端验证（0.6.42），
 场景 9 的恢复缺口已补并复测。跨角色与普通会话工具两处限制不变。
+
+### 0.6.45：0.6.9 终验又抓到一个 schema 缺陷——`settle_operation`（0.6.10 修复）
+
+0.6.9 在干净 home 跑通了 `start_run` → `assume_role`（真实登录，身份 `Alice Buyer`）→
+`begin_operation`（`Operation create-order-1 … is dispatching`）→ `finish_run`
+（`closed as completed`，存储 `status: completed`），但在中间这一步报了：
+
+```
+web_test_settle_operation: Error: tool "web_test_settle_operation" returned invalid
+  output: missing required property "value.authority"
+```
+
+**和 0.2.x 修过的 `begin_operation` 同一类**：输出 schema 的 `required` 里有 `authority`，
+函数体却没返回。根因是**输入 schema 里没有 `authority`**——落定时不需要校验授权，所以
+当初没加，而输出却复用了同一个 `operationResultSchema`，那个 schema 是给 `begin_operation`
+用的，带 `authority`。
+
+**修法**（与 `begin_operation` 对齐，而不是放宽 schema）：
+
+- `settleOperationInputSchema` 增加 `authority: z.string().min(1)`，
+  `required` 同步加上
+- 返回值里 `authority: input.authority` 原样回传
+
+**理由**：落定本身就是"以该运行的身份行动"的一部分，**应当携带授权**；而浏览器在落定之后
+还要继续操作，回传同一个授权可以避免模型每次落定后重新索取。**放宽 schema 等于让输出少报
+一个字段，那是掩盖不是修复。**
+
+类型检查通过，**117 测试通过**。
+
+**尚未复测确认**：修完后驱动落定的两次尝试里，模型都没有走到 `begin_operation` 就直接
+`finish_run`（`closed as blocked`），所以**这个修复在真实宿主上的效果还没测到**。
+下一轮要用"一条提示一个工具"的方式把 `begin_operation` → `settle_operation` 走完，
+确认 `value.authority` 不再报错。
+
+**当前交付候选仍是 0.6.9**（`sha256 dacf49ef87e435edb9321742a8050d4fc57e00b1d5c86c64a11ff2851a3139e0`）：
+它的单角色闭环与重启恢复都已实测通过。0.6.10 的修复方向正确、编译与测试通过，但**真实宿主
+未复测，不作为候选**。
