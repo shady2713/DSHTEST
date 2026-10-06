@@ -391,7 +391,6 @@ export class WebTestStore extends Service {
       waitingReason: next === 'running' ? run.waitingReason : '',
       updatedAtMs: Date.now(),
     }
-    this.applyHold(record)
     return this.putRun(record)
   }
 
@@ -418,7 +417,6 @@ export class WebTestStore extends Service {
         + ' needs a deadline the run has not reached yet')
     }
     const record = { ...run, status: 'awaiting-business-time' as const, waitingUntilMs: untilMs, waitingReason: reason, updatedAtMs: Date.now() }
-    this.applyHold(record)
     return this.putRun(record)
   }
 
@@ -446,7 +444,6 @@ export class WebTestStore extends Service {
       waitingReason: '',
       updatedAtMs: Date.now(),
     }
-    this.applyHold(record)
     return this.putRun(record)
   }
 
@@ -502,7 +499,6 @@ export class WebTestStore extends Service {
     } else {
       this.heldRuns.delete(record.key)
     }
-    this.announceStatus(record)
   }
 
   /**
@@ -516,8 +512,7 @@ export class WebTestStore extends Service {
    *
    * @param record - The run record as it now stands.
    */
-  private announceStatus(record: RunRecord): void {
-    const previous = this.records[TABLE_RUNS]?.[record.key] as RunRecord | undefined
+  private announceStatus(record: RunRecord, previous?: RunRecord): void {
     const from = previous?.status
     if (from === record.status && from !== undefined) return
     this.ctx.emit('web-test: run-status-changed', {
@@ -599,12 +594,22 @@ export class WebTestStore extends Service {
   }
 
   /**
-   * Store one run's record.
+   * Store one run's record and announce the status it carries.
+   *
+   * Every status a run takes goes through here, including the terminal ones
+   * `finish_run` writes, so the browser pool learns about all of them from one
+   * place. Announcing from the callers missed the terminal write, and a run
+   * closed that way kept its browsers until the host exited.
+   *
    * @param run - Validated run record, keyed by its run key.
    * @returns the stored run.
    */
-  putRun(run: RunRecord): Promise<RunRecord> {
-    return this.write(TABLE_RUNS, run.key, run).then(() => run)
+  async putRun(run: RunRecord): Promise<RunRecord> {
+    const previous = this.records[TABLE_RUNS]?.[run.key] as RunRecord | undefined
+    await this.write(TABLE_RUNS, run.key, run)
+    this.applyHold(run)
+    this.announceStatus(run, previous)
+    return run
   }
 
   /** Runs an operator held, so the execution path can refuse them by session. */
@@ -1216,7 +1221,6 @@ export class WebTestStore extends Service {
           + ' and every unresolved operation, then continue it deliberately with controlRun(run, "resume")',
         updatedAtMs: Date.now(),
       }
-      this.applyHold(record)
       await this.putRun(record)
       blockedRuns.push(run.key)
     }

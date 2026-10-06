@@ -5788,3 +5788,47 @@ web-test: run "w3-one-order" is completed and cannot cancel
 
 **本轮上下文已尽，不改。** 记为**待处理项：终态不释放资源**，
 **并且 0.7.43 的「三终态都释放」必须标注为仅旧包成立**。
+
+### 0.7.71：**终态路径修好了**——收口下沉到 `putRun`
+
+0.7.70 定的修法是「让运行写入成为状态宣告的唯一收口」，这轮做完。
+
+```
+putRun(run) 现在是：
+  previous = records[TABLE_RUNS][run.key]     ← 写入前取旧状态
+  await write(TABLE_RUNS, run.key, run)
+  this.applyHold(run)                          ← 派生状态
+  this.announceStatus(run, previous)           ← 宣告（带前值）
+```
+
+**`applyHold` 现在只被 `putRun` 调用一次**，
+四个调用点（`controlRun` / `waitUntil` / `resumeWait` / `reconcileInterruptedWork`）里
+**显式那几行全部删掉**，由 `putRun` 内部统一做。
+
+**关键点：宣告带上了写入前的状态**，
+所以**重复写同一个状态不再重复宣告**——这正是测试里第二条断言。
+
+#### 新测试直接驱动被漏掉的那条路径
+
+```ts
+const seen: string[] = []
+ctx.on('web-test: run-status-changed', ({ to }) => seen.push(to))
+await store.controlRun('run-a', 'pause')            // 已有的路径
+await store.putRun({ …, status: 'completed' })      // 之前漏掉的终态
+expect(seen).toEqual(['paused', 'completed'])
+await store.putRun({ …, status: 'completed' })      // 同状态再写
+expect(seen).toEqual(['paused', 'completed'])        // 不重复宣告
+```
+
+**harness 之前不返回 `ctx`**，加上了——否则观察不到事件。
+
+```
+131 passed   typecheck 干净   lint 0 warnings 0 errors
+新包 sha256 f1ff540302f6924b7aaa1e036e33a3be294568a32891fc917c2330b865eec469
+```
+
+#### 还欠什么
+
+**这个包还没有在真实宿主上实测终态释放。**
+单测证明了「终态会宣告」，**没证明「宣告之后浏览器真的没了」**——
+**这两件事不一样，下一轮必须实测。**

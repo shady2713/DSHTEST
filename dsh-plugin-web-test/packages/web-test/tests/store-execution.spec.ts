@@ -105,6 +105,33 @@ describe('run control', () => {
     await expect(h.store.controlRun('run-1', 'await-user')).rejects.toThrow(/is paused and cannot await-user/)
   })
 
+  it('announces a terminal status written through putRun', async () => {
+    // The release used to hang off the model tool's handler, then off the four
+    // status writers. The terminal write through `finish_run` was not one of
+    // them, so a run closed that way kept its browsers until the host exited.
+    // The announcement now belongs to the write itself, so this covers the path
+    // that was missed rather than the ones that already worked.
+    const { store, dispose, ctx } = await harness({
+      seed: seedOf({
+        runs: { 'run-a': run('run-a', 'owner', { status: 'running', activeRole: '' }) },
+        'environment_revisions': { 'shop-test': environment('shop-test', ['buyer']) },
+      }),
+    })
+    try {
+      const seen: string[] = []
+      ctx.on('web-test: run-status-changed', ({ to }) => seen.push(to))
+      await store.controlRun('run-a', 'pause')
+      await store.putRun({ ...store.requireRun('run-a'), status: 'completed' })
+      expect(seen).toEqual(['paused', 'completed'])
+      // Writing the same status again is not a transition.
+      await store.putRun({ ...store.requireRun('run-a'), status: 'completed' })
+      expect(seen).toEqual(['paused', 'completed'])
+    } finally {
+      await dispose()
+      cleanupHomes()
+    }
+  })
+
   it('names the project a stored environment actually belongs to', async () => {
     // A model that passes the environment key as its project key used to produce
     // a run, and the first role check then said the environment was not stored.

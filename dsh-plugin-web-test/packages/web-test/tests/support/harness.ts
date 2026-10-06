@@ -147,6 +147,7 @@ export async function harness(options: {
   return {
     store,
     home,
+    ctx,
     async dispose() {
       await store.drain()
     },
