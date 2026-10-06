@@ -17,6 +17,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
+import { withImpliedProjects } from './seed'
 import { Storage, StorageError } from '@deepseek-ai/dsh-storage'
 import type { KvFacet, KvUnit, KvUnitDescriptor, StorageBackend } from '@deepseek-ai/dsh-storage'
 import { WebTestStore } from '../../src/store-service.ts'
@@ -128,7 +129,7 @@ export async function harness(options: {
 
   const medium = mediumFor(home)
   if (options.version !== undefined) medium.version = options.version
-  for (const [table, rows] of Object.entries(options.seed ?? {})) {
+  for (const [table, rows] of Object.entries(withImpliedProjects(options.seed))) {
     medium.tables[table] = { ...medium.tables[table], ...structuredClone(rows) }
   }
 

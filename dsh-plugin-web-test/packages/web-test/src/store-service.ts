@@ -1143,12 +1143,7 @@ export class WebTestStore extends Service {
    */
   private requireDeclaredRole(run: RunRecord, role: string): string {
     if (role === '') return ''
-    const stored = this.records[TABLE_ENVIRONMENT_REVISIONS] as Record<string, EnvironmentRevisionRecord> | undefined
-    const environment = stored?.[run.environmentRevisionKey]
-    if (environment === undefined) {
-      throw new Error(`web-test: run ${JSON.stringify(run.key)} names environment`
-        + ` ${JSON.stringify(run.environmentRevisionKey)}, which is not stored, so no role can be authorised`)
-    }
+    const environment = this.requireRunEnvironment(run.projectKey, run.environmentRevisionKey)
     if (!environment.roles.some(declared => declared.name === role)) {
       throw new Error(`web-test: environment ${JSON.stringify(environment.key)} declares`
         + ` [${environment.roles.map(declared => declared.name).join(', ')}]; role ${JSON.stringify(role)} was not`
@@ -1248,6 +1243,39 @@ export class WebTestStore extends Service {
    * @param projectKey - Project whose entry points to read.
    * @returns the stored environment revisions.
    */
+  /**
+   * Resolve the environment a run names, naming the field that is wrong.
+   *
+   * A run carries both a project and an environment. Naming an environment that exists
+   * under a different project is the mistake this reports: the environment is stored,
+   * so saying it is not sends the reader to the wrong field.
+   *
+   * @param projectKey - Project the run claims to belong to.
+   * @param environmentKey - Environment the run names.
+   * @returns The stored environment revision.
+   * @throws when the project is not stored, when the project declares no such
+   * environment, or when it names the project that does hold it.
+   */
+  requireRunEnvironment(projectKey: string, environmentKey: string): EnvironmentRevisionRecord {
+    const projects = this.listProjects()
+    if (!projects.some(project => project.key === projectKey)) {
+      throw new Error(`web-test: project ${JSON.stringify(projectKey)} is not stored;`
+        + ` stored projects are [${projects.map(project => project.key).join(', ')}]`)
+    }
+    const environment = this.listEnvironments(projectKey)
+      .find(candidate => candidate.key === environmentKey)
+    if (environment !== undefined) return environment
+    const elsewhere = (this.sorted(TABLE_ENVIRONMENT_REVISIONS) as EnvironmentRevisionRecord[])
+      .find(candidate => candidate.key === environmentKey)
+    if (elsewhere !== undefined) {
+      throw new Error(`web-test: environment ${JSON.stringify(environmentKey)} belongs to`
+        + ` project ${JSON.stringify(elsewhere.projectKey)}, not`
+        + ` ${JSON.stringify(projectKey)}`)
+    }
+    throw new Error(`web-test: environment ${JSON.stringify(environmentKey)} is not stored`
+      + ` under project ${JSON.stringify(projectKey)}`)
+  }
+
   listEnvironments(projectKey: string): EnvironmentRevisionRecord[] {
     return (this.sorted(TABLE_ENVIRONMENT_REVISIONS) as EnvironmentRevisionRecord[])
       .filter(environment => environment.projectKey === projectKey)

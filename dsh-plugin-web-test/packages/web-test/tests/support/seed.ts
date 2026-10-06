@@ -104,9 +104,39 @@ export function casePlan(
   }
 }
 
-/** Collect records into the seed shape the harness accepts. */
+/**
+ * Collect records into the seed shape the harness accepts.
+ *
+ * Every environment belongs to a project, and `start_run` resolves both before it
+ * records a run, so a seed that declares an environment without its project is
+ * rejected for the wrong reason. Each project any seeded environment names is
+ * therefore added when it is not already present, which keeps the fixtures
+ * declaring what they mean to declare.
+ *
+ * @param tables - Records keyed by table name.
+ * @returns The same records with any implied project added.
+ */
 export function seedOf(tables: SeedTables): Record<string, Record<string, unknown>> {
-  return tables
+  return withImpliedProjects(tables)
+}
+
+/**
+ * Add the project each seeded environment belongs to when no project is seeded for it.
+ *
+ * @param tables - Records keyed by table name.
+ * @returns The same records with any missing project added.
+ */
+export function withImpliedProjects(
+  tables: Record<string, Record<string, unknown>> = {},
+): Record<string, Record<string, unknown>> {
+  const projects = { ...(tables.projects ?? {}) }
+  for (const environment of Object.values(tables.environment_revisions ?? {})) {
+    const projectKey = environment.projectKey
+    if (typeof projectKey === 'string' && !(projectKey in projects)) {
+      projects[projectKey] = project(projectKey)
+    }
+  }
+  return { ...tables, projects }
 }
 
 type SeedTables = Record<string, Record<string, unknown>>

@@ -600,6 +600,10 @@ export function apply(ctx: Context): void {
       // The evidence directory is prepared here, when the run begins, so it
       // exists before any browser tool could write into it and a run that never
       // reports a case still has its directory.
+      // Resolve the project and environment here rather than at the first role
+      // check: a run that names the environment key as its project would
+      // otherwise be stored and fail later with a message about the wrong field.
+      store.requireRunEnvironment(input.projectKey, input.environmentRevisionKey)
       const dir = store.ensureEvidenceDir(input.runKey)
       const record = runRecordSchema.parse({
         ...input,

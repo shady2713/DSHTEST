@@ -11,7 +11,7 @@
 import { afterAll, describe, expect, it } from 'vitest'
 import { cleanupHomes, harness } from './support/harness.ts'
 import type { Harness } from './support/harness.ts'
-import { environment, run } from './support/seed.ts'
+import { environment, project, run, seedOf } from './support/seed.ts'
 
 afterAll(cleanupHomes)
 
@@ -103,6 +103,32 @@ describe('run control', () => {
     const h = await openRun()
     await h.store.controlRun('run-1', 'pause')
     await expect(h.store.controlRun('run-1', 'await-user')).rejects.toThrow(/is paused and cannot await-user/)
+  })
+
+  it('names the project a stored environment actually belongs to', async () => {
+    // A model that passes the environment key as its project key used to produce
+    // a run, and the first role check then said the environment was not stored.
+    // It was stored, under a different project, so the message pointed at the
+    // wrong field and sent the reader to look for a missing environment.
+    const { store, dispose } = await harness({
+      seed: seedOf({
+        runs: { 'run-a': run('run-a', 'owner', { status: 'running', activeRole: '' }) },
+        'environment_revisions': { 'shop-test': environment('shop-test', ['buyer']) },
+        projects: { shop: project('shop'), other: project('other') },
+      }),
+    })
+    try {
+      expect(() => store.requireRunEnvironment('other', 'shop-test'))
+        .toThrow(/environment "shop-test" belongs to project "shop", not "other"/)
+      // A project that is not stored at all names the stored ones instead.
+      expect(() => store.requireRunEnvironment('missing', 'shop-test'))
+        .toThrow(/project "missing" is not stored; stored projects are \[other, shop\]/)
+      // The correct pair still resolves.
+      expect(store.requireRunEnvironment('shop', 'shop-test').key).toBe('shop-test')
+    } finally {
+      await dispose()
+      cleanupHomes()
+    }
   })
 
   it('names a missing run instead of creating one', async () => {

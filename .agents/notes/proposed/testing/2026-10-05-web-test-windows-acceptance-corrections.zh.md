@@ -5178,3 +5178,58 @@ const startRunInputSchema = runRecordSchema
 改动本身不大，但**它会改用户可见的拒绝文案与一个工具的入口行为**，
 需要配套测试、重建包、更新三处标识符。
 **本轮上下文已近，不做半截改动**——记录清楚范围，下一轮一次性做完。
+
+### 0.7.60：**0.7.59 记下的修复做完了**，夹具暴露了 23 个隐藏前提
+
+一次做完：`start_run` 入口校验、两处兜底改用新解析器、新增单测。
+
+```
+入口: store.requireRunEnvironment(input.projectKey, input.environmentRevisionKey)
+兜底: declaredRoles / requireDeclaredRole 统一走它
+解析: 项目没存 → 列出已存项目
+      环境在别的项目下 → 说出是哪个项目
+      环境确实没有 → 说不在该项目下
+```
+
+#### 改完测试立刻炸了 23 个——**这是最有价值的部分**
+
+```
+Tests 23 failed | 105 passed (128)
+expected to throw /role "finance" was not declared/ but got 'web-test: project "shop" is not store…'
+```
+
+**夹具种了 `projectKey: 'shop'` 的环境，却从来没种过 `shop` 这个项目。**
+新校验比原来严，**这 23 个测试一直建立在一个不成立的前提上**：
+它们从没真正走过「环境必须属于某个已存项目」这条路径。
+
+**修的是夹具，不是校验。** 把补全放进 `withImpliedProjects`，
+由 **harness 的种子应用处**统一调用，**一处生效覆盖全部测试**；
+`seedOf` 也复用它。
+
+**中途踩了两下**：
+1. 只在 `seedOf` 里补全，只覆盖 3 个文件 → 9 个仍失败；
+2. `tables` 本身可能是 `undefined` → `Cannot read properties of undefined` → 给了默认 `{}`。
+
+**这两处都是「补全逻辑放错层」的表现**，放对层就没了。
+
+#### 新测试的第一版也是错的
+
+`requireRunEnvironment('acc-k2', 'shop-test')` 命中的是「项目没存」分支，
+**不是「环境在别的项目下」**——后者要求那个项目本身存在。
+改成种两个项目后才测到目标分支，**且第二条期望里的项目列表要写成 `[other, shop]`**。
+
+**代码是对的，测试写错了两处。** 两次都是先看实际输出再改，**没有改代码去迁就测试**。
+
+```
+129 passed (129)
+```
+
+#### 新包
+
+```
+sha256 ffe5bbd3833c478cad1cc6af1160e4227e819dc2d712a99c9c64dcfac7217f59
+```
+
+**这是文档修正那两版之后的第一个含 JavaScript 差异的包。**
+改动只涉及入口校验与两处兜底，**状态机、守卫、资源归属均未动**，
+并在交付记录里**明确写出这一点**——不再沿用「只差文档」那句话。
