@@ -4226,3 +4226,32 @@ $ git diff --stat origin/codex/web-test-plugin-s0~30..HEAD -- packages/ apps/ ve
 **本轮及此前全部改动都在 `dsh-plugin-web-test/` 内，
 宿主源码、`packages/`、`apps/`、`vendor/` 一行未动。**
 这是「不修改宿主」这条约束的直接证据。
+
+### 0.7.36：**交付记录里第 2 项的证据是 0.7.3 上的，已在 0.8.0 重测**
+
+交付记录写着「`standard` 会话读了 `/etc/hostname` 并返回 `weetion`」，
+**那条证据是 0.7.3 上测的**，而守卫此后改了好几轮
+（归属绑定、代次门禁、生成后缀命名、server 名解析）。**不能拿旧版本的证据支撑新版本的结论。**
+
+在 0.8.0 候选包上重测：
+
+```
+工具: read
+结果: <path>/etc/hostname</path> <type>file</type> <content> 1: weetion  (End of file - total 1 lines)
+
+该会话调用过的工具: ['bash', 'read']
+含 web_test_*: False
+含角色浏览器工具: False
+该会话日志中出现 playwright-role 的次数: 0
+```
+
+**普通会话在 0.8.0 上：**
+- ✅ **实际执行自己的工具**（`bash`、`read`），`read` 返回真实内容
+- ✅ **不持有任何 `web_test_*` 工具**
+- ✅ **日志里完全没有 `playwright-role` 字样**——角色浏览器对它不存在
+
+**这同时满足第 2 项的两条要求**：
+根级 guard 不影响普通会话自有工具，且普通会话确实看不到角色工具。
+**「按 Agent 隔离不等于按测试预设选择」没有被撤销。**
+
+**交付记录里那条证据已替换为本轮实测值。**
