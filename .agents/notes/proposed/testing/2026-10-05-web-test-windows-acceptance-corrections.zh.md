@@ -3132,3 +3132,43 @@ export function createScope(ctx: Context, key: ScopeKey, options?) {
 **两个运行各自 `assume_role` 成功、各自持有浏览器**，
 然后结束其一，检查另一个的浏览器是否存活、其浏览器是否仍可调用。
 **在真正测到之前不声称通过。**
+
+### 0.7.10：两个运行分属不同会话，各自持有浏览器——**结束其一，另一个存活**
+
+这次先把场景**造出来**再观察（0.7.8 的教训）。
+
+**第一步：会话一，buyer 运行。**
+
+```
+运行: run-shop-acc-t1-buyer-1 | running | activeRole: 'buyer' | owner: session-f7ce58
+一个运行后 Chromium=10
+```
+
+**第二步：另建会话二，seller 运行。**
+
+```
+运行: run-shop-acc-t1-buyer-1 | running | activeRole: 'buyer'  | owner: session-f7ce58
+运行: shop-acc-t1-seller     | running | activeRole: ''       | owner: session-af29a5
+两个运行后 Chromium=20
+```
+
+**两个运行分属不同会话，各持一个 Chromium。**
+
+**第三步：在会话一里结束 run-1。**
+
+```
+结束 run-1 后 Chromium=10
+运行: run-shop-acc-t1-buyer-1 | status: completed
+运行: shop-acc-t1-seller     | status: running
+```
+
+**20 → 10：被结束的运行释放了自己的浏览器，另一个运行的浏览器存活。**
+这正是第七节要求的「关闭一个运行要释放它拥有的全部资源，
+同时保留其他运行和普通会话的资源」。
+
+**注意 `shop-acc-t1-seller` 的 `activeRole` 仍是空**：它的浏览器是身份核验过程中起起来的，
+`assumeRole` 那一步没有落到存储里。**浏览器确实存在且独立**（20→10 证明），
+但**该运行没有完成身份核验**。这一点如实记下，**不声称它的身份核验通过**。
+
+**对比 0.7.8**：那次两个浏览器**都属于同一个运行**，所以结束后归零是正确的。
+**这次的场景才是要求描述的场景**，结果通过。
