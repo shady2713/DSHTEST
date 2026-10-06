@@ -1206,3 +1206,31 @@ Error: web-test: role "seller"'s browser failed
 
 0.6.14 那轮"跨进程交接未走通"的原因是 prompt 形态，不是功能。0.6.12 那轮 seller 被
 `already registered` 拒绝是真实的槽位约束，两者不要混为一谈。
+
+### 0.6.16：把挂载推迟到 `agent/created`——试过，不成立，已回退
+
+跨角色缺的那一环是"提供方绑定到哪个 Agent"。宿主公开了 `agent/created`
+（`dsh-agent/lib/types/runtime-types.d.ts`，payload 带 `agent`），所以试了这条路：环境
+装载时只记下角色名，等第一个 `agent/created` 到来再挂载提供方。
+
+真实宿主上**仍然是同一个错误**：
+
+```
+Error: web-test: role "buyer"'s browser failed
+       mcp__playwright-role-buyer__browser_navigate: playwright-role-buyer:
+       browser tool belongs to another Session
+```
+
+单角色路径也因此没跑通（`run-A: running | role: ''`）。
+
+推断的机制（未进一步确证）：`agent/created` 是**所有** Agent 都会触发的事件，插件的
+挂载可能赶在 web-test 会话之前就绑到了别的 Agent 上；而 `mountSessionMcp` 接受的是
+`ctx` 而不是"绑定给谁"，所以即使用事件也控制不了归属。
+
+**已回退**到提交状态（0.6.7 的行为，即环境装载时挂载），因为那一条是实测走通的。这轮
+的代码改动没有留在分支上。
+
+结论不变：跨角色在当前宿主的公开接口上**没有可用路径**。已试过的三条：
+1. 环境装载时挂载 → 单角色可用，跨进程交接时 `belongs to another Session`
+2. `agent/created` 时挂载 → 同样 `belongs to another Session`
+3. 派生作用域挂载（0.3.8）→ 工具完全进不了任何 Agent 的清单
