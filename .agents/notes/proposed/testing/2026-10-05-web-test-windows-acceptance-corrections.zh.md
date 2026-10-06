@@ -1414,3 +1414,42 @@ seed 夹具的 `environment()` 增加了可选的 `accounts` 参数，用来给�
 函数和 5 个测试一起吞掉了，测试数从 115 掉到 110 才被发现。改成"定位 describe 块的
 结尾行、在它之前插入"，结构就不会被破坏。**测试数突然变少要先怀疑文件结构，而不是以为
 收集有问题。**
+
+### 0.6.23：泄漏的根因在提供方的公开契约里写着一行字
+
+查 `dsh-experimental-browser-use-playwright-mcp` 的公开类型声明，找到决定性的一句：
+
+```
+/**
+ * Expose Playwright's upstream tools in each live Session's scope.
+ * …
+ */
+export declare function apply(ctx: Context, config: Config): void
+```
+
+以及 `mountSessionMcp` 的：
+
+```
+/**
+ * Await one MCP client during each future Agent's creation.
+ * …
+ */
+export declare function mountSessionMcp(ctx: Context, options: SessionMcpOptions): void
+```
+
+**"in each live Session's scope" / "during each future Agent's creation"**——提供方的设计就是
+把它上游的工具加进**每一个此后创建的 Agent**。这不是我的实现选择，也不是配置项：
+`BrowserMcpConfig` 只有启动/附着两种形态（`executablePath` / `headless` / 超时），
+`SessionMcpOptions` 有 `name`、`exclusive`、`command`、`args`、`env`、超时，
+**没有任何按 Agent 或按作用域限定的开关**。
+
+对照之下，插件自己的 `web_test_*` 工具不泄漏，正因为它们用 `tools.register` 注册在
+**调用方作用域**（预设的 agent 行）里，而作用域内的注册不会进入别的会话。
+**差别就在这里，而且是有意的设计。**
+
+所以第七节场景 10 的结论可以定死了：**不是插件的缺陷，是提供方契约的必然结果**。要改变它
+需要提供方增加按 Agent 限定的选项，或者组合层提供"每会话作用域的服务行"
+（那样插件就能像自己的工具那样把浏览器挂进预设作用域，宿主也就会要求它在预设里唯一）。
+
+同一条契约也解释了跨角色失败：资源绑定在 `agent/created` 那一刻的 Agent 上，而工具加给
+之后所有 Agent——**绑定与暴露不是同一个维度**，公开接口里没有把它们对齐的手段。
