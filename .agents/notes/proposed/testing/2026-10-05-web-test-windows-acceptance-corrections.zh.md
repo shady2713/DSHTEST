@@ -3862,3 +3862,36 @@ web_test_assume_role: Error: run "shop-acc-c7-seller-run1" confirmed role "selle
 
 **这仍是提示与数据的选择问题，不是插件缺陷。**
 **场景 4 保持「部分通过」。**
+
+### 0.7.28：`accountPage` 换成 `/account` 仍为空——**插件不持有凭据**
+
+```
+web_test_assume_role: Error: run "shop-acc-c7-seller-run1" confirmed role "seller" as "",
+                      but that role is bound to "Bob Approver" in environment …
+```
+
+**换了页面还是空串**，说明问题不在地址，而在**登录根本没人执行**。
+
+**插件没有账号密码。** `readAccount` 做的事是「导航到 `accountPage`，
+把站点声明的账号读回来」——**它不填表、不提交表单**。
+夹具的登录是一个 POST 表单（`/login`，字段 `user` / `pass`），
+**这个动作只能由模型在浏览器里完成**。
+
+**所以 0.7.24 记的那条「正确流程」是错的**：我当时因为
+「模型自己驱动浏览器被拒」而断定模型不该驱动浏览器，
+**结论下反了**。**模型必须先登录，`assume_role` 才能读到账号。**
+
+**0.7.24 那次拒绝的真实原因也不是「会话里没有运行」**，
+而是 0.7.26 查明的**环境没声明那个角色**。
+**两轮的归因都错了，根因是同一个：环境只声明了 buyer。**
+
+#### 现在的正确流程
+
+1. 模型以模型身份**在浏览器里走完登录表单**（bob / pw-bob-2）
+2. 再调 `web_test_assume_role`，`accountPage` 指向 `/account`
+3. 插件读回账号并写入运行
+
+**第 1 步现在应该被允许**——`acc-c7` 声明了 `seller`，
+本会话有一个 `running` 且未核验该角色的运行，**准备窗口开着**。
+
+**下一步就按这个流程跑。** 场景 4 仍记「部分通过」。
