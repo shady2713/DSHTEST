@@ -3705,3 +3705,39 @@ key 59773afd，account "Alice Buyer"
 
 订单在站点进程的内存里，**只要站点进程不重启就还在**，
 因此下一步可以在**另一个会话**里以 approver 身份审批同一张订单。
+
+### 0.7.24：第二个会话的浏览器调用被拒——**这是正确行为，我的提示流程错了**
+
+为让 approver 处理同一张订单，另开一个会话，让模型**自己先以 bob 登录**：
+
+```
+Error: role "approver"'s browser failed
+  mcp__playwright-role-approver-g2__browser_navigate:
+  web-test: this session has no run that may drive a browser …
+```
+
+**这个拒绝是对的。** 守卫的判据是「本会话有一个正在运行、且已核验该角色的运行」，
+**新会话里还没有任何运行扮演 approver**，因此它没有可驱动的浏览器——
+**这正是第七节要的隔离**，不是缺陷。
+
+#### 我把流程搞反了
+
+`assume_role` 的设计是**由插件自己去登录**：它读入 `accountPage`，
+在角色浏览器里完成登录、读回站点声明的账号，再写入运行。
+**模型不需要（也不应该）先自己驱动浏览器去登录。**
+
+我在提示里写的是「先以 bob 登录，读出账号，再调 `assume_role`」——
+**这要求模型在运行尚未扮演任何角色时驱动浏览器，正是守卫要拒绝的。**
+
+对比 0.7.6 那次成功的序列：run-2 的登录**是 `assume_role` 内部完成的**，
+模型侧只发了 `web_test_start_run` 和 `assume_role` 两个调用，
+**全程没有自己驱动过浏览器。** 那才是正确流程。
+
+#### 下一步的正确提示
+
+**只发一条**：调用 `web_test_start_run`（角色 approver），
+随后用买家先前那张订单的完整地址作为 `accountPage` 调 `web_test_assume_role`，
+**由插件完成登录与核验**；拿到授权后，**带 `authority` 参数**再驱动浏览器
+去 `GET /orders` 确认 `approvedBy`。
+
+**不要再让模型自己登录。**
