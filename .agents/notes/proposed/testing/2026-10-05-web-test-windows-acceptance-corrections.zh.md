@@ -6258,3 +6258,57 @@ playwright-role 出现: False
 | 「取消 A → 新建未核验 B → A 旧调用」阻断 | ✅ 单测 0.7.47 |
 
 **前三条现在有新包上的真实宿主实测。**
+
+### 0.7.81：想复现「取消 A → 新建 B → A 旧调用到达」，**没做成**
+
+0.7.80 之后第 2 项还剩两条只有单测覆盖：
+「准备阶段绑定运行/代次/资源」与
+「取消 A → 新建未核验 B → A 的旧调用到达」。
+**这两条至今只在 store 单测上验证过，从没在真实宿主上复现过。**
+
+#### 起点是干净的
+
+```
+宿主=1  站点=200  Chromium=0
+项目 1 条，无任何运行
+```
+
+#### 但 A 根本没建起来
+
+```
+会话: session-e36c5dc1
+A 核验后 Chromium=0
+web_test_status: Web testing plugin 0.8.0 (active). Projects: 1. Runs: 0.
+```
+
+日志里的报错是守卫在拒绝：
+
+```
+web_test_assume_role: role "buyer"'s browser failed
+  mcp__playwright-role-buyer__browser_navigate: this session has no run that may drive
+  a browser. A run needs to be running and to have called web_test_assume_role …
+browser_navigate: this session has no run that may drive a browser
+```
+
+**守卫说得没错——`Runs: 0`，确实没有运行。**
+**但模型确实调过 `start_run`（该会话共 5 次调用），
+而 `start_run` 为什么没留下运行记录，这轮没查。**
+
+#### 为什么不猜
+
+**有至少三种可能**：模型传错了 `runKey`（它自己填的 `run-A`）、
+`putEnvironment`/`startRun` 之间又有了新的不一致、
+或者浏览器挂载失败导致 `start_run` 回滚。**没有证据就不写成因。**
+
+**本轮上下文已尽，不继续试。**
+
+#### 这一项的诚实状态
+
+| 条目 | 证据 |
+|---|---|
+| 根级守卫限定到测试 Agent | ✅ 0.7.80 真实宿主 |
+| 普通会话正常、无插件工具 | ✅ 0.7.80 真实宿主 |
+| 准备阶段绑定运行/代次/资源 | 单测 0.7.47，**真实宿主未复现** |
+| 取消 A → 新建 B → A 旧调用被阻 | 单测 0.7.47，**真实宿主未复现** |
+
+**后两条是第 2 项里唯一还没有真实宿主证据的部分。**
