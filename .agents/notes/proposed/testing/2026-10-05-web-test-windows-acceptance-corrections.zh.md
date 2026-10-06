@@ -3579,3 +3579,47 @@ Operation create-order-widget-x is settled. Recorded as observed-absent; it will
 
 **这三条都拿到输出后，场景 4 才能记为通过。** 现在**记为「部分通过」**：
 操作派发与结算约束成立，**跨角色业务对象协作尚未取证**。
+
+### 0.7.21：场景 4 真正的阻塞点——**模型没有传 `authority` 参数**
+
+0.7.20 说「模型没观察到订单」。往回追浏览器调用，**原因不是观察能力，是调用本身被拒**：
+
+```
+role-buyer__browser_navigate {"url": "http://127.0.0.1:8902/orders"}
+  => Error: web-test: this action needs the authority web_test_assume_role issued
+role-buyer__browser_snapshot {}
+  => Error: web-test: this action needs the authority web_test_assume_role issued
+role-buyer__browser_run_code_unsafe {"code": "async (page) => { await page.goto('…/orders')…"}
+  => Error: web-test: this action needs the authority web_test_assume_role issued
+```
+
+**每一次浏览器调用都缺 `authority` 参数。**
+模型试了 `browser_navigate`、`browser_snapshot`、甚至
+`browser_run_code_unsafe`（绕过页面直接 goto），**全部被守卫按同一条理由拒绝**。
+
+**守卫的行为是对的**：角色已核验后，浏览器调用必须出示
+`assume_role` 签发的授权，这是第七节「按 Agent/角色隔离，不撤销授权要求」的部分。
+
+**但这暴露出一个可用性问题**：`assume_role` 的返回里写着
+`Present authority "15098…"`，**授权值给了模型，模型却没有把它带进下一次调用**。
+
+**这与第七节场景 1「零业务动作、越权始终被拒」是同一套机制的两面**——
+机制挡住了越权，**但也挡住了本该放行的正确调用**。
+
+#### 下一步必须区分两种可能，不能直接归因给模型
+
+1. **模型没照做**——重发提示，**明确要求把 `assume_role` 返回的授权
+   字符串放进后续浏览器调用的 `authority` 参数**。若这样就通了，
+   问题是**提示写法**，机制没问题。
+2. **授权的交付方式不可发现**——若明确要求后模型仍然不带，
+   那说明**授权是靠模型自觉搬运的字符串，缺少强制或自动的传递路径**，
+   需要插件侧提供（例如把授权绑到运行/Agent 上，由守卫按上下文取，
+   而非要求模型每次手工搬运）。
+
+**在区分清楚之前，不把这一条记为模型的问题，也不记为机制通过。**
+场景 4 仍记为「未取证」。
+
+**顺带一条已经可以确认的**：`begin_operation` / `settle_operation`
+这两步在 0.7.20 里**成功执行了**，说明 `web_test_*` 工具本身不需要 authority
+（它们按运行而非浏览器授权判定），**被拒的只有角色浏览器的调用**。
+**守卫的收窄范围是准确的，没有误伤插件自己的工具。**
