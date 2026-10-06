@@ -158,7 +158,12 @@ export class WebTestService extends TypertRemoteService {
     // defines a server's tools on an agent as that agent is created and cannot
     // add them to one that already exists, so a browser mounted after the
     // session exists never reaches it.
-    await this.ctx.webTestRoleBrowsers.ensure(stored.roles[0]?.name ?? '')
+    await this.ctx.webTestRoleBrowsers.ensure({
+      projectKey: stored.projectKey,
+      environmentKey: stored.key,
+      runKey: '',
+      role: stored.roles[0]?.name ?? '',
+    })
     return stored
   }
 

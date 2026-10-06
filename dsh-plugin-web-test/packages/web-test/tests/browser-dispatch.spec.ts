@@ -14,6 +14,7 @@ import { describe, expect, it } from 'vitest'
 import { guardReason } from '../src/agent.ts'
 import { Context } from '@deepseek-ai/cordis'
 import { RoleBrowserPool } from '../src/role-browser.ts'
+import type { BrowserOwner } from '../src/role-browser.ts'
 import { cleanupHomes, harness } from './support/harness.ts'
 import { environment, run, seedOf } from './support/seed.ts'
 
@@ -225,6 +226,24 @@ describe('a role browser that cannot start', () => {
       await dispose()
       cleanupHomes()
     }
+  })
+
+
+  it('files a role browser under its owner, not under the role name', () => {
+    // The same `buyer` is declared by two projects and two environments. Keyed on
+    // the name alone, one run would be handed the browser another signed in on.
+    const owner = (projectKey: string, environmentKey: string, runKey: string): BrowserOwner =>
+      ({ projectKey, environmentKey, runKey, role: 'buyer' })
+    const keys = new Set([
+      RoleBrowserPool.keyOf(owner('shop', 'env-a', 'run-1')),
+      RoleBrowserPool.keyOf(owner('shop', 'env-b', 'run-1')),
+      RoleBrowserPool.keyOf(owner('crm', 'env-a', 'run-1')),
+      RoleBrowserPool.keyOf(owner('shop', 'env-a', 'run-2')),
+    ])
+    expect(keys.size).toBe(4)
+    // The same owner resolves to the same key, so a role keeps its login.
+    expect(RoleBrowserPool.keyOf(owner('shop', 'env-a', 'run-1')))
+      .toBe(RoleBrowserPool.keyOf(owner('shop', 'env-a', 'run-1')))
   })
 
 })

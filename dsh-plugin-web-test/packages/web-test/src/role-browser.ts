@@ -60,6 +60,25 @@ export interface RoleBrowser {
   readonly toolNames: readonly string[]
 }
 
+/**
+ * The identity that owns a role browser.
+ *
+ * A role name alone is not an owner: the same `buyer` is declared by different
+ * projects and environments, and each run may hold its own. Keying on the name
+ * alone would hand one run the browser another run signed in on, so the key is
+ * built from the project, the environment, the run and the role together.
+ */
+export interface BrowserOwner {
+  /** Project whose environment declares the role. */
+  projectKey: string
+  /** Confirmed environment revision the role belongs to. */
+  environmentKey: string
+  /** Run acting as the role; empty before a run exists. */
+  runKey: string
+  /** Declared role name. */
+  role: string
+}
+
 /** A role's browser that came up, and the account the site reported for it. */
 export interface VerifiedRole extends RoleBrowser {
   /** The account the site answered with, not the role name the run declared. */
@@ -112,6 +131,15 @@ export class RoleBrowserPool extends Service {
    * run that actually owns the resource the call would drive.
    */
   private readonly claims = new Map<string, { runKey: string, generation: number }>()
+
+  /**
+   * The composite key each started role is filed under, by role name.
+   *
+   * Releasing by role name is a last resort for a caller that does not know the
+   * owner; once two runs hold the same role this is the only way to find a key at
+   * all, so a release that names a run releases that run's browser and no other.
+   */
+  private readonly keysByRole = new Map<string, string>()
 
   /**
    * Record which run and generation owns a role's browser.
@@ -188,6 +216,15 @@ export class RoleBrowserPool extends Service {
   private readonly headless: boolean
 
   /**
+   * The map key one owner's browser is filed under.
+   * @param owner - The identity that owns the browser.
+   * @returns a key no other owner shares.
+   */
+  static keyOf(owner: BrowserOwner): string {
+    return `${owner.projectKey}\u0000${owner.environmentKey}\u0000${owner.runKey}\u0000${owner.role}`
+  }
+
+  /**
    * Start a role's browser if it is not already up.
    *
    * Starting is idempotent because a run may switch back and forth between
@@ -196,23 +233,25 @@ export class RoleBrowserPool extends Service {
    * @param role - Declared role name.
    * @returns the role's browser resource.
    */
-  async ensure(role: string): Promise<RoleBrowser> {
+  async ensure(owner: BrowserOwner): Promise<RoleBrowser> {
+    const role = owner.role
+    const key = RoleBrowserPool.keyOf(owner)
     // A role already starting counts as started, because the browser-use registry
     // holds one provider slot and a second mount would be refused. The second
     // caller waits on the same start rather than being handed a record for a
     // browser that may still fail to come up, and a failure reaches every waiter
     // instead of leaving them holding a resource that was never started.
-    const starting = this.pending.get(role)
+    const starting = this.pending.get(key)
     if (starting !== undefined) return starting
-    const existing = this.started.get(role)
+    const existing = this.started.get(key)
     if (existing !== undefined) return existing
     const browser: RoleBrowser = { role, serverName: `playwright-role-${role}`, toolNames: [] }
-    const settled = this.mountBrowser(role, browser)
-    this.pending.set(role, settled)
+    const settled = this.mountBrowser(key, role, browser)
+    this.pending.set(key, settled)
     try {
       return await settled
     } finally {
-      this.pending.delete(role)
+      this.pending.delete(key)
     }
   }
 
@@ -229,8 +268,9 @@ export class RoleBrowserPool extends Service {
    * @param role - The role to act as.
    * @returns the role's browser resource.
    */
-  async switchTo(role: string): Promise<RoleBrowser> {
-    const browser = await this.ensure(role)
+  async switchTo(owner: BrowserOwner): Promise<RoleBrowser> {
+    const role = owner.role
+    const browser = await this.ensure(owner)
     this.activeRole = role
     return browser
   }
@@ -253,9 +293,10 @@ export class RoleBrowserPool extends Service {
    * @returns once the browser is closed.
    */
   async releaseRole(role: string): Promise<void> {
-    const mounted = this.mounts.get(role)
-    this.mounts.delete(role)
-    this.started.delete(role)
+    const key = this.keysByRole.get(role)
+    const mounted = key === undefined ? undefined : this.mounts.get(key)
+    if (key !== undefined) { this.mounts.delete(key); this.started.delete(key) }
+    this.keysByRole.delete(role)
     this.claims.delete(role)
     this.pending.delete(role)
     if (this.activeRole === role) this.activeRole = undefined
@@ -273,7 +314,7 @@ export class RoleBrowserPool extends Service {
    * @param browser - The resource to record once the server is mounted.
    * @returns once the server is mounted.
    */
-  private async mountBrowser(role: string, browser: RoleBrowser): Promise<RoleBrowser> {
+  private async mountBrowser(key: string, role: string, browser: RoleBrowser): Promise<RoleBrowser> {
     const serverName = browser.serverName
     // Loaded on demand rather than at import time: these pull the MCP client's
     // whole peer tree, which a unit test that never starts a browser should not
@@ -326,8 +367,9 @@ export class RoleBrowserPool extends Service {
         { cause: error },
       )
     }
-    this.mounts.set(role, async () => { await fiber.dispose() })
-    this.started.set(role, browser)
+    this.mounts.set(key, async () => { await fiber.dispose() })
+    this.started.set(key, browser)
+    this.keysByRole.set(role, key)
     return browser
   }
 

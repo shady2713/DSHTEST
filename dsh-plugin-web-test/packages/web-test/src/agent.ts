@@ -20,6 +20,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import ToolsService from '@deepseek-ai/dsh-tools'
 import { z } from 'zod'
 import { RoleBrowserPool } from './role-browser.ts'
+import type { BrowserOwner } from './role-browser.ts'
 import type { ToolRunContext } from '@deepseek-ai/dsh-tools'
 import type { VerifiedIdentity } from './store-service.ts'
 import {
@@ -415,6 +416,7 @@ async function verifyRoleIdentity(
   pool: RoleBrowserPool | undefined,
   role: string,
   identityUrl: string | undefined,
+  owner?: BrowserOwner,
 ): Promise<VerifiedIdentity> {
   if (pool === undefined) {
     throw new Error('web-test: this build has no role browser pool, so no role can be verified')
@@ -423,7 +425,7 @@ async function verifyRoleIdentity(
     throw new Error('web-test: assume_role needs accountPage: the account has to be read back from the site, not'
       + ' assumed from the role name')
   }
-  await pool.ensure(role)
+  await pool.ensure(owner ?? { projectKey: '', environmentKey: '', runKey: '', role })
   const account = await pool.readAccount(tools, exec, role, identityUrl)
   return { account: account.account, detail: account.detail }
 }
@@ -1218,7 +1220,16 @@ export function apply(ctx: Context): void {
       // The role is bound to a real browser and the account is read back from
       // the site before the field is written, so a run never claims an identity
       // the site did not confirm.
-      const verified = await verifyRoleIdentity(tools, exec, pool, parsed.role, parsed.accountPage)
+      // The owner is read before the browser starts, because the browser is
+      // filed under the project, environment and run that will use it rather
+      // than under the role name alone.
+      const owner = store.getRun(parsed.runKey)
+      const verified = await verifyRoleIdentity(tools, exec, pool, parsed.role, parsed.accountPage, {
+        projectKey: owner?.projectKey ?? '',
+        environmentKey: owner?.environmentRevisionKey ?? '',
+        runKey: parsed.runKey,
+        role: parsed.role,
+      })
       const run = await store.assumeRole(parsed.runKey, parsed.role, verified)
       // The role's browser now belongs to this run and generation, so a call
       // queued against an earlier run cannot prepare an identity on it.
