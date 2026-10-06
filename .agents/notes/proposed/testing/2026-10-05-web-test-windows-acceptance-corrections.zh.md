@@ -7169,3 +7169,57 @@ setPluginEnabled include:web-test-role-browsers false
 
 **这和 0.7.61 的 `ls plugins` 假阴性是同一类错误：
 先下结论、后看证据。区别只在于那次我后来去查了，这次也去查了。**
+
+### 0.7.99：**回归 1、2、4 在交付包上通过**；回归 3 未跑
+
+第 6 项要求在最终 tarball 上跑闭环与相关回归。**这轮跑三条。**
+
+#### 回归 1：登录、核验、拿到 authority
+
+```
+会话: session-0e918bf7
+Chromium=10
+web_test_assume_role : Error: run "g1" confirmed role "buyer" as "", but that role is bound to "Alice Buyer"
+web_test_assume_role : Run g1 now acts as buyer; … Present authority "166795bf-eed5-417f-88…"
+```
+
+**先被拒一次再成功**（模型第一次填错身份），**最终拿到 authority。**
+
+#### 回归 2：两个角色各持自己的 authority
+
+新建 `acc-two`（buyer + approver）：
+
+```
+Chromium=20
+g2 | running | role: 'buyer'
+g3 | running | role: 'approver'
+
+角色 buyer    | authority 166795bf-eed5-41…
+角色 approver | authority 521b1f1e-6ce7-42…
+角色 buyer    | authority cbab6fc7-5634-47…
+```
+
+**两把 authority 确实不同。**
+
+#### 回归 4：暂停释放、恢复重挂、代次递增
+
+```
+暂停前 Chromium=20（g2 与 g3 各持一个）
+pause  → status: paused  generation: 1
+暂停后 Chromium=10              ← 只掉了 g2 的那一个
+resume → status: running generation: 2
+恢复后 Chromium=10
+
+g2 | running | generation: 2 | role: ''        ← 恢复后需重新核验
+g3 | running | generation: 1 | role: 'approver' ← 未受影响
+```
+
+**这一条比旧记录多证明了一层：暂停 g2 没有误伤 g3 的浏览器。**
+**旧记录写的是 `Chromium 10 → 20`，看不出是「关掉一个」还是「挂了两个」。**
+
+#### 回归 3 未跑
+
+**跨角色协作需要站点订单表为空并在站点上逐步确认，本轮上下文不够做完。**
+**记为未跑，不拿别的轮次的结果顶替。**
+
+新包 sha256 f6621d41ff3920eabaf5ef4346691d9d2655355feba08f3f7a33b08b4d11bafd
