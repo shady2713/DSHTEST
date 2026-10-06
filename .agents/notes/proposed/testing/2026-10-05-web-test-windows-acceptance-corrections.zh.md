@@ -6501,3 +6501,55 @@ user-data-dir: /tmp/playwright_chromiumdev_profile-bb0MKa   （只有一个）
 
 **记为待处理项：一次核验挂载多个浏览器时，取消只释放了当前持有的那个。**
 **并且 0.7.68 / 0.7.72 / 0.7.73 的「释放」结论需要按这个前提重述。**
+
+### 0.7.86：**泄漏的具体位置找到了**——收养路径会装一个空句柄
+
+0.7.85 测出「一次核验挂两个，取消只放掉一个」。
+这轮去读 `role-browser.ts` 的挂载与释放，**找到确切那一行。**
+
+#### 释放走的是 `mounts` 里存的句柄
+
+```
+343:  const mounted = key === undefined ? undefined : this.mounts.get(key)
+344:  if (key !== undefined) { this.mounts.delete(key); this.started.delete(key) }
+      …… 然后 dispose(mounted)
+
+416:  this.mounts.set(key, async () => { await fiber.dispose() })   ← 正常挂载存真句柄
+```
+
+#### 问题在「收养预先启动的浏览器」这条路径
+
+```
+257:  const preStarted = this.started.get(keyOf({ ...owner, runKey: '' }))
+258:  if (preStarted !== undefined && owner.runKey !== '') {
+260:    const mounted = this.mounts.get(keyOf({ ...owner, runKey: '' }))
+263:    this.mounts.set(key, mounted ?? (async () => {}))   ← 这里
+```
+
+**当预启动那条记录只在 `started` 里、而 `mounts` 里没有对应项时，
+`mounted` 是 `undefined`，代码就装上一个空函数 `async () => {}`。**
+
+**空函数没有 disposer。** 于是这个运行取消时，
+`releaseRun` → `releaseRole` → `dispose(空函数)` **什么也没释放**。
+**那个浏览器只能等宿主退出。**
+
+**这与 0.7.85 的观测完全吻合**：取消释放了 10 个进程，
+另一个因为句柄是空的而留下，`user-data-dir` 也只剩它一个。
+
+#### 修法方向
+
+**空句柄不该被当作「有句柄」。** 两种改法：
+
+1. `mounted === undefined` 时**不装空函数**，而是**重新挂载**并把旧的记为待释放；
+2. 或者**不给预启动的浏览器收养成运行所有**——
+   让它继续归环境所有，由环境的释放路径负责。
+
+**选哪种取决于意图：预启动的浏览器本来是谁的。**
+**本轮不下结论，也不改代码。**
+
+#### 证据强度说明
+
+**这是从代码读出来的定位，不是复现出来的。**
+**要坐实，需要构造一个「先在环境确认时预启动、再由运行收养」的用例，
+然后取消该运行并看浏览器是否留下。**
+**本轮上下文已尽，没做这个定向复现。**
