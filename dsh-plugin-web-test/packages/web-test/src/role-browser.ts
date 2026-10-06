@@ -142,7 +142,12 @@ export class RoleBrowserPool extends Service {
    * owner; once two runs hold the same role this is the only way to find a key at
    * all, so a release that names a run releases that run's browser and no other.
    */
-  private readonly keysByRole = new Map<string, string>()
+  /**
+   * Every key a role has been mounted under. A role mounted twice keeps two
+   * keys, and releasing one of them must release the other as well: recording
+   * only the newest left the earlier entry in `mounts` with nothing reaching it.
+   */
+  private readonly keysByRole = new Map<string, Set<string>>()
 
   /** How many times each role has been mounted, so a re-mount can take a new name. */
   private readonly mountCount = new Map<string, number>()
@@ -262,7 +267,7 @@ export class RoleBrowserPool extends Service {
       this.started.delete(RoleBrowserPool.keyOf({ ...owner, runKey: '' }))
       this.mounts.set(key, mounted ?? (async () => {}))
       this.started.set(key, preStarted)
-      this.keysByRole.set(role, key)
+      this.addKeyForRole(role, key)
       return preStarted
     }
     // A role that has been mounted before gets a fresh server name. The client
@@ -339,19 +344,32 @@ export class RoleBrowserPool extends Service {
   }
 
   async releaseRole(role: string): Promise<void> {
-    const key = this.keysByRole.get(role)
-    const mounted = key === undefined ? undefined : this.mounts.get(key)
-    if (key !== undefined) { this.mounts.delete(key); this.started.delete(key) }
+    const keys = this.keysByRole.get(role) ?? new Set<string>()
+    const mounted = [...keys].map(key => this.mounts.get(key))
+    for (const key of keys) { this.mounts.delete(key); this.started.delete(key) }
     this.keysByRole.delete(role)
     this.claims.delete(role)
     this.pending.delete(role)
     if (this.activeRole === role) this.activeRole = undefined
-    if (mounted === undefined) return
-    try {
-      await mounted()
-    } catch (error) {
-      throw new Error(`web-test: the browser for role ${JSON.stringify(role)} did not close: ${String(error)}`)
+    for (const effect of mounted) {
+      if (effect === undefined) continue
+      try {
+        await effect()
+      } catch (error) {
+        throw new Error(`web-test: the browser for role ${JSON.stringify(role)} did not close`, { cause: error })
+      }
     }
+  }
+
+  /**
+   * Record one more key a role is mounted under.
+   * @param role - Declared role name.
+   * @param key - Key the mount is filed under.
+   */
+  private addKeyForRole(role: string, key: string): void {
+    const keys = this.keysByRole.get(role) ?? new Set<string>()
+    keys.add(key)
+    this.keysByRole.set(role, keys)
   }
 
   /**
@@ -415,7 +433,7 @@ export class RoleBrowserPool extends Service {
     }
     this.mounts.set(key, async () => { await fiber.dispose() })
     this.started.set(key, browser)
-    this.keysByRole.set(role, key)
+    this.addKeyForRole(role, key)
     return browser
   }
 
@@ -498,7 +516,7 @@ export class RoleBrowserPool extends Service {
     // The namespace comes from the mount that is running, not from the role name:
     // a re-mount takes a suffixed server name, and asking for the name derived
     // from the role alone reaches a tool that was never registered under it.
-    const live = this.started.get(this.keysByRole.get(role) ?? '')
+    const live = this.started.get([...(this.keysByRole.get(role) ?? [])].at(-1) ?? '')
     const namespace = live === undefined
       ? RoleBrowserPool.namespaceOf(role)
       : `mcp__${live.serverName}__`

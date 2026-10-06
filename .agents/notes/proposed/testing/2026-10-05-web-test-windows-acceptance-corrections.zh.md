@@ -6870,3 +6870,51 @@ assume_role   Chromium 20   ← buyer 挂了两把 key（gen1、gen2）
 **501 行那种「查当前活的那把」也要改成取集合里最后一个或任意一把。**
 
 **本轮上下文已尽，不改。**
+
+### 0.7.93：**`keysByRole` 改成 key 集合**——泄漏修在代码里
+
+0.7.92 定位到「一个角色只记一把 key」。这轮改掉。
+
+#### 改动
+
+```ts
+private readonly keysByRole = new Map<string, Set<string>>()
+
+async releaseRole(role: string): Promise<void> {
+  const keys = this.keysByRole.get(role) ?? new Set<string>()
+  const mounted = [...keys].map(key => this.mounts.get(key))
+  for (const key of keys) { this.mounts.delete(key); this.started.delete(key) }
+  this.keysByRole.delete(role)
+  …
+  for (const effect of mounted) {
+    if (effect === undefined) continue
+    try { await effect() }
+    catch (error) { throw new Error(…) }
+  }
+}
+```
+
+**三处 `set` 变成 `addKeyForRole` 的 add；501 行改成取集合里最后一把。**
+
+#### 一个不能省的细节
+
+**第一版我图省事，把关闭失败吞了：**
+
+```ts
+} catch { /* a mount that is already gone needs no shutdown */ }
+```
+
+**这会把「关不掉浏览器」变成静默成功——正是本项目反复追的那类假通过。**
+**改回抛错，与原来的行为一致。**
+
+#### 还没做
+
+**没有宿主实测。** 单测覆盖不到：`mountBrowser` 走真实 fiber。
+
+**这一版的包是 f6621d41…，与之前测过的包都不同，
+所以 0.7.72 / 0.7.73 / 0.7.68 那些释放结论
+**对新包尚未重测**。下一轮必须重跑「核验 → 取消 → 归零」并确认双挂载不再漏。
+
+```
+typecheck 干净   134 tests passed   lint 0 warnings 0 errors
+新包 sha256 f6621d41ff3920eabaf5ef4346691d9d2655355feba08f3f7a33b08b4d11bafd
