@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-web-test",
-  "version": "0.7.5",
+  "version": "0.7.6",
   "description": "Web testing for DSH: test projects, confirmed test cases, real-browser execution, evidence, and reports inside unmodified DSH.",
   "license": "MIT",
   "type": "module",

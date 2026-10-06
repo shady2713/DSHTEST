@@ -3220,3 +3220,41 @@ web_test_assume_role: Error: the browser for role "buyer" did not start:
 
 **我不把这一项记为通过。** 0.7.5 目前是**开发中版本**，
 已知它在这个序列上有缺陷，不作为候选。
+
+### 0.7.12：重名冲突从构造上消除；**B 能否完成身份核验仍未证明**
+
+0.7.11 的 `serverName "playwright-role-buyer" is already registered` 是因为
+MCP client 注册表以 serverName 为键，而**上一份 client 的注销还没完成**，
+新挂载就用了同一个名字。**依赖两个拆卸的先后顺序本身不可靠**。
+
+改为：**每个角色按挂载次数递增命名**——首次 `playwright-role-buyer`，
+再次挂载 `playwright-role-buyer-g2`，第三次 `-g3`。
+
+- `roleOf` 用正则 `/-g\d+$/` 剥掉代次后缀，**角色名仍能正确解析**
+- 守卫里的前缀比较改为**用同一个解析结果比对角色**（`role === grant.role`），
+  不再靠字符串前缀
+
+**中间踩了一个坑**：后缀最初用 `.`，MCP client 的 `serverName` schema 不接受，
+报 `ValidationError`。改用 `-g<N>` 后通过——**schema 约束要照着它的实际定义写**。
+
+#### 0.7.6 复测
+
+```
+web_test_start_run:    Run shop-acc-c4-buyer-1 is running.
+web_test_control_run:  Run shop-acc-c4-buyer-1 is now cancelled at generation 1.
+web_test_start_run:    Run shop-acc-c4-buyer-2 is running.
+```
+
+**没有再出现重名错误**，取消后新运行的启动路径走通了。
+
+**但 `shop-acc-c4-buyer-2` 的 `activeRole` 仍是空**，会话日志里也只有三条
+`web_test_*` 结果——**模型在等待窗口内没有走到 B 的 `assume_role`**。
+所以：
+
+- ✅ **重名冲突已消除**（不再报 `already registered` / `ValidationError`）
+- ❌ **B 能否完成身份核验并继续执行：仍未证明**
+
+**我不把这一项记为通过。** 下一轮要把驱动改成「取消后单独一条提示只做 B 的登录与
+`assume_role`」，避免和前几步挤在同一个等待窗口里。
+
+类型检查通过，**127 测试通过**。

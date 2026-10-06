@@ -47,6 +47,9 @@ const BROWSER_TOOL_PREFIX = 'mcp__playwright-role-'
 /** Suffix of the tools this module lets the model reach for the active role. */
 const BROWSER_TOOL_SUFFIX = '__'
 
+/** Generation suffix a re-mounted role's server name carries, e.g. `buyer-g2`. */
+const GENERATION_SUFFIX = /-g\d+$/u
+
 /** How long a role's MCP server may take to come up before the switch fails. */
 const ROLE_STARTUP_TIMEOUT_MS = 60_000
 
@@ -140,6 +143,9 @@ export class RoleBrowserPool extends Service {
    * all, so a release that names a run releases that run's browser and no other.
    */
   private readonly keysByRole = new Map<string, string>()
+
+  /** How many times each role has been mounted, so a re-mount can take a new name. */
+  private readonly mountCount = new Map<string, number>()
 
   /**
    * Record which run and generation owns a role's browser.
@@ -259,7 +265,14 @@ export class RoleBrowserPool extends Service {
       this.keysByRole.set(role, key)
       return preStarted
     }
-    const browser: RoleBrowser = { role, serverName: `playwright-role-${role}`, toolNames: [] }
+    // A role that has been mounted before gets a fresh server name. The client
+    // registry is keyed by that name and its previous entry is still shutting
+    // down when the next mount starts, so reusing the name collided; a suffix
+    // removes the race instead of depending on the order two teardowns happen in.
+    this.mountCount.set(role, (this.mountCount.get(role) ?? 0) + 1)
+    const generation = this.mountCount.get(role) ?? 1
+    const serverName = `playwright-role-${role}${generation === 1 ? '' : `-g${generation}`}`
+    const browser: RoleBrowser = { role, serverName, toolNames: [] }
     const settled = this.mountBrowser(key, role, browser)
     this.pending.set(key, settled)
     try {
@@ -453,7 +466,10 @@ export class RoleBrowserPool extends Service {
    */
   static roleOf(toolName: string): string {
     if (!toolName.startsWith(BROWSER_TOOL_PREFIX)) return ''
-    return toolName.slice(BROWSER_TOOL_PREFIX.length).split(BROWSER_TOOL_SUFFIX)[0] ?? ''
+    // The server name may carry a generation suffix so a re-mount never collides
+    // with the client it is replacing; the role is what precedes that suffix.
+    const name = toolName.slice(BROWSER_TOOL_PREFIX.length).split(BROWSER_TOOL_SUFFIX)[0] ?? ''
+    return name.replace(GENERATION_SUFFIX, '')
   }
 
 

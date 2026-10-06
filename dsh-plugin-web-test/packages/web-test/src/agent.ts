@@ -204,7 +204,9 @@ export function guardReason(
         + ' called web_test_assume_role with its accountPage, which is also how a cancelled or paused run gives up'
         + ' its browser. Start a new run to work again.'
     }
-    if (execution.name.startsWith(`mcp__playwright-role-${grant.role}__`)) {
+    // The role's server name may carry a generation suffix, so the name is
+    // compared through the same parse the role came from rather than by prefix.
+    if (role === grant.role) {
       // Preparation needs no authority — establishing the role is how the
       // authority comes into existence, and `mayPrepareIdentity` already limits
       // it to a running run that declares this role. Outside that window every

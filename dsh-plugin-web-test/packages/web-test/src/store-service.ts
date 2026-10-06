@@ -66,7 +66,7 @@ import type {
 } from './types.ts'
 
 /** Plugin version, matching this package's manifest. */
-export const PLUGIN_VERSION = '0.7.5'
+export const PLUGIN_VERSION = '0.7.6'
 
 /**
  * Host release this plugin's peer declaration accepts.
