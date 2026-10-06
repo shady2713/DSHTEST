@@ -543,10 +543,25 @@ export const operationResultSchema = z.object({
   note: z.string(),
 })
 
+/** Statuses after which a run owns no browser. */
+export const RELEASED_STATUSES = new Set<z.infer<typeof runRecordSchema>['status']>([
+  'paused', 'awaiting-user', 'awaiting-business-time',
+  'cancelled', 'completed', 'blocked', 'resuming',
+])
+
 export function apply(ctx: Context): void {
   const pool = ctx.webTestRoleBrowsers
   const tools: ToolsService = ctx.tools
   const store = ctx.webTestStore
+
+  // Resources follow the run's status, not the tool that changed it. A cancel
+  // or pause issued through the operator's `webTest/*` surface never passed
+  // through a handler here, so the browsers it left behind stayed up until the
+  // host exited. Every status change reaches the store, so subscribing once
+  // covers both surfaces and any interface added later.
+  ctx.on('web-test: run-status-changed', ({ runKey, to }) => {
+    if (RELEASED_STATUSES.has(to)) return pool.releaseRun(runKey)
+  })
 
   // Role browsers are not mounted here. The provider defines a server's tools on
   // an agent as that agent is created, so a browser mounted at preset load is
@@ -712,12 +727,6 @@ export function apply(ctx: Context): void {
       // and each release awaits its own fiber's disposal, so the Chromium this
       // run started is gone before the call returns rather than when the host
       // eventually exits.
-      if (pool !== undefined) {
-        // Every browser this run owns, not only the role it is acting as: a run
-        // that switched between two roles owns two, and the other one would
-        // otherwise stay up after the run closed.
-        await pool.releaseRun(input.runKey)
-      }
       return { runKey: record.key, status: record.status }
     },
   }), 'web-test: finish run tool')
@@ -1463,9 +1472,6 @@ export function apply(ctx: Context): void {
         // held. Leaving them in place keeps preparation bound to a run that is
         // cancelled or terminal, so the next run cannot sign in even though it
         // declares the same role.
-        if (run.status !== 'running') {
-          await pool?.releaseRun(input.runKey)
-        }
         const generation = run.generation
         return {
           runKey: run.key,

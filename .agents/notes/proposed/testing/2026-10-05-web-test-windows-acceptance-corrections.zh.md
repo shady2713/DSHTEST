@@ -5567,3 +5567,47 @@ $ grep -nE "ctx\.emit|EventMap" src/store-service.ts
 第 4 步（删除旧的两处释放）和第 5 步（19 个接口的测试）**必须与前 3 步同时落地**——
 **只做前三步会双重释放，只做前两步事件没人订阅**。
 **上下文已尽，不做半截改动**。下一步按此清单一次做完。
+
+### 0.7.67：**0.7.66 的五步一次做完**，130 测试通过
+
+#### 收口点选在 `applyHold`
+
+四处改状态的代码本来就都调用 `applyHold(record)`，而 `applyHold` **已经在做
+「按状态维护派生状态」**——**它就是该收口的地方，不需要新增一个 `applyStatus`**。
+
+1. **事件**：`declare module` 里加 `web-test: run-status-changed`，
+   载荷 `{runKey, from, to, generation}`。
+2. **收口**：`applyHold` 末尾调 `announceStatus(record)`，
+   **四处自动全部覆盖**。
+3. **订阅**：`agent.ts` 里 `ctx.on('web-test: run-status-changed', …)`，
+   `to` 属于那七个非运行态时调 `pool.releaseRun(runKey)`。
+4. **删旧两处**：`agent.ts` 里 `releaseRun` 出现次数 **4 → 0**。
+5. **测试**：导出 `RELEASED_STATUSES`，测「哪些状态该释放、哪些不该」。
+
+```
+Tests 130 passed (130)   typecheck 干净   lint 0 warnings 0 errors
+```
+
+#### 两个卡点
+
+1. `this.records[TABLE_RUNS]?.[record.key].status` **类型是 `{}`**，
+   `Tables` 太宽泛——补了 `as RunRecord | undefined` 的收窄。
+2. `RunRecord` **在 `agent.ts` 里没导入**（`records.ts` 只导出 schema），
+   改用 `z.infer<typeof runRecordSchema>['status']`。
+
+#### 关于第 5 步的诚实说明
+
+**没有做端到端的「19 个接口各测一次」**，只测了判据本身
+（哪些状态触发释放）。**理由**：`agent.ts` 的 `apply` 依赖
+`ctx.tools` 与 `webTestRoleBrowsers` 的真实注册，
+harness 刻意不挂插件，**要端到端就得引入真实浏览器**。
+
+**所以「操作者取消会释放」这条，在本包上尚未有真实宿主实测**，
+**只有单测覆盖判据**。这一条必须实测才能进候选结论，
+**不能拿单测代替**。
+
+#### 新包
+
+```
+sha256 2d91e8ada03362efd584120f1ab6d6ed30c8b600fde98d32403d3c08bde6e560
+```

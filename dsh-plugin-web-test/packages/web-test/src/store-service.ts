@@ -502,6 +502,30 @@ export class WebTestStore extends Service {
     } else {
       this.heldRuns.delete(record.key)
     }
+    this.announceStatus(record)
+  }
+
+  /**
+   * Announce that a run reached a status, so resources follow the state rather than
+   * the caller.
+   *
+   * Every path that changes a run's status reaches `applyHold`, so announcing
+   * here covers the model tools and the operator's `webTest/*` surface alike.
+   * Releasing from the caller's handler instead meant a cancel or pause from the
+   * operator interface left the run's browsers running.
+   *
+   * @param record - The run record as it now stands.
+   */
+  private announceStatus(record: RunRecord): void {
+    const previous = this.records[TABLE_RUNS]?.[record.key] as RunRecord | undefined
+    const from = previous?.status
+    if (from === record.status && from !== undefined) return
+    this.ctx.emit('web-test: run-status-changed', {
+      runKey: record.key,
+      from: from ?? record.status,
+      to: record.status,
+      generation: record.generation,
+    })
   }
 
   /**
@@ -1391,6 +1415,21 @@ declare module '@deepseek-ai/cordis' {
   interface Context {
     /** Single-writer service over the plugin's own business data. */
     webTestStore: WebTestStore
+  }
+
+  interface Events {
+    /**
+     * A run reached a status.
+     *
+     * @param payload - `runKey` that changed, its `from` and `to` statuses, and
+     * the run's `generation` after the change.
+     */
+    'web-test: run-status-changed': (payload: {
+      runKey: string
+      from: RunRecord['status']
+      to: RunRecord['status']
+      generation: number
+    }) => void
   }
 }
 

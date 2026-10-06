@@ -11,7 +11,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { guardReason } from '../src/agent.ts'
+import { RELEASED_STATUSES, guardReason } from '../src/agent.ts'
 import { Context } from '@deepseek-ai/cordis'
 import { RoleBrowserPool } from '../src/role-browser.ts'
 import type { BrowserOwner } from '../src/role-browser.ts'
@@ -284,6 +284,20 @@ describe('a role browser that cannot start', () => {
       await dispose()
       cleanupHomes()
     }
+  })
+
+
+  it('releases on every status a stopped run reaches, and only on those', () => {
+    // Releasing from the tool handler meant the operator's `webTest/*` surface
+    // left browsers running, because a cancel or pause issued there never
+    // passed through a handler. The pool now subscribes to the store's status
+    // change, so the statuses that end a run's ownership are what decides.
+    for (const status of ['paused', 'awaiting-user', 'awaiting-business-time',
+      'cancelled', 'completed', 'blocked', 'resuming'] as const) {
+      expect(RELEASED_STATUSES.has(status)).toBe(true)
+    }
+    // A run that is still working keeps its browsers.
+    expect(RELEASED_STATUSES.has('running')).toBe(false)
   })
 
 })
