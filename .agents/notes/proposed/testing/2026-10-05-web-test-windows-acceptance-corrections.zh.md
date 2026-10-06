@@ -1780,3 +1780,35 @@ const leaked = leakedServices(ctx, ctx.fiber);
 而 `agent` 是包的独立入口（`./agent` 导出），需要确认它在根是否也被装载过。
 
 **这是下一轮第一件该查的事**，且是可以在不跑宿主的情况下静态确认的。
+
+### 0.6.34：行顺序假设也排除了
+
+0.6.33 剩的未排除候选是"挂载顺序"：`web-test-agent` 的 `inject` 含 `webTestRoleBrowsers`，
+而池排在它之后，于是 agent 先挂载时池还不存在，解析可能落到根。**把池移到 `web-test-agent`
+之前**再测（同一套改动：根行不注入池、`putEnvironment` 不触碰池、池用 `ctx.get` 读存储并在
+构造时自启角色）。
+
+条件与 0.6.32 相同且干净：全新 `DSH_HOME=/home/weetion/dshfresh3`，`--from-default-profile web`
+建 profile，装 0.6.8，**启动前**读 patch 得 `[]`。
+
+结果：
+
+```
+A 组(池在 agent 之前) → 失败: Preset services require isolate realms: webTestRoleBrowsers
+```
+
+**顺序假设排除。** 现在已排除的候选清单：
+
+| 候选 | 结论 |
+|---|---|
+| profile patch 里有多余的行 | 排除（0.6.31/0.6.32 实测 patch 为 `[]`） |
+| 根入口 `index.ts` 的 `static inject` | 排除（0.6.8 移除后仍泄漏） |
+| 是否真的使用了池 | 排除（A 组从未调用 `ensure` 仍泄漏） |
+| 预设内两行的挂载顺序 | 排除（0.6.34 调换后仍泄漏） |
+| 池通过 `ctx.get` 访问根存储 | 排除（0.6.26 到得了存储，宿主当时未报泄漏） |
+
+剩下的只有 0.6.33 定位的那个问题本身：**`ctx.root[Context.isolate]` 里为什么会有
+`webTestRoleBrowsers`，而且指向与预设内同一个 symbol。** 这一层是宿主内部的服务注册表行为，
+插件侧的公开接口里没有对应手段，也没有配置项能影响它。
+
+**本插件侧的路走到这里已经穷尽。** 已回退到 0.6.7。
