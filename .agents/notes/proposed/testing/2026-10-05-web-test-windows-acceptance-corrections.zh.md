@@ -3172,3 +3172,51 @@ export function createScope(ctx: Context, key: ScopeKey, options?) {
 
 **对比 0.7.8**：那次两个浏览器**都属于同一个运行**，所以结束后归零是正确的。
 **这次的场景才是要求描述的场景**，结果通过。
+
+### 0.7.11：取消序列——**阻断成立，但 B 无法准备身份；0.7.5 的修法引入了新问题**
+
+#### 在 0.7.4 上先测序列本身（阻断正确）
+
+```
+web_test_control_run: Run shop-acc-c1-buyer-1 is now cancelled at generation 1.
+web_test_start_run:  Run shop-acc-c1-buyer-2 is running.
+mcp__playwright-role-buyer__browser_navigate: Error: this session has no run that may
+  drive a browser. A run needs to be running and to have called web_test_assume_role …
+
+运行: shop-acc-c1-buyer-1 | cancelled | activeRole: 'buyer'
+运行: shop-acc-c1-buyer-2 | running   | activeRole: ''
+```
+
+**取消 A → 新建未核验 B → A 的旧浏览器调用到达 → 被拒。**
+这正是第七节场景 6/7 描述的序列，**阻断侧成立**。
+
+#### 但同一轮暴露了副作用：B 也无法准备身份
+
+被拒的消息是「需要先 `assume_role`」，而 B 正是需要先登录才能 `assume_role` 的那个运行。
+**A 留下的归属声明还指着 A**，所以 B 拿不到准备窗口。**这不满足「B 可以正常准备身份并继续执行」。**
+
+**第一版修法**：`web_test_control_run` 在运行不再是 `running` 时调用 `pool.releaseRun`，
+撤销归属并释放浏览器。
+
+#### 0.7.5 实测：修法引入了新问题
+
+```
+web_test_assume_role: Error: the browser for role "buyer" did not start:
+  Error: mcp-client: serverName "playwright-role-buyer" is al[ready registered]
+```
+
+**释放 fiber 之后，同名 MCP server 没有及时注销**，B 重新挂载时撞上重名。
+`releaseRole` 删掉了键值，但**底层 client 的注销是异步的**，
+新挂载在注销完成前就开始了。
+
+**所以这一项目前是「不通过」**：
+
+- ✅ 取消 A 后 A 的旧调用被阻断（0.7.4 实测）
+- ❌ B 无法正常准备身份（0.7.4 表现为被准备窗口挡住；0.7.5 表现为 server 重名）
+
+**下一步**：释放后必须**等待**该角色的 MCP server 真正注销，再允许同名重启；
+或者给每个挂载实例一个带代次/唯一后缀的 `serverName`，让新旧可以并存到旧的确实消失。
+**两条都还没实现，都还没测。**
+
+**我不把这一项记为通过。** 0.7.5 目前是**开发中版本**，
+已知它在这个序列上有缺陷，不作为候选。

@@ -1453,6 +1453,13 @@ export function apply(ctx: Context): void {
       async execute(args): Promise<z.infer<typeof controlRunResultSchema>> {
         const input = controlRunArgsSchema.parse(args)
         const run = await store.controlRun(input.runKey, input.action)
+        // A run that stopped acting gives up its claims on the role browsers it
+        // held. Leaving them in place keeps preparation bound to a run that is
+        // cancelled or terminal, so the next run cannot sign in even though it
+        // declares the same role.
+        if (run.status !== 'running') {
+          await pool?.releaseRun(input.runKey)
+        }
         const generation = run.generation
         return {
           runKey: run.key,
