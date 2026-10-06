@@ -1162,6 +1162,15 @@ export function apply(ctx: Context): void {
       required: ['runKey', 'role', 'accountPage'],
       properties: {
         runKey: { type: 'string' },
+        accountPage: {
+          type: 'string',
+          format: 'uri',
+          description:
+            'Absolute URL of the page in the role browser that states the signed-in account, read '
+            + 'from the page itself. A relative path is rejected, so pass the full address bar URL. This '
+            + 'is what the verification is traced to, so a login form, an error page or an empty value '
+            + 'does not pass.',
+        },
         role: { type: 'string', description: 'Declared role name, or an empty string to act without a role.' },
       },
     },

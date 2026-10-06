@@ -2390,3 +2390,48 @@ shop-acc-fin-buyer-1 | status: completed | gen: 1     ← 前后一致
 **还发现一个次要问题**（不影响本轮结论）：模型给 `assume_role` 传的 `accountPage`
 有时不是合法 URL，工具按 schema 拒绝并给出 `invalid_format`，这是**正确的校验**，
 但说明工具描述应更明确地要求绝对 URL。**下一轮可以改进描述**，不影响当前候选。
+
+### 0.6.49：`accountPage` 补上描述，模型一次就对——0.6.11
+
+0.6.48 发现模型给 `assume_role` 传的 `accountPage` 有时不是合法 URL，被 `url` 格式拒绝。
+查参数定义，**`accountPage` 根本没有 `description`**——模型只能猜。
+
+补上：
+
+```ts
+accountPage: {
+  type: 'string',
+  format: 'uri',
+  description:
+    'Absolute URL of the page in the role browser that states the signed-in account, read '
+    + 'from the page itself. A relative path is rejected, so pass the full address bar URL. This '
+    + 'is what the verification is traced to, so a login form, an error page or an empty value '
+    + 'does not pass.',
+}
+```
+
+全新 home 实测，**这是至今最干净的一次**：
+
+```
+web_test_start_run:        Run run-shop-buyer-1 is running.
+web_test_assume_role:      Run run-shop-buyer-1 now acts as buyer. Present authority …
+web_test_begin_operation:  Operation create-order-1 … is dispatching.
+web_test_settle_operation: Operation create-order-1 is settled … observed-success.
+web_test_finish_run:       Run run-shop-buyer-1 closed as completed.
+```
+
+```
+运行: run-shop-buyer-1 | status: completed | activeRole: 'buyer' | gen: 1
+操作: create-order-1 | {"kind":"settled","outcome":"observed-success"}
+身份: buyer → 'Alice Buyer'
+```
+
+**`assume_role` 第一次就成功，没有 `invalid_format`，也没有空账号被拒**——五步一次跑完。
+对比 0.6.10 那次要两次才成功。
+
+**这条经验值得单独记**：工具的**参数描述本身就是产品行为**。`required` 里列了字段不等于模型
+知道该填什么；缺描述会让模型猜，猜错就是一次真实的失败往返。**每个模型可见的参数都该有
+说明它该是什么形状、为什么需要**。
+
+**0.6.11 取代 0.6.10 成为交付候选**，`sha256 d64b798d2cd71f6638650d889877e86d6a99ec29c19b1e1ab3010a763e91fa9e`。
+类型检查通过，**118 测试通过**。
