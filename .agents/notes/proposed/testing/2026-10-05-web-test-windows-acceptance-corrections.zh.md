@@ -5096,3 +5096,49 @@ web_test_finish_run:  Run acc-k2-buyer-alice closed as blocked.
 
 Windows 清单里那条 `web_test_propose_cases` 的验收项因此**更加必要**——
 它正是 Ubuntu 上没测成的那一项。
+
+### 0.7.58：查清了 0.7.57 的原因，**并且发现报错指错了字段**
+
+0.7.57 留下两个分支：这轮读了代码并查了运行记录，**两个都排除了**。
+
+#### 原因：模型把项目键填成了环境键
+
+```
+key                  : acc-k2-buyer-alice
+projectKey           : acc-k2          ← 应为 shop
+environmentRevisionKey: acc-k2
+```
+
+**环境 `acc-k2` 确实存在，只是挂在 `projectKey: shop` 下。**
+`declaredRoles` 的查找是：
+
+```ts
+const environment = this.listEnvironments(run.projectKey)
+  .find(candidate => candidate.key === run.environmentRevisionKey)
+```
+
+`projectKey` 填成 `acc-k2` 时，**先按错的项目过滤，环境列表自然是空的**，
+于是抛「names environment "acc-k2", which is not stored」。
+
+#### 但这条报错**指错了字段**
+
+**它说环境没存��，而环境存了，存��� `shop` 下面。** 照着这条提示去查环境列表，
+**查到 `acc-k2` 好好地在那里**，排查方向会被带偏。
+
+`requireDeclaredRole` 里那条文案相同：
+
+```ts
+throw new Error(`web-test: run … names environment … which is not stored, so no role can be checked`)
+```
+
+**两处都应改成区分「项目不对」与「环境不对」**：
+若 `listEnvironments(run.projectKey)` 为空而该环境键在别的项目下存在，
+**应当说该环境属于哪个项目**，而不是说它没存。
+
+#### 本轮不改代码
+
+改文案看着是小事，但**它属于用户可见的诊断输出**，
+且 `start_run` 的参数校验是否也该更早拦住错填的 `projectKey`
+（而不是等到 `declaredRoles` 才炸）**还没查**。**先记下来，不顺手改。**
+
+**记为待处理项：报错指错字段。**
