@@ -3089,3 +3089,46 @@ web_test_finish_run: Run shop-run-1 closed as completed.
 
 **这一项因此从「未测」变为「已测，不通过」**，
 并且给出了下一步要查的具体位置。**不能按 0.7.7 的说法声称它应当成立。**
+
+### 0.7.9：0.7.8 的结论**是错的**——测试从未制造出该场景
+
+先核对 `createScope`（`packages/core/scope/src/index.ts:135-143`）：
+
+```ts
+export function createScope(ctx: Context, key: ScopeKey, options?) {
+  const fiber = ctx.plugin(scope)              // ← 每次调用都新建 fiber
+  const scoped = fiber.ctx.extend({ [kScope]: key })
+  return { ctx: scoped, rawDispose: fiber.dispose, dispose: () => (disposing ??= quiesceFiber(fiber)) }
+}
+```
+
+**每次调用都造一个新 fiber、一个新 scope**，即使 key 相同。
+所以 0.7.8 猜的「两个角色共用同一个 scope」**不成立**，
+「两个角色的 client 在同一条 fiber 链上」也没有证据。
+
+再看那次的存储：
+
+```
+运行: shop-run-1 | status: running | activeRole: 'seller'
+运行: shop-run-2 | status: running | activeRole: ''
+```
+
+**`shop-run-1` 的 `activeRole` 是 seller，`shop-run-2` 是空。**
+也就是说**两个浏览器都属于 run-1**（buyer 与 seller），
+而 **run-2 从未接管过角色，因此从未拥有过浏览器**。
+
+`releaseRun('shop-run-1')` 释放它认领的两个角色 → Chromium 归零，**这是正确行为**。
+
+**所以 0.7.8 把「已测，不通过」写进记录是错的**——
+那次测试**没有制造出「两个运行各自持有浏览器」的场景**，
+观察到的 0 是正确释放的结果。
+
+**教训**：断言失败时，**先确认场景是否真的被造出来**。
+这次是我把「结果不符预期」直接当成「实现有缺陷」，
+而没有先核对运行到底各自持有什么。
+（同类的还有上一轮：安装静默失败却先怀疑会话创建。）
+
+**这一项的状态回到「未测」**，且要正确测它需要：
+**两个运行各自 `assume_role` 成功、各自持有浏览器**，
+然后结束其一，检查另一个的浏览器是否存活、其浏览器是否仍可调用。
+**在真正测到之前不声称通过。**
