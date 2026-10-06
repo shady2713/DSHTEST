@@ -4785,3 +4785,50 @@ README 写四条，代码里是六条：
 **「读过很多遍」和「核对过」是两件事。**
 这三处都在**交付者会实际照着用的文件**里，
 而这些文件我此前**只当作既有背景读过**，从未与代码对照。
+
+### 0.7.51：查包内文件时发现，**0.7.50 我把一处真实接口当成了错名**
+
+核对交付包里的 README 是否带上了修改，结果：
+
+```
+包内 README 含 web_test_control_run 的次数: 0
+包内 README 含 webTest/controlRun 的次数: 1
+```
+
+**包里的 README 还是旧的**，这本身说明交付包需要重建。
+但更要紧的是我去查 `webTest/controlRun` 到底存不存在：
+
+```
+$ grep -rhoE "webTest/[a-zA-Z]+" src/ | sort -u
+webTest/assumeRole webTest/buildReport webTest/controlRun webTest/getRun
+webTest/listCaseResults … webTest/status webTest/waitRun
+```
+
+**`webTest/controlRun` 和 `webTest/buildReport` 都是真实接口**
+（`buildReport` 在 `src/report.ts:100` 与 `:145` 导出，
+`controlRun` 在 `src/client/remote.ts:569` 注册）。
+
+**所以 0.7.50 说「README 写了一个不存在的接口名」是我判断错了。**
+**接口 `webTest/controlRun`（给操作者调的 RPC）和工具 `web_test_control_run`
+（给模型调的）是两个不同的东西，原文写的没有错。**
+
+**已还原英文 README 那处**，保留白名单那处（那条是对的）。
+
+#### 中文 README 有同一个白名单问题
+
+改的时候按行号替换，**误删了前半段「`webTest/controlRun` 是操作者一侧」**，
+回读时发现并补回。
+
+#### 当前状态
+
+两份 README 的白名单都是六条且正确，`webTest/controlRun` 的说明都在。
+
+**但交付包 `dsh-plugin-web-test-0.8.0.tgz` 里的 README 仍是旧的**，
+**必须在交付前重建并重新核对哈希**。
+
+#### 这是第 8 个「没核对就下结论」
+
+0.7.50 那条我写得很肯定——「这不是任何真实接口」。
+**它其实真实存在，只是我当时没查。**
+**指出一个问题之前，先确认它真的不存在**，
+尤其当那个名字看起来像是我自己造出来的时候。

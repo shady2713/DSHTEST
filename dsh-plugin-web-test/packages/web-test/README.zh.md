@@ -35,7 +35,12 @@ DSH 的 Web 测试插件：在真实 Chrome 或 Edge 中执行已确认的用例
 
 ### 操作者控制与 hold
 
-`webTest/controlRun` 是操作者一侧：`pause`、`resume`、`cancel`、`await-user`、`continue`。hold 只停住拥有该运行的会话，不会停住其他会话，因此一个会话的暂停不会中断另一个会话的工作。没有记录归属的运行会停住所有会话，因为插件无法判断它会中断谁的工作。运行被 hold 期间，记录或了结状态所需的工具——`web_test_status`、`web_test_settle_operation`、`web_test_operation_unknown`、`web_test_resume_wait`——保持可用；一切会驱动浏览器的调用都被拒绝。
+`webTest/controlRun` 是操作者一侧：`pause`、`resume`、`cancel`、`await-user`、`continue`。hold 只停住拥有该运行的会话，不会停住其他会话，因此一个会话的暂停不会中断另一个会话的工作。没有记录归属的运行会停住所有会话，因为插件无法判断它会中断谁的工作。
+
+运行被 hold 期间，六个工具保持可用：`web_test_status`、`web_test_start_run`、
+`web_test_operation_unknown`、`web_test_settle_operation`、`web_test_resume_wait` 与
+`web_test_control_run`。后两个是把被 hold 或被中断的运行接续下去所用的工具；
+一切会驱动浏览器的调用都被拒绝。
 
 ### 报告
 
