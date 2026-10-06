@@ -4124,3 +4124,65 @@ Chromium=10
 - **多轮回归在 Windows 上是否一致**
 
 **以上四项不进候选结论，单列待验。**
+
+### 0.7.34：第 5 项在 **0.8.0 候选包**上重测通过
+
+此前只在 0.7.3 上测过禁用/启用，**候选版必须重测**。
+
+#### 单行禁用（角色浏览器那一行）
+
+```
+禁用前 Chromium=20  宿主=1
+setPluginEnabled → ok: True | changed: true | application: "failed"
+禁用后 Chromium=0   宿主=1  用户Chrome=25
+  include:web-test-store         | enabled: True  | fiberPhase: active
+  include:web-test               | enabled: True  | fiberPhase: pending
+  include:web-test-role-browsers | enabled: False | fiberPhase: None
+```
+
+**`Chromium 20 → 0` 是本轮实测的真实回收。**
+`application` 是 `failed`，诊断是「有条目未激活」，
+**这与实测一致**：`web-test` 停在 `pending`，`role-browsers` 已卸载。
+**宿主存活，用户自己 25 个 Chrome 一个没动。**
+
+#### 单行重新启用
+
+```
+重新启用 → ok: True | changed: True | application: applied
+  三行全部 enabled: True | fiberPhase: active
+```
+
+**恢复是干净的**，三行全部 `active`。
+
+#### 整包禁用与恢复
+
+```
+整包禁用 → ok: True | changed: True | application: applied
+整包禁用后 Chromium=0  宿主=1  用户Chrome=25
+  web-test 行数: 0
+整包恢复 → ok: True | changed: True | application: applied
+  web-test 行数: 3
+```
+
+**整包禁用用 bundle 名 `dsh-plugin-web-test`**（不是 `web`——
+0.7.3 那轮试过 `web`，返回「cannot resolve profile bundle」）。
+**禁用后插件在 `listPlugins` 里完全消失，恢复后三行回来。**
+
+#### 第 5 项结论
+
+| 观测项 | 结果 |
+|---|---|
+| 实际 `application` | 单行禁用 `failed`（与未激活条目一致）；启用/整包 `applied` |
+| fiber 状态 | 禁用后 `pending` + `None`；启用后三行 `active` |
+| 派发结果 | 禁用后不再有角色浏览器可用（`Chromium=0`） |
+| 进程退出 | **插件自有 Chromium 20 → 0**；宿主始终为 1 |
+| 用户浏览器 | **始终 25，未受影响** |
+| 整包覆盖 | ✅ 禁用后行数 0，恢复后 3 |
+
+**「独立 fiber 是源码修复，真实回收需要运行证据」这一条，
+在 0.8.0 上补齐了运行证据。**
+
+#### 仍未验证
+
+- **Windows 上禁用/启用的 `application` 取值与 fiber 语义**
+- **Windows 上进程退出的判定方式**（任务管理器/句柄，与 Linux 的进程树不同）
