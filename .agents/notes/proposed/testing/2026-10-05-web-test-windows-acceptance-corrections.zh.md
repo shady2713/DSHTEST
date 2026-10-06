@@ -1732,3 +1732,51 @@ A 组跑完后**再读一次** profile patch，仍是 `[]`（运行期没有回�
 
 **已回退到 0.6.7。** 交付材料不受影响；两处不通过的对外结论仍是 0.6.23 那条有独立契约
 证据的说法。
+
+### 0.6.33：把 `leakedServices` 的判据读到源码级，下一轮从���里起
+
+0.6.32 之后把 `dsh-agent-preset-registry/lib/types/mount.js` 读完了，判据是确定的：
+
+```js
+export function leakedServices(ctx, mount) {
+    const store = ctx.reflect.store;
+    const rootIsolate = ctx.root[Context.isolate];
+    const leaked = [];
+    for (const key of Object.getOwnPropertySymbols(store)) {
+        const impl = store[key];
+        if (impl === undefined) continue;
+        if (!withinFiber(impl.fiber, mount)) continue;
+        if (rootIsolate[impl.name] === key) leaked.push(impl.name);
+    }
+    return leaked.sort((left, right) => left.localeCompare(right));
+}
+```
+
+调用处：
+
+```js
+await tree.root.update(prepareProfileEntries(ctx, plugins, ctx.baseUrl));
+const audit = await auditRows(tree);
+const leaked = leakedServices(ctx, ctx.fiber);
+```
+
+所以一个服务被判泄漏，**必须同时满足三条**：
+
+1. `mount` 是**预设服务自己的 fiber**（`ctx.fiber`），不是预设的 `tree.root`
+2. `withinFiber(impl.fiber, mount)` 为真——即该服务在预设服务 fiber 之内
+3. **`ctx.root[Context.isolate]` 里这个名字指向同一个 symbol**
+
+第 3 条是关键：`ctx.root` 是**宿主根**的 isolate 表。所以问题不是"池在不在预设里"，而是
+**宿主根的 isolate 表里也有 `webTestRoleBrowsers` 这一项，且指向同一个 symbol**。
+
+这也解释了 0.6.7 为什么能用：那时池在顶层，**不在预设服务 fiber 内**，`withinFiber` 为假，
+循环根本不会看它，泄漏检查对它不适用。
+
+**剩下的问题因此可以精确表述**：谁在宿主根注册了 `webTestRoleBrowsers`。
+已排除的候选：profile patch 的行（0.6.31/0.6.32 实测）、`index.ts` 的 `static inject`
+（0.6.8 已移除仍泄漏）、是否真的使用（0.6.32 A 组未使用仍泄漏）。
+**未排除的候选**：`agent.ts` 自己也 `inject` 了 `webTestRoleBrowsers`
+（`export const inject = ['tools', 'webTestStore', 'webTestRoleBrowsers']`），
+而 `agent` 是包的独立入口（`./agent` 导出），需要确认它在根是否也被装载过。
+
+**这是下一轮第一件该查的事**，且是可以在不跑宿主的情况下静态确认的。
