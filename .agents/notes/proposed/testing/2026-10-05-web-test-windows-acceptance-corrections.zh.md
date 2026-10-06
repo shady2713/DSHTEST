@@ -6775,14 +6775,23 @@ dist 51 个 tarball，旧包全部保留
 
 #### 新测试
 
-
+```ts
+const assume = byName.get('web_test_assume_role')
+// 它会在缺浏览器时拒绝，而这发生在它已经问过 pool 之后
+await expect(assume.execute({ runKey: 'run', role: 'approver', accountPage: … }))
+  .rejects.toThrow('no browser in a unit test')
+expect(ensured).toEqual(['approver'])
+```
 
 **顺带钉住了「问的是哪个角色」**——传 `approver`，记录里就是 `approver`，
 **环境声明了两个角色，挂载只认传进来的那个。**
 
 #### 同样验证了区分力
 
-
+```
+把 430 行的挂载调用换掉:  Tests  1 failed
+恢复后:                   Tests  2 passed
+```
 
 **两条测试现在互为反面：**
 - `start_run` 挂载 → 第一条失败
@@ -6793,4 +6802,5 @@ dist 51 个 tarball，旧包全部保留
 ```
 typecheck 干净   134 tests passed
 新包 sha256 f87bb2556a589e5313642f6790d3ad35b73ff98cc3bcdc98e03242ec9f36b1f9
+f87bb2556a589e5313642f6790d3ad35b73ff98cc3bcdc98e03242ec9f36b1f9
 ```
