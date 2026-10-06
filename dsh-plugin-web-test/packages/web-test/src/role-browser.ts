@@ -82,8 +82,8 @@ export interface IdentityAnswer {
 export class RoleBrowserPool extends Service {
   /** Started role browsers, in the order they were created. */
   private readonly started = new Map<string, RoleBrowser>()
-  /** Roles whose mount is in flight, so a second caller waits for it. */
-  private readonly pending = new Map<string, RoleBrowser>()
+  /** Roles whose mount is in flight, so a second caller waits on the same one. */
+  private readonly pending = new Map<string, Promise<RoleBrowser>>()
 
   /** Disposers returned by `mountSessionMcp`, one per started role. */
   private readonly mounts = new Map<string, Disposable<Promise<void>>>()
@@ -150,24 +150,25 @@ export class RoleBrowserPool extends Service {
    * @returns the role's browser resource.
    */
   async ensure(role: string): Promise<RoleBrowser> {
-    // A role already starting counts as started. Confirming an environment and
-    // loading the preset can both reach this, and the provider refuses a second
-    // registration under the same name, so the second caller waits for the
-    // mount instead of issuing its own.
-    const pendingRole = this.pending.get(role)
-    if (pendingRole !== undefined) return pendingRole
+    // A role already starting counts as started, because the browser-use registry
+    // holds one provider slot and a second mount would be refused. The second
+    // caller waits on the same start rather than being handed a record for a
+    // browser that may still fail to come up, and a failure reaches every waiter
+    // instead of leaving them holding a resource that was never started.
+    const starting = this.pending.get(role)
+    if (starting !== undefined) return starting
     const existing = this.started.get(role)
     if (existing !== undefined) return existing
     const browser: RoleBrowser = { role, serverName: `playwright-role-${role}`, toolNames: [] }
     const settled = this.mountBrowser(role, browser)
-    this.pending.set(role, browser)
+    this.pending.set(role, settled)
     try {
-      await settled
+      return await settled
     } finally {
       this.pending.delete(role)
     }
-    return browser
   }
+
 
   /**
    * Make a role the one this pool drives, leaving any other mounted.
@@ -224,7 +225,7 @@ export class RoleBrowserPool extends Service {
    * @param browser - The resource to record once the server is mounted.
    * @returns once the server is mounted.
    */
-  private async mountBrowser(role: string, browser: RoleBrowser): Promise<void> {
+  private async mountBrowser(role: string, browser: RoleBrowser): Promise<RoleBrowser> {
     const serverName = browser.serverName
     // The provider is loaded on demand rather than at import time: it pulls the
     // MCP client's whole peer tree, which a unit test that never starts a
@@ -252,8 +253,24 @@ export class RoleBrowserPool extends Service {
         })
       },
     })
+    // `plugin()` returns a thenable over the fiber's readiness, so awaiting it
+    // reports whether the provider actually came up. Not awaiting left a failed
+    // activation silent: the fiber threw while registering the browser-use
+    // provider, the role was still recorded as started, and the only symptom was
+    // a later `unknown tool` for a client that had never existed. A role that
+    // did not start is not recorded, and its disposer is not kept.
+    try {
+      await fiber
+    } catch (error) {
+      void fiber.dispose()
+      throw new Error(
+        `web-test: the browser for role ${JSON.stringify(role)} did not start: ${String(error)}`,
+        { cause: error },
+      )
+    }
     this.mounts.set(role, async () => { await fiber.dispose() })
     this.started.set(role, browser)
+    return browser
   }
 
 

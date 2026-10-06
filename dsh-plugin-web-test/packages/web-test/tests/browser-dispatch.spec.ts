@@ -12,6 +12,8 @@
 
 import { describe, expect, it } from 'vitest'
 import { guardReason } from '../src/agent.ts'
+import { Context } from '@deepseek-ai/cordis'
+import { RoleBrowserPool } from '../src/role-browser.ts'
 import { cleanupHomes, harness } from './support/harness.ts'
 import { environment, run, seedOf } from './support/seed.ts'
 
@@ -167,6 +169,34 @@ describe('browser dispatch authorisation', () => {
       cleanupHomes()
     }
   })
+
+
+describe('a role browser that cannot start', () => {
+  it('raises the failure to the caller and records no browser', async () => {
+    // The browser-use registry holds one provider slot and `register` refuses a
+    // second one, so a second role's mount throws while its fiber activates.
+    // Awaiting the fiber reports that; a caller that never awaited it recorded
+    // the role as started anyway, and the only later symptom was `unknown tool`
+    // for a client that had never existed.
+    //
+    // This workspace cannot import the provider module, so the failure reached
+    // here is that import rather than the registry's refusal. What the test
+    // pins is the behaviour both failures must have: the start raises, and
+    // nothing is left claiming the role is up.
+    const context = new Context()
+    const pool = new RoleBrowserPool(context, '/usr/bin/chrome', true)
+    await expect(pool.ensure('buyer')).rejects.toThrow()
+    expect(pool.list()).toEqual([])
+  })
+
+  it('gives concurrent callers of one role the same start, not a half-built record', async () => {
+    const context = new Context()
+    const pool = new RoleBrowserPool(context, '/usr/bin/chrome', true)
+    const both = Promise.all([pool.ensure('buyer'), pool.ensure('buyer')])
+    await expect(both).rejects.toThrow()
+    expect(pool.list()).toEqual([])
+  })
+})
 
 })
 

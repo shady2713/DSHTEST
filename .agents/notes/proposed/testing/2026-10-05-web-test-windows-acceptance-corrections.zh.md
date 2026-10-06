@@ -2695,3 +2695,70 @@ const input = settleOperationInputSchema.parse(args)
 - 带**防空转**断言：若没有任何工具体产出值则直接失败并列出各自拒绝原因
 
 类型检查通过，**122 测试通过**（新增 3 条）。
+
+### 0.7.2：第二角色的根因确认——单提供方槽位，启动错误此前被吞掉
+
+0.7.0 看到 seller 报 `unknown tool`，我**推断**是「client 从未注册」。用户指出：
+**先暴露启动错误**，`unknown tool` 只说明当前作用域查不到工具，不能证明 client 没注册。
+照做之后，真实宿主直接给出答案：
+
+```
+web_test_assume_role: Run run-shop-ab2-roles now acts as buyer. …
+web_test_assume_role: Error: web-test: the browser for role "seller" did not start:
+  Error: browser use provider "playwright-role-buyer" is already registered
+```
+
+#### 为什么此前是静默的
+
+`mountBrowser` 调用 `this.ctx.plugin({...})` 后**从不 await 它的就绪**。
+`plugin()` 返回的是 `fiber.await()` 的 thenable（`vendor/cordis/src/registry.ts:331-335`），
+不 await 就等于不检查激活结果。而 `mountSessionMcp` 里的
+`yield ctx.browserUse.register(...)`（`mcp.ts:125`）是**激活期抛错**，
+于是：抛错 → 角色仍被写进 `started` → 唯一的症状是后来某次调用 `unknown tool`。
+
+现在 `mountBrowser` **await fiber**，失败则抛出带角色名的错误、**不写 `started`**、
+不保留 disposer（并 `void fiber.dispose()` 回收半启动的 fiber）。
+
+#### 根因
+
+`packages/browser-use/browser-use/src/index.ts:35-45`：
+
+```ts
+register(name: BrowserUseProviderName): () => Promise<void> {
+  if (this.registration !== undefined) {
+    throw new Error(`browser use provider "${this.registration}" is already registered`)
+  }
+```
+
+**只要已有注册就抛，名字不同也一样。** 整个宿主进程只有**一个** browser-use 提供方槽位。
+
+而 `mountSessionMcp` 的粒度是**每个调用一个 `register`**，它的 client 粒度是**每个 Agent 一个**。
+所以：**一个 `mountSessionMcp` = 一个槽位 = 多个 Agent 各一个 client**，
+**但永远无法一个 Agent 内两个 client**。角色是在 Agent 之内的概念，粒度不匹配。
+
+**这解释了我此前所有「跨角色不可能」的结论**：不是「工具不暴露」或「绑定错」，
+而是**粒度根本不同**。用户说「不把某个 helper 的单提供方限制等同于宿主整体限制」——
+限制在 `mountSessionMcp` 这个 helper 上，**宿主本身并没有禁止一个 Agent 持有多个浏览器**。
+
+#### 并发
+
+`ensure` 原先向第二个调用方返回 `RoleBrowser` 记录（浏览器**尚未启动**），
+启动失败时它一无所知。改为 `pending` 存**启动 promise**，所有调用方 await 同一个任务，
+失败一并抛出。
+
+#### 测试
+
+两条新测试锁住可观察行为（该工作区无法导入 provider 模块，所以触发的是导入失败
+而非槽位拒绝——**两者必须表现一致**：抛出、不记录）：
+
+- 启动失败必须抛给调用方，且 `list()` 为空
+- 并发 `ensure` 共享同一次启动，失败同样抛出
+
+类型检查通过，**124 测试通过**。
+
+#### 下一步
+
+用**公开接口**做 Agent 内的按角色隔离：`createScope(ctx, <角色键>)` 建立作用域，
+把 `McpClient` 挂进该作用域，工具即落在该角色的层里。**不修改宿主、不伪造 Agent 或
+生命周期事件。** 这需要确认 `dsh-scope` 的 `ScopeKey` 是否接受非 Agent 的键，以及
+`dsh-mcp-client` 是否可作为直接依赖。
