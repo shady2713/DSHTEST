@@ -1303,3 +1303,29 @@ dsh plugin --profile iso2 add .../dsh-plugin-web-test-0.6.7.tgz
 `~/.cache/ms-playwright/chromium-1243/...` 这个**可执行路径**。我先用
 `playwright-mcp-profile` 这个 user-data-dir 名字去数，得到 3——那是 grep 自身加噪声，
 差点据此以为浏览器早就死了。计数必须用可执行路径，并且用 `grep -v grep | wc -l` 复核。
+
+### 0.6.19：禁用插件行——派发确实停止，进程不退出
+
+0.4.x 记的"禁用行后浏览器不变"当时是用 MCP 客户端标记数的，不是浏览器。这次用可执行路径
+重测，把两半分开确认。
+
+**派发停止：确认成立。** 把 `web-test-role-browsers` 行改成 `disabled: true` 之后，插件
+的 API 立刻不可用：
+
+```
+gateway/service-unavailable: typert gateway: webTest/getRun: …
+```
+
+所以禁用行确实让服务下线，新派发被拦住——这一半是达的。
+
+**进程不退出：仍然成立。** 禁用前后插件的浏览器都是
+`~/.cache/ms-playwright/chromium-1243/chrome-linux64/chrome` **3 个进程**，宿主
+（`dsh iso2`）也仍在运行。也就是说**服务没了，浏览器还在**。
+
+原因和 0.4.x 一致：池的 disposer 是 `ctx.effect(() => async () => { await this.releaseAll() })`，
+而 `releaseRole` 处置的只是我自己包的那层 effect；`mountSessionMcp` 登记在**它自己 ctx**
+上的 effect 拿不到句柄，服务被移除时那个 ctx 不随之销毁，浏览器因此留下。
+
+这是宿主能力限制，按 shady 已定的产品决定记录：**授权释放是真的（派发被拦、令牌被拒），
+进程回收只在宿主退出时成立（12 → 0）**。不把"释放"弱化成"不再授权"，也不在浏览器没关之前
+报告已关闭。
