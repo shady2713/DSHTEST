@@ -4493,3 +4493,38 @@ blocked 终态后 Chromium=0
 会话创建直接报 `agent-preset/not-found`。
 **这是第三次**（0.7.16、0.7.40、本轮），三次都是同一条命令、同一个原因。
 **每次都要靠「先查预设是否存在」才抓到。**
+
+### 0.7.44：`await-user` 与 `continue` 的资源行为——**已测，与 `resume` 一致**
+
+终态测完了，但**非终态的 `await-user` / `continue` 一直没单独测过**，这轮补上。
+
+#### `await-user` 会释放浏览器
+
+```
+核验后        Chromium=10   run-shop-alice-3 | running | activeRole: 'buyer'
+await-user 后 Chromium=0    run-shop-alice-3 | awaiting-user | activeRole: 'buyer' | gen: 1
+```
+
+**`await-user` 把插件自有 Chromium 释放到 0**，运行停在 `awaiting-user`。
+
+#### `continue` 恢复运行，但浏览器不立即重挂
+
+```
+continue 后 Chromium=0
+run-shop-alice-3 | running | gen: 2
+
+Run run-shop-alice-3 is now awaiting-user at generation 1. It will not accept new test
+actions in this state.
+Run run-shop-alice-3 is now running at generation 2. Act as a role again before the next
+operation; the p[revious authority …]
+```
+
+**`awaiting-user` → `running`，代次 1 → 2，且明确要求重新扮演角色。**
+
+**`Chromium` 仍是 0，这不是缺陷**：浏览器在**重新核验角色时**才重挂，
+不在状态切换时挂。0.7.33 测 `resume` 时 `Chromium 10 → 20`，
+是因为那条提示把 `resume` 和重新登录、`assume_role` 捆在一起做的。
+**两者行为一致——都等重新核验角色时才重挂。**
+
+**未单独验证**：本次没有在 `continue` 之后重新 `assume_role` 再看 Chromium，
+**所以「continue 之后重新核验能让浏览器回来」这一点未被实测**，只由 `resume` 的证据支持。
