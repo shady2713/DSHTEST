@@ -14,6 +14,7 @@
  * @module dsh-plugin-web-test/tests/tool-schema
  */
 
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import { operationResultSchema, statusResultSchema, statusToolOutputSchema } from '../src/agent.ts'
@@ -42,6 +43,27 @@ describe('status tool output schema', () => {
     for (const key of required) {
       expect(declared.shape[key as keyof typeof declared.shape]).toBeDefined()
     }
+  })
+
+  it('gives every model-visible parameter a description', () => {
+    // A field listed in `required` does not tell the model what shape belongs
+    // there. `accountPage` had no description, so the model passed a relative path
+    // and the `url` format rejected it, costing a real round trip; a rule added
+    // later without one would fail the same way.
+    const source = readFileSync(new URL('../src/agent.ts', import.meta.url), 'utf8')
+    const undocumented: string[] = []
+    for (const block of source.split('parameters: {').slice(1)) {
+      const properties = block.split('output: {')[0]
+      const name = /name: `\$\{TOOL_PREFIX\}([a-z_]+)`/.exec(source.slice(Math.max(0, source.indexOf(block) - 200)))?.[1]
+      const tool = name ?? 'unknown tool'
+      for (const field of properties.matchAll(/\n        ([a-zA-Z]+): \{/g)) {
+        const start = field.index ?? 0
+        if (!properties.slice(start, start + 420).includes('description')) {
+          undocumented.push(`${tool}.${field[1]}`)
+        }
+      }
+    }
+    expect(undocumented).toEqual([])
   })
 
   it('rejects a value the schema does not declare', () => {

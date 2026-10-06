@@ -2435,3 +2435,47 @@ web_test_finish_run:       Run run-shop-buyer-1 closed as completed.
 
 **0.6.11 取代 0.6.10 成为交付候选**，`sha256 d64b798d2cd71f6638650d889877e86d6a99ec29c19b1e1ab3010a763e91fa9e`。
 类型检查通过，**118 测试通过**。
+
+### 0.6.50：参数描述补齐 + 门禁；0.6.12 实测（这次模型错了两次）
+
+0.6.49 提到"下一轮系统检查其他工具的参数描述"。扫描下来：
+
+| 工具 | 结果 |
+|---|---|
+| `start_run` `label` / `finish_run` `runKey` / `propose_cases` `environmentRevisionKey` / `report_case` `caseKey` / `begin_operation` `intent`+`role` / `settle_operation` `operationKey` / `operation_unknown` `reason` / `assume_role` `runKey`+`role` / `wait` `reason` | 都有描述 |
+| `resume_wait` `runKey` | **缺**，已补 |
+| `control_run` `runKey`+`action` | 有描述（我先前 0.6.44 写时加的） |
+
+补了 `resume_wait.runKey`，并**加了一条门禁测试**：`tool-schema.spec.ts` 现在读
+`src/agent.ts` 源码，检查每个 `parameters` 块里每个字段 420 字符内是否含 `description`，
+缺一个就失败。**这样"加参数忘了写描述"以后会被测试挡住。**
+
+类型检查通过，**119 测试通过**（新增一条门禁）。
+
+**0.6.12 真实宿主实测**（全新 home）：
+
+```
+web_test_start_run:        Run run-shop-acc-y1-buyer is running.
+web_test_assume_role:      Error: confirmed role "buyer" as "" …   ← 模型传空
+web_test_assume_role:      now acts as buyer. Present authority …
+web_test_begin_operation:  Operation create-order … is dispatching.
+web_test_settle_operation: Error: expected string, path ["authority"]  ← 模型传了非字符串
+web_test_settle_operation: Operation create-order is settled … observed-success.
+web_test_finish_run:       Run run-shop-acc-y1-buyer closed as completed.
+```
+
+```
+运行: run-shop-acc-y1-buyer | status: completed | activeRole: 'buyer' | gen: 1
+操作: create-order | {"kind":"settled","outcome":"observed-success"}
+身份: buyer → 'Alice Buyer'
+```
+
+**闭环成立，但这次模型错了两次**，和 0.6.11 的零错误不同。两次都被工具正确拒绝
+（空账号、非字符串授权），然后都改对了。
+
+**要说清楚的**：0.6.12 的改动是**代码质量**（门禁 + 补描述），**不是行为改进**。模型
+这两次犯错是采样波动，不能说 0.6.12 比 0.6.11 更容易用。**0.6.11 与 0.6.12 功能等价**，
+0.6.12 多一道防止参数描述退化的门禁。
+
+产物：`dsh-plugin-web-test-0.6.12.tgz`，
+`sha256 284a2714caba746781ff52c1fafd060c0d08bce45a0471fcefd93dd7ad323068`

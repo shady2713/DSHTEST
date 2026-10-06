@@ -1289,7 +1289,12 @@ export function apply(ctx: Context): void {
       type: 'object',
       additionalProperties: false,
       required: ['runKey'],
-      properties: { runKey: { type: 'string' } },
+      properties: {
+        runKey: {
+          type: 'string',
+          description: 'The run whose wait is ending early, as reported by web_test_status.',
+        },
+      },
     },
     output: {
       schema: {
