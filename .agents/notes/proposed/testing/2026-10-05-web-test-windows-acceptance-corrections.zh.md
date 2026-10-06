@@ -1483,3 +1483,31 @@ Expose Playwright's upstream tools in each live Session's scope.
 
 注意它会失去一个性质：环境修订在会话存续期间换了角色，池不会自动跟着换。要么把这个限制
 写进文档，要么之后再把"运行开始时确认角色"这条路补回来（那条在有作用域隔离后可能可行）。
+
+### 0.6.25：解法的前置条件已确认——`ctx.get` 是查询，不会把服务拉进本作用域
+
+`@deepseek-ai/cordis` 的 `lib/types/reflect.d.ts` 里：
+
+```ts
+get(name: string, strict?: boolean): any
+_getImpl(name: string, strict?: boolean): Impl | undefined
+```
+
+这是**查询**语义，和 `ctx.<name>` 的属性访问不同：属性访问需要服务在本作用域的 inject 声明，
+拿不到就报错（0.6.20 里的 `cannot get property "webTestStore" without inject`）；
+`ctx.get` 则按名字查现有实例。
+
+所以 0.6.24 那条路的前置条件成立：**池不声明 `static inject: ['webTestStore']`，改用
+`this.ctx.get('webTestStore')`**，就不会因为依赖把池拉到根作用域，`leakedServices()` 也就
+不会判定泄漏。三条要求可以同时成立：
+
+1. 池只存在于预设（不声明存储依赖，改用 `ctx.get`）
+2. 池在构造时用 `ctx.get('webTestStore')?.latestEnvironment()` 读到要启的角色
+3. `mountSessionMcp(this.ctx, …)` 里的 `this.ctx` 就是预设作用域，工具只落在用预设的会话
+
+**未验证**：0.6.20 已经证明"行移进预设 ⇒ 普通会话的 `mcp__` 命名空间清空"，所以第 3 条
+的效果是实测过的；缺的是第 1、2 条能否让宿主不再报
+`Preset services require isolate realms: webTestRoleBrowsers`。
+
+注意 `_getImpl` 返回的是 `Impl | undefined` 而 `get` 返回 `any`；用 `get` 就要自己处理
+`undefined`，不能用类型断言把它变成非空——本仓库禁止 `as unknown` 类的断言来绕过类型。
