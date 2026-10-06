@@ -4876,3 +4876,33 @@ sha256   67663e4edc873b3dc2acea7b3fb36a0a40b43c2f5c00244b58413850183a684c
 `dist/` 下现在有 51 个 tarball，0.6.12、0.7.x 与旧版 0.8.0 都在。
 **旧的 0.8.0（哈希 80c48832e…）保留**，因为它是已测过 0.8.0 全部证据的那个包；
 新包只改文档、代码未动，**但两者的标识符不同，不可混用**。
+
+### 0.7.53：**新包与实测证据的包只差三份文档，代码零差异**
+
+0.7.52 重建了包，但**所有实测证据都来自旧包 `80c48832e…`**。
+不比对就说「新包代码未动、证据仍适用」是不成立的，所以这轮做了逐文件比对。
+
+旧包可从 git 取出（`dist/` 未被 .gitignore 忽略）：
+
+```
+$ git show a1a5dff88b~2:dsh-plugin-web-test/dist/dsh-plugin-web-test-0.8.0.tgz > /tmp/oldpkg/old.tgz
+$ sha256sum /tmp/oldpkg/old.tgz
+80c48832e3243147629dd72dca40afb693bd1cc75a426bb117415cba03bbf94f
+$ sha256sum dsh-plugin-web-test/dist/dsh-plugin-web-test-0.8.0.tgz
+67663e4edc873b3dc2acea7b3fb36a0a40b43c2f5c00244b58413850183a684c
+
+$ diff -rq old/package new/package
+README.md 不同
+README.zh.md 不同
+WINDOWS-ACCEPTANCE.zh.md 不同
+差异文件总数: 3
+```
+
+**两个哈希都各自正确，且只差这三份文档。**
+
+**`lib/` 与 `dist/` 下没有任何文件不同**，也就是说：
+类型检查产物、tsdown 产物、生成的类型、JS 代码**全部逐字节一致**。
+**0.7.17 到 0.7.49 之间做的全部实测，对新包同样成立。**
+
+这一点已写进交付记录，让验证者不必把整轮回归重跑一遍，
+**但仍写明证据来自哪个包、两者差在哪**——不是含糊的「应该一样」。
