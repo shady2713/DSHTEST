@@ -7057,3 +7057,57 @@ k1 | cancelled | generation: 2
 其全部释放路径都在交付包 f6621d41… 上有真实宿主实测。**
 
 新包 sha256 f6621d41ff3920eabaf5ef4346691d9d2655355feba08f3f7a33b08b4d11bafd
+
+### 0.7.97：**第 5 项（禁用/重新启用）在新包上没测成，原因未知**
+
+0.7.96 之后剩下的最后一项。**这轮试了，没成，如实记录。**
+
+#### 前提是齐的
+
+```
+d1 核验后 Chromium=10   宿主=1
+```
+
+**有 10 个浏览器可回收，正是一个能看出回收的起点。**
+
+#### 先纠正一个参数名
+
+第一次调用报：
+
+```
+gateway/arguments-invalid: args fields do not match the descriptor:
+  missing "id"; unexpected "plugin"
+```
+
+**参数名是 `id`，不是 `plugin`。** 这是接口自己的报错告诉我的，不是我猜的。
+
+#### 三种写法都被判 `unknown-plugin`
+
+```
+dsh-plugin-web-test/role-browser   changed: False  application: failed  unknown-plugin
+web-test-role-browsers             changed: False  application: failed  unknown-plugin
+web-test                           changed: False  application: failed  unknown-plugin
+禁用后 Chromium=10   （三次都没变）
+```
+
+**三种都用过：yml 里的 `name`、yml 里的 `id`、bundle 名。**
+
+#### 列出管理器实际认的东西
+
+```
+pluginManager/listPlugins → 顶层是 list，共 192 条
+含 web-test 的：[]          ← 一条都没有
+```
+
+**管理器列出的 192 条里没有任何一条带 web-test。**
+
+#### 所以
+
+**第 5 项在新包上无法按记录里的方式测。**
+**旧包的证据（0.7.x：`changed: true, application: "failed"`、`Chromium 20 → 0`）不适用于这一版。**
+
+**不知道原因。** 可能查的接口不是这一版该用的、可能行的标识符变了、
+也可能 192 条里用的是别的命名。**本轮上下文已尽，不继续猜。**
+
+**下一轮先弄清「管理器用什么键认这些行」，
+而不是继续换字符串试。**
