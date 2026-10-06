@@ -4284,3 +4284,49 @@ $ git diff --stat origin/codex/web-test-plugin-s0~30..HEAD -- packages/ apps/ ve
 **不再让它看起来像 0.8.0 的证据**。
 
 **下一步**：新开一个干净宿主重测跨会话并存与选择性释放。
+
+### 0.7.38：**第 4 项跨会话部分在 0.8.0 上通过**
+
+先按 0.7.13/0.7.15 的规矩验证前提。这一轮**第一���就抓到问题**：
+
+```
+会话1: 失败
+会话2: 失败
+→ agent-preset/not-found: Unknown agent preset: web-test
+```
+
+**插件没装上**（`dsh plugin add` 用相对路径且在 `cd` 之后，静默失败）。
+**先用绝对路径装上，两个会话才建起来**——**这正是「先确认前提」的价值**：
+若继续往下推，会把「插件没装」误判成「会话不处理提示」。
+
+#### 两个会话各自核验并持有浏览器
+
+```
+两会话各自核验后 Chromium=20
+运行: buyer-shop-acc-g1  | running | activeRole: 'buyer' | owner: session-e4a1a9c0
+运行: run-seller-acc-g1-1 | running | activeRole: 'seller' | owner: session-99ed50d5
+```
+
+**两个运行分属两个会话，各持一个 Chromium。**
+
+#### 结束其一，另一个存活且仍可执行
+
+```
+结束前 Chromium=20
+结束后 Chromium=10  宿主=1  用户Chrome=25
+运行: buyer-shop-acc-g1   | completed | activeRole: 'buyer'
+运行: run-seller-acc-g1-1 | running   | activeRole: 'seller'
+另一运行再执行后 Chromium=10
+```
+
+**存活运行的浏览器仍可驱动**：
+
+```
+seller__browser_snapshot auth=有: Page URL: http://127.0.0.1:8902/account
+  Page Title: 当前账号
+```
+
+**第七节「关闭一个运行要释放它拥有的全部资源，同时保留其他运行的资源」，
+在 0.8.0 上实测通过，且不只是一个进程数——存活的浏览器被真正驱动过。**
+
+**交付记录第 4 项已改为 0.8.0 实测值，六项证据现在全部来自同一构建。**
