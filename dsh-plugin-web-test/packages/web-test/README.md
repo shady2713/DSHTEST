@@ -152,15 +152,22 @@ immediately: the terminal status takes it out of `browserGrantForSession`, so no
 business action can be dispatched under the role the run verified. New runs get
 their own authority and are not blocked by an earlier cancelled one.
 
-The Chromium process a role drives is reclaimed on a narrower schedule than that.
-`mountSessionMcp` registers the effect that owns the browser on the context it is
-given and does not return it, so the pool cannot dispose that effect on its own;
-the browser closes when the provider's fiber is destroyed, which happens when the
-host exits. Measured on the development host: browsers 12 to 0 when the host takes
-SIGTERM, unchanged across a cancelled run and across disabling the role-browser
-row. The disposal handle is still called and awaited, so the boundary is a host
-capability rather than a missing call, and no code path reports a browser as
-closed before it is.
+Each role browser is mounted on its own fiber, so releasing it is a real disposal that
+is awaited rather than something deferred to host exit. Measured on 0.8.0 on Linux: a
+run at `completed`, `cancelled` or `blocked` takes the plugin's own Chromium from 12 or
+10 to 0, `pause` and `await-user` release it too, and the host stays up with the user's
+own browsers untouched. `resume` from `pause` and `continue` from `await-user` each
+restore the run at the next generation with the old authority void, and the browser comes
+back only once the role is verified again. The same release happens when the plugin is
+disabled: `setPluginEnabled` on the role-browser row returned `application: "failed"` with
+the browser count at 0, the host at 1 and the user's browsers unchanged.
+
+A role is one account in one environment: `roleSchema` carries a single `accountRef`, a
+reference the plugin never stores. The pool's ownership claims are therefore keyed by role,
+so a role has exactly one holder at a time and two runs in one session cannot both act as
+the same role. The second is refused because the guard asks which run currently holds that
+role and preparation is closed for a run whose role is already verified. This is a
+consequence of the claims being keyed by role rather than a rule the store enforces.
 
 ## One browser-use provider per host
 

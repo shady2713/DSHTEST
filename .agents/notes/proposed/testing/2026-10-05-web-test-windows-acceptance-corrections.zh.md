@@ -4697,3 +4697,45 @@ store 的 `assumeRole` 只校验三件事：
 而意图已从模型推出、但**尚未与需求方确认**。
 
 **这项记为「行为已测量、与设计一致、规则未显式化」**，不是待修缺陷。
+
+### 0.7.49：**插件 README 的资源节已经过期，写的是被推翻的结论**
+
+0.7.48 建议的两条里，「在 README 里写明限制来自 claims 的键」不需要改代码也不需要确认意图，
+这轮就做了。**顺带发现那一节本身是错的**。
+
+原文写着：
+
+```
+The Chromium process a role drives is reclaimed on a narrower schedule than that.
+mountSessionMcp … does not return it, so the pool cannot dispose that effect on its own;
+the browser closes when the provider's fiber is destroyed, which happens when the host
+exits. Measured … browsers 12 to 0 when the host takes SIGTERM, unchanged across a
+cancelled run and across disabling the role-browser row.
+```
+
+**「跨取消运行不变」与 0.8.0 的实测直接矛盾**：
+`cancelled`、`blocked` 各实测把 Chromium 从 10 降到 0。
+那段话是 0.6.x 时期写的，**独立 fiber 的修复落地之后它就该改，一直没改**。
+
+**交付者会读这份 README**——一份写着「浏览器只在宿主退出时关闭」的文档，
+会让验证者对 0.8.0 的实际行为产生完全错误的预期。
+
+#### 现已改写为实测事实
+
+- 三个终态各把 Chromium 从 12 或 10 降到 0
+- `pause` 与 `await-user` 同样释放
+- `resume` / `continue` 在下一代恢复运行并作废旧授权，
+  **浏览器在角色重新核验时才回来**
+- 禁用插件时同样释放（`application: "failed"`，浏览器 0，宿主 1，用户浏览器不变）
+- 角色即一个账号（单 `accountRef`），claims 按角色为键，
+  **同一会话两个运行不能同时扮演同一角色**，
+  并注明**这是 claims 键的后果，不是 store 强制的规则**
+
+四个文档门禁对这个文件零违规。
+
+#### 又是一次「没回头核对」
+
+这份 README **我读过很多轮**（它是 0.6.x 时期写的，一直当既有背景），
+**却从未拿它和后来的实测对照过**。
+「读过多遍」不等于「核对过」——
+**文档里每一句结论都应当能指到一次测量，否则它就是过期结论。**
