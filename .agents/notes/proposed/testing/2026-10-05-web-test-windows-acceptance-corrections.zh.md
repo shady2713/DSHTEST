@@ -7650,3 +7650,40 @@ web_test_status: … Runs: 18. A previous host run was interrupted; these runs n
 
 **插件自己指出有运行因上次宿主被中断而需要处理。**
 **那是 0.8.7 那个残留宿主留下的，不是本轮的问题。**
+
+### 0.8.9：**0.7.94 那条「不下结论」的观察查清了**——`putEnvironment` 的注释没有错
+
+0.7.94 记了一句「`putEnvironment` 建好环境后 `Chromium=0`，注释说它预启动浏览器，
+实际这里没起，本轮只记不下结论」。**这轮查清了。**
+
+#### 代码确实调了
+
+```ts
+// src/index.ts:160
+// The browser is mounted here rather than when a run starts: the provider
+// defines a server's tools on an agent as that agent is created and cannot
+// add them to one that already exists, so a browser mounted after the
+// session exists never reaches it.
+await this.ctx.webTestRoleBrowsers.ensure({
+  projectKey: stored.projectKey,
+  environmentKey: stored.key,
+  runKey: '',
+  role: stored.roles[0]?.name ?? '',
+})
+```
+
+**注释与代码一致，没有 0.7.88 那种不符。**
+
+#### 那为什么 `Chromium=0`
+
+**`ensure` 挂的是 MCP server；Chromium 进程是首次导航时才起的。**
+
+**所以「已挂载」不等于「有进程」——两句话同时为真。**
+
+#### 这条为什么值得记
+
+**0.7.86 到 0.7.92 整条泄漏调查都建立在「挂载了什么」的理解上。**
+**当时把 0.7.94 的 `Chromium=0` 记成一个悬案，是因为没分清这两件事。**
+
+**分清之后，之前那条「预启动收养」路径的推理重新成立：
+环境确认时确实挂了一个 server，运行核验时收养它，而不是再挂一个。**
