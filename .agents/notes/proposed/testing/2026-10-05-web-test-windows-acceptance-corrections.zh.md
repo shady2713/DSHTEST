@@ -1366,3 +1366,34 @@ Preset services require isolate realms: webTestRoleBrowsers
 （`restrict(filter): () => void`），作用是"限制**调用方作用域**的全局工具"，而角色浏览器
 工具正是全局注册的。**如果能让普通会话的作用域调用一次 deny 掩码，泄漏就能在不动组合的
 前提下解决。**这是下一步该查的方向，不是本轮能收口的。
+
+### 0.6.21：`tools.restrict` 这条线索收口——不成立
+
+上一轮留的线索是"让普通会话的作用域应用一次 deny 掩码"。读了契约，不成立。
+
+```ts
+export interface ToolRestriction {
+  /** Global tool names that stay visible; everything else is removed. */
+  readonly allow?: readonly string[]
+  /** Global tool names removed from visibility. */
+  readonly deny?: readonly string[]
+}
+```
+
+只有作用域级的 `allow` / `deny`，**没有任何按 Agent 选择的字段**；`restrict` 的文档写明
+"Restrict global tools for the calling agent scope"，也就是**调用方所在的作用域**。
+
+要只在普通会话里隐藏，就必须有一段代码运行在**每个会话自己的作用域**里调用 `restrict`。
+插件的 loader 行都是宿主级的，池的 ctx 是根，所以它调用的结果是根级的 deny——那会把
+web-test 会话的工具也一起删掉。
+
+也就是说这条路要么无效（根级 deny 伤到预设），要么需要宿主提供"每会话作用域的插件行"，
+那是组合层的改动。**线索到此为止，不再重复推导。**
+
+普通会话工具泄漏因此仍是**未闭缺陷**，成因和可修性现在写清楚了：
+
+- 现状：普通会话的工具清单里出现 `mcp__playwright-role-*`；守卫拒绝一切实际调用
+- 成因：提供方对所有 Agent 定义该服务器的工具，而工具只能在 Agent 创建时加入
+- 试过且失败：把浏览器行移进 preset（0.6.20，泄漏消失但宿主拒绝加载）
+- 试过且不成立：宿主 `tools.restrict`（本节）
+- 需要的宿主能力：提供方支持按 Agent 限定，或组合层支持每会话作用域的服务行
