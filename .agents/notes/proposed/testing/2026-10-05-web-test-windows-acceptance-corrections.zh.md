@@ -4988,3 +4988,54 @@ $ dsh-plugin-web-test/scripts/check-delivery-identifiers.sh
 （用 `git rev-parse --show-toplevel` 定位仓库根）。
 
 **「改文档 → 重建 → 核对」从流程变成了可执行检查。**
+
+### 0.7.56：**我昨天写的检查脚本，第一天就报了假警**
+
+0.7.55 加的 `check-delivery-identifiers.sh` 用「记录里的 SHA 是否等于 HEAD」判断。
+本轮跑它的第一件事是提交脚本本身，**提交后立刻报**：
+
+```
+✗ 源码 SHA 不是 HEAD（包内文件或 dist 变更后需更新）
+```
+
+**但这个报警是错的**：
+
+```
+$ git diff --stat 06648889ac..HEAD -- dsh-plugin-web-test/packages/web-test/ dsh-plugin-web-test/dist/
+（空）
+```
+
+**打包的内容一个字节没变**，**是 HEAD 前移了**，因为这一轮只加了个脚本和改了点笔记。
+**包与记录都没问题，是判据错了。**
+
+#### 这正是我上一轮警告过的坑
+
+0.7.55 的记录里写着：
+
+> 若没变，光看 HEAD 会造成一次错误的「修正」——**先确认前提，再改**。
+
+**写下了这句话，转头就在自己的脚本里犯了同一个错。**
+
+#### 改成判据「被��包的文件是否变过」
+
+正确的问题不是「SHA 是不是最新的」，而是**「从记录的 SHA 到 HEAD 之间的提交，
+有没有碰过任何会被 `npm pack` 打进去的东西」**：
+
+- 碰过 → SHA 与哈希必须一起重取，并列出具体是哪些文件
+- 没碰 → SHA 仍然有效，**不报警**
+
+#### 两种情况都验了
+
+拿一个**确实产出过不同包的旧 SHA**（`71393d989a`）试：
+
+```
+✗ 记录里的 SHA 之后被打包的文件变过，SHA 与哈希需一起重取：
+    dsh-plugin-web-test/dist/dsh-plugin-web-test-0.8.0.tgz
+    dsh-plugin-web-test/packages/web-test/WINDOWS-ACCEPTANCE.zh.md
+退出码: 1
+```
+
+还原后六项全过、退出码 0。
+
+**一个检查如果只在「通过」的方向上验过，它等于没验。**
+**这轮把它在会失败的方向上跑了一次，确认它真的会失败。**
