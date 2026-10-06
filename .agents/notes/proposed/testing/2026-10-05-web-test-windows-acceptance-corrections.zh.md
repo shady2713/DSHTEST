@@ -1511,3 +1511,41 @@ _getImpl(name: string, strict?: boolean): Impl | undefined
 
 注意 `_getImpl` 返回的是 `Impl | undefined` 而 `get` 返回 `any`；用 `get` 就要自己处理
 `undefined`，不能用类型断言把它变成非空——本仓库禁止 `as unknown` 类的断言来绕过类型。
+
+### 0.6.26：0.6.24 那条路实施了一轮——不成立，已回退
+
+按 0.6.24/0.6.25 实施：浏览器行移进预设、根行不再 `inject` 池也不在 `putEnvironment`
+触碰它、池在构造时用 `this.ctx.get('webTestStore')` 读已确认环境并自启第一个角色、
+存储加回 `latestEnvironment()`。类型检查通过，**116 测试通过**。
+
+**推进了一步**：错误不再是 `isolate realms`，而是
+
+```
+web-test-role-browsers (dsh-plugin-web-test/role-browser):
+  this.store(...)?.latestEnvironment is not a function
+```
+
+说明 `ctx.get` 确实取到了存储、**且宿主当时没有判定泄漏**——0.6.25 关于 `ctx.get` 是查询
+而不拉起服务的判断，在这一层是成立的。
+
+**但补上 `latestEnvironment` 之后，泄漏又回来了**：
+
+```
+Preset services require isolate realms: webTestRoleBrowsers
+```
+
+也就是说 `leakedServices()` 判定的不只是"根作用域有同名实例"，**池一旦真正被使用到存储**，
+某种解析路径就会让它同时出现在根。两次观察合起来说明：这条宿主约束比"声明依赖"更严格，
+我目前的公开接口手段无法满足。
+
+**已回退到 0.6.7**（实测走通），本轮代码没有留在分支上。工作树干净，116 测试通过。
+
+**这一轮真正的收获是把边界缩小了**：
+
+- 0.6.20：错误在 `leakedServices`，池连构造都没走到
+- 0.6.26：池构造成功、用 `ctx.get` 取到存储，宿主当时没报泄漏
+- 补上缺失方法后再报泄漏
+
+所以限制**不是**"预设内不能声明依赖"，而是"**预设内的服务不能真正使用根作用域的服务**"。
+这比之前的记录更接近根因，也说明单靠插件侧的组合调整大概无法绕过——需要宿主侧让预设
+作用域能安全引用根服务（或者提供方按 Agent 限定工具）。**记录到此为止，不再重复实施。**
