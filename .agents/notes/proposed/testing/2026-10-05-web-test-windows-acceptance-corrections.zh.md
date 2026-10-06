@@ -2094,3 +2094,41 @@ swap(entry.ctx[Context.isolate], newMap)
 **"挂载作用域决定暴露范围，注册时机决定绑定对象，而预设只有一个 Agent"**。
 
 **0.6.7 仍是唯一的完整单角色交付候选。**
+
+### 0.6.42：交付产物在干净环境上的端到端终验——通过
+
+对**实际交付的那份 tarball**（`dsh-plugin-web-test-0.6.7.tgz`，
+`sha256 759d57fb…6d8`）做终验，全新 `DSH_HOME=/home/weetion/dshfinal`：
+
+| 步骤 | 结果 |
+|---|---|
+| `dsh --from-default-profile web` 建 profile | 启动前读 patch 为 `[]` |
+| `dsh plugin add` 安装 tarball | 成功，**包内 0 个 `workspace:`/`file:` 依赖** |
+| `putEnvironment` 确认环境 `acc-final`（buyer → Alice Buyer） | 成功 |
+| `session/create` 用 `web-test` 预设 | 成功 |
+| `web_test_start_run` | `Run shop-acc-final-buyer is running.` |
+| `web_test_assume_role`（第一次，空账号） | **拒绝**：`confirmed role "buyer" as "", but that role is bound to "Alice Buyer"` |
+| `web_test_assume_role`（第二次，真实登录） | **成功**：`now acts as buyer` + 出示 authority |
+
+存储核对：
+
+```
+run: shop-acc-final-buyer | status: running | activeRole: 'buyer' | gen: 1
+身份: buyer → 'Alice Buyer'
+  detail: page http://127.0.0.1:8902/ titled "受控验收站点" declared "Alice Buyer"
+```
+
+**这一次 `assume_role` 成功了**，而 0.6.8 同样这一步是
+`browser tool belongs to another Session`——**这也从正面印证了 0.6.41 的结论**：
+池在根时绑定正确，在预设时绑定错误。
+
+**两点特别值得记**：
+
+1. **空账号被真实拒绝**，不是靠字段判断，是模型读站点后报告的身份与已确认环境的
+   `accountRef` 比对不符——第四节"错误账号、错误来源均不能通过"有真实宿主证据
+2. 身份 `detail` 记录了**站点页面标题和它声明的账号**，可追溯到具体页面而非仅一个字符串
+
+**所以 0.6.7 的单角色闭环在交付产物上完整成立**：干净安装 → 环境确认 → 会话创建 →
+运行建立 → 身份接管（含拒绝错误身份）→ 真实站点核验。配合此前已测的授权代次、
+取消/恢复/重启、断连归属、禁用停止派发、宿主退出进程回收、报告三面一致，
+**第七节 12 场景中 10 个通过，其中 8 个为真实宿主证据**。
