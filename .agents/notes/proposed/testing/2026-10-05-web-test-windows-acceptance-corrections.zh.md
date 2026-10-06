@@ -2259,3 +2259,49 @@ web_test_settle_operation: Error: tool "web_test_settle_operation" returned inva
 **当前交付候选仍是 0.6.9**（`sha256 dacf49ef87e435edb9321742a8050d4fc57e00b1d5c86c64a11ff2851a3139e0`）：
 它的单角色闭环与重启恢复都已实测通过。0.6.10 的修复方向正确、编译与测试通过，但**真实宿主
 未复测，不作为候选**。
+
+### 0.6.46：`settle_operation` 的修复仍未复测到——卡在驱动方式，不在代码
+
+按 0.6.45 写的"一条提示一个工具"重试，两次都换了环境：
+
+**第一次**用 `/home/weetion/dshv9`（已有多个 web-test 会话）：
+
+```
+web_test_assume_role: Error: role "buyer"'s browser failed
+  mcp__playwright-role-buyer__browser_navigate:
+  playwright-role-buyer: browser tool belongs to another Session
+```
+
+**这正好复现了 0.6.41 的限制**——浏览器绑在这个宿主进程里第一个 web-test 会话上，
+后来的会话拿不到。**不是新问题，是已记录的单宿主单浏览器边界。**
+
+**第二次**用全新 `/home/weetion/dshs10`、只建一个 web-test 会话：
+
+```
+web_test_start_run: Run shop-acc-t1-buyer is running.
+web_test_assume_role: Error: confirmed role "buyer" as "", but that role is bound to
+  "Alice Buyer" in environment "acc-t1"
+```
+
+`start_run` 成功、`assume_role` 正确拒绝空账号（第四节要求的行为）。但**后续两条提示
+（"读身份页后再 assume_role"、"然后 begin_operation"）模型没有再调任何工具**，所以
+`begin_operation` → `settle_operation` **仍然没有走到**。
+
+**结论要写清楚**：
+
+- 0.6.10 的 `settle_operation` 修复**方向正确、类型检查通过、117 测试通过**
+- 但**真实宿主上从未执行过一次成功的落定**，所以 **`value.authority` 是否真的不再报错，仍未验证**
+- 也因此**不能把 0.6.10 当候选**；候选仍是 0.6.9
+- 0.6.9 自己在真实宿主上**跑通过** `finish_run`（`closed as completed`）与重启恢复，
+  唯独 `settle_operation` 那一步在 0.6.9 上是报 schema 错的——**所以 0.6.9 也带着这个
+  已知缺陷**
+
+**这一条必须写进交付记录**：0.6.9 与 0.6.10 都不含一个在真实宿主上验证过的
+`settle_operation`。**下一轮的驱动方式**要换——不能再靠"一条提示一个工具"，那反而让模型
+停下来；改成在一条提示里把三步明确排好，并且**先让模型把身份页读出来**再让它 assume。
+
+**诚实说明我这几轮的问题**：同一个 schema 缺陷（`begin_operation` 在 0.2.x、
+`settle_operation` 在 0.6.45）本该由"输出 schema 的 `required` 逐块核对"这类静态检查兜住。
+这类检查**单元测试覆盖不到**（工具输出 schema 只在宿主加载时生效），**下一轮应该加一条
+静态门禁：扫描 `tools.register` 的每个 `output.schema.required` 与其 `execute` 的返回
+字段是否一致**。
