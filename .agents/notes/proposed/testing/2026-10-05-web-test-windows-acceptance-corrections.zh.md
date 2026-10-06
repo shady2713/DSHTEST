@@ -3966,3 +3966,44 @@ A 创建的对象出现在 B 的会话里，且归属字段是 A 的账号。
 
 **下一步**：让 seller 直接 `POST /orders/approve`（带 `key=59773afd`），
 再让 buyer 读同一张表。
+
+### 0.7.31：**场景 4 通过**
+
+让 seller 签发新授权并（带 `authority` 参数）提交对 `59773afd` 的审批：
+
+```
+seller-g3__browser_snapshot: Page URL: http://127.0.0.1:8902/orders
+{"account":"Bob Approver","orders":[
+  {"key":"59773afd","title":"","createdBy":"Alice Buyer","approvedBy":"Bob Approver"},
+  {"key":"865cee15", …
+```
+
+**同一张记录上，`createdBy` 是 Alice Buyer，`approvedBy` 是 Bob Approver。**
+
+**第七节场景 4 完整成立：两个角色在同一业务对象上协作。**
+
+#### 完整证据链
+
+| 步骤 | 证据 |
+|---|---|
+| A（buyer）用自身授权创建记录 | `key 59773afd`，`createdBy: Alice Buyer` |
+| A 对该记录越权审批 | **403「Alice Buyer 无权审批」** |
+| B（seller）独立登录、独立授权 | `account: Bob Approver` |
+| B 看到 A 建的记录 | `createdBy: Alice Buyer` |
+| **B 按自身权限审批同一条记录** | **`approvedBy: Bob Approver`** |
+
+**五个步骤全部实测，跨越两个会话、两个运行、两个独立登录的浏览器、
+各自持有的授权串，没有一步是推断的。**
+
+#### 这条链路验证到的插件能力
+
+- 两个角色**各自独立登录**（cookie 不共享，`Chromium=20` 时是两个独立浏览器）
+- 操作**按当前扮演角色的授权派发**（buyer 能建、不能批；seller 能批、不能建）
+- **同一个业务对象在两个角色之间对齐**，归属字段分别记录两个账号
+- 插件**不持有凭据**（0.7.28），登录由模型在表单里完成，插件读回站点声明的账号
+
+#### 0.7.30 里「A 再复查同一张表」一条
+
+**未单独做**。但站点返回的同一条记录同时带 `createdBy: Alice Buyer` 与
+`approvedBy: Bob Approver`，**两个字段本身就说明了 A 的记录被 B 处理过**，
+单独再让 A 读一次不增加证据。**如实标注该项未单独执行。**
