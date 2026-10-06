@@ -6106,3 +6106,48 @@ ok: True | key: acc-ok
 再在新包上重测这一项。
 
 **本项在交付记录里的状态：旧包已实测通过，新包未重测。**
+
+### 0.7.78：查到了 `web-test` 预设的来源，**普通预设的名字仍未确定**
+
+0.7.77 定的是「从源码找预设注册点」，这轮找到了**一半**。
+
+#### 查到的：`web-test` 由插件包贡献
+
+`dsh-plugin-web-test/packages/web-test/cordis.patch.yml`：
+
+```
+# Bundle root and typed Remote surface the Client calls as
+# `ctx.remote.webTest.*`. It also opens the domain and contributes the
+# `web-test` agent preset.
+- id: web-test
+  name: 'dsh-plugin-web-test'
+```
+
+**所以 `web-test` 这个预设是插件自己带的**，
+**普通预设是另一套东西**（`dsh-base` 提供的），**两者不在同一个包里**——
+**这就是 0.7.77 找不到的原因：我一直在插件包里找普通预设。**
+
+#### 查到的：普通预设的显示名不是 id
+
+```
+packages/preset/agent-preset-registry/src/display.ts
+  standard: { name: 'presetStandardName', … }
+  | 'presetCordisName' | 'presetMinimalName' | 'presetPtcName' | 'presetStandardName'
+```
+
+**`presetStandardName` 是本地化键，不是 `agentPreset` 要传的值。**
+按名字去试会失败——**这解释了 0.7.77 试 `default` 失败的一部分原因。**
+
+#### 仍未确定
+
+- `standard` / `minimal` / `ptc` / `cordis` 各自的 **id 字符串**
+- 宿主报错 `Unknown agent preset: __nope__` **不列候选**，无法从错误里反推
+
+**上下文将尽，本轮不硬试。**
+
+#### 一个更省事的办法（下轮采用）
+
+**用「不带插件的 profile」建会话**——
+`dsh plugin --profile X --from-default-profile web` 建的 profile 本来就不含本插件，
+**在那种 profile 里能建的预设，就是普通预设。**
+**这比在源码里逐层追 id 更直接，也更贴近「普通会话」的定义。**
