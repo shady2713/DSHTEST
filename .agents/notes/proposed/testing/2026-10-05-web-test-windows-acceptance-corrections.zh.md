@@ -3337,3 +3337,44 @@ web_test_control_run: Run shop-acc-c4-buyer-2 is now running at generation 2.
 **下一轮必须一条提示只做一件事**：单独提示
 「在 buyer 浏览器打开站点、用 alice 登录、读出账号、调用 `assume_role`」，
 等待后再单独发收尾指令。**不要把 resume、登录、收尾串在一条提示里。**
+
+### 0.7.15：提示已送达，模型未推进——**本轮仍无新证据**
+
+先查前提（这已是常规动作）：
+
+```
+宿主=1  站点=200  Chromium=0
+```
+
+按 0.7.14 写的**一条提示只做登录**再发一次：
+
+```
+Sign in as alice with password pw-alice-1 on http://127.0.0.1:8902 using the buyer
+role browser, read the account the site declares, then call web_test_assume_role for
+runKey shop-acc-c4-buyer-2 … Do nothing else.
+```
+
+**提示确实送达了**——会话事件数涨到 575，最后一条用户消息就是它：
+
+```
+用户: 'Sign in as alice with password pw-alice-1 on http://127.0.0.1:8902 usi'
+```
+
+**但没有产生任何 `web_test_*` 调用**，`Chromium=0`，
+`shop-acc-c4-buyer-2` 的 `activeRole` 仍是空。
+
+会话日志末尾仍是上上轮的 `web_test_status` / `web_test_control_run` 两条结果。
+
+**所以本轮关于 B 能否完成身份核验，仍无新证据。**
+
+#### 下一轮该查什么
+
+现象是「模型收到了提示，但没调本插件的任何工具」。
+**先确认模型看到了角色浏览器工具**——它的工具列表里此刻是否还有
+`mcp__playwright-role-buyer-g2__*`。**这一轮重启过宿主，
+而角色浏览器是在重启之前挂载的，fiber 随宿主一起没了。**
+
+这与 0.7.4 之前的「第二角色」是同一类问题的可能变体：
+**宿主重启后，旧的挂载不会自动恢复，需要重新 ensure。**
+若属实，`assume_role` 应当仍然报「浏览器未启动」而不是静默不动——
+**下一轮把模型无法调用的原因抓出来，不要再只看状态不变。**
