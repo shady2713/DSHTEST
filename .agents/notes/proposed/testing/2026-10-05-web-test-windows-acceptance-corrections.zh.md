@@ -2013,3 +2013,44 @@ sha256 e9f7fac142a489632b6b1b8aa5d6b8b04e39817fac61b5ea434cfe9a75c37f8c
 4. 交付文档改写
 
 **在第 1、2 项完成前，不要把 0.6.8 当成已通过全部 12 场景。**
+
+### 0.6.40：**0.6.39 那句"第一个两处都不错的构建"是错的**
+
+0.6.39 只验到 `start_run`，就说 0.6.8 两处都好了。**继续跑 `assume_role` 就露馅了**：
+
+```
+CALL web_test_start_run
+  → Run shop-acc-p10-001 is running.
+CALL web_test_assume_role
+  → Error: web-test: role "buyer"'s browser failed
+    mcp__playwright-role-buyer__browser_navigate:
+    playwright-role-buyer: browser tool belongs to another Session
+```
+
+**`browser tool belongs to another Session`**——这正是 0.3.x 以来一直存在的那个绑定错误。
+
+原因清楚了：**realm 隔离让池和 agent 拿到了同一个 realm 的池实例，但提供方把浏览器的
+"归属 Agent"绑在别处。** 池在**预设 realm** 里构造，`mountSessionMcp(this.ctx, …)` 看到的
+Agent 与会话里实际派发的 Agent 不是同一个，于是浏览器归错了会话。
+
+**所以 `isolate` 是有代价的，它不是纯粹的改进**：
+
+| | 普通会话无 `mcp__`（场景 10） | `assume_role` 身份接管 |
+|---|---|---|
+| **0.6.7**（池在根） | 不通过 | **通过**（0.4.x 起 run-D 就有 `role: 'buyer'`） |
+| **0.6.8**（池在预设 + isolate） | **通过** | **不通过**（belongs to another Session） |
+
+**两个版本各有一半，都不完整。** 0.6.39 说的"第一个两处都不错的构建"**撤回**——
+我只验到 `start_run` 就下了结论，这是又一次把"跑通一半"当成"跑通"。
+
+**这正好印证 0.6.23 读到的提供方契约**：绑定和暴露在两个不同维度上，`isolate` 解决的是
+**暴露**（哪些 Agent 看得见工具），而**绑定**（工具归哪个 Agent）由 `mountSessionMcp` 自己
+按它那套作用域决定，插件侧改不了。
+
+**下一步该做的**（不是继续试 isolate 的变体）：
+
+1. 让 `mountSessionMcp` 收到**与派发方相同的 Agent 上下文**——查 `RoleBrowserPool` 能否
+   从 `agents`（已 inject）里拿到当前会话的 Agent，把那个 ctx 传给 `mountSessionMcp`
+2. 若拿不到，则必须在宿主侧让提供方按 Agent 限定
+
+**0.6.7 仍是唯一的完整单角色交付候选**，0.6.8 记录为"修好场景 10 但破坏身份接管"。
