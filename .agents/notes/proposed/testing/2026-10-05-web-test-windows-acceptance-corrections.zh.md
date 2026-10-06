@@ -6151,3 +6151,54 @@ packages/preset/agent-preset-registry/src/display.ts
 `dsh plugin --profile X --from-default-profile web` 建的 profile 本来就不含本插件，
 **在那种 profile 里能建的预设，就是普通预设。**
 **这比在源码里逐层追 id 更直接，也更贴近「普通会话」的定义。**
+
+### 0.7.79：**普通会话这一项在新包上实测通过**，预设名也终于记下来了
+
+按 0.7.78 说的办法：建一个**不含插件**的 profile。
+
+```
+bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app']
+含 web-test 插件: False
+```
+
+**中途踩了一下**：`--from-default-profile web` **只给了 `dsh-base`**，
+没有 `dsh-web-app`，**宿主进程起来了但端口不通、日志为空**（`curl` 返回 000）。
+**不是进程没起，是它没在监听**——查 `ps` 看到进程在，容易误判成正常。
+
+补上 `dsh-web-app` 后正常。
+
+#### 预设名（**这是 0.7.77 缺的东西，现在补上**）
+
+在**不含插件的 profile** 上逐个试：
+
+```
+standard → 成功
+minimal  → 成功
+ptc      → 成功
+cordis   → 成功
+web      → agent-preset/not-found
+default  → agent-preset/not-found
+```
+
+**`standard` / `minimal` / `ptc` / `cordis` 是真实预设；`web` 与 `default` 不存在。**
+**0.7.77 试 `default` 失败，就是因为它不存在。**
+
+**「普通预设」应当用 `standard`。**
+
+#### 实测结果
+
+```
+普通会话(standard): session-27f70e47
+工具调用: ['bash', 'read']
+bash   → weetion
+read   → /etc/hostname … 1: weetion
+含 web_test:        False
+含 playwright-role: False
+```
+
+**在完全不含插件的 profile 上当然不会有插件工具——
+这证明的是「没有插件时一切正常」。**
+
+**但这还没证明「装了插件的宿主里，普通会话不受影响」。**
+**下一步要在装了本插件的宿主上，用 `standard` 再跑一遍**——
+**那才是第 2 项要的「普通会话实际执行原有工具必须正常」。**
