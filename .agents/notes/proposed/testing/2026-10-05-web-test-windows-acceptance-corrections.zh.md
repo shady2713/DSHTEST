@@ -6718,3 +6718,52 @@ const dir = store.ensureEvidenceDir(input.runKey)
 ```
 typecheck 干净   132 tests passed
 ```
+
+### 0.7.90：**上轮说「测试没写成」，这轮写成了**
+
+0.7.89 如实记了钉住行为的测试没写成。**这轮补上。**
+
+#### 走的是真实注册的工具路径
+
+照 `tool-execution.spec.ts` 的做法：造 `Context`、
+用桩替换 `tools.register` 收集注册项、给 `webTestRoleBrowsers.ensure` 记调用，
+然后 **`tool.execute(args, { agent: { id } })`** 真正调 `web_test_start_run`。
+
+```ts
+const startRun = byName.get('web_test_start_run')
+const started = await startRun!.execute(
+  { projectKey: 'shop', environmentRevisionKey: 'acc-x', runKey: 'run', role: 'buyer' },
+  { agent: { id: 'agent-1' } },
+)
+expect(started.status).toBe('running')
+expect(ensured).toEqual([])
+```
+
+#### 中间踩了四下，都查了才改
+
+| 现象 | 真实原因 |
+|---|---|
+| `store.startRun is not a function` | **打错了目标**，该调注册工具 |
+| `expected 'web_test_control_run' to be 'web_test_start_run'` | `register` 桩只留最后一个，**改成按名收集** |
+| `project "shop" is not stored` | 种子表键写成 `u_web_test_projects`，**实际是 `projects`** |
+| `environment "acc-x" is not stored` | 表键是 `environment_revisions`，且 `withImpliedProjects` 本会自动补项目 |
+
+**四条都是夹具/桩写错，没有一条是改代码去迁就测试。**
+**其中两条是新校验在拦我——它们正是在起作用。**
+
+#### 确认这个测试真的会抓回归
+
+**在 `start_run` 里加一行真的挂载调用，再跑：**
+
+```
+Tests  1 failed (1)      ← 加了挂载就失败
+恢复后: Tests  1 passed (1)
+```
+
+**一个「永远通过」的测试不算测试。这条证明了它有区分力。**
+
+```
+typecheck 干净   133 tests passed   lint 0 warnings 0 errors
+新包 sha256 f87bb2556a589e5313642f6790d3ad35b73ff98cc3bcdc98e03242ec9f36b1f9
+dist 51 个 tarball，旧包全部保留
+```
