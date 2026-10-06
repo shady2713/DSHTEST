@@ -4555,3 +4555,51 @@ operation; the p[revious authority …]
 | 宿主重启对账 → `resuming` | 释放 | `resume` → 代次+1 → 重新核验 |
 
 **四条非终态路径与三个终态，资源行为全部实测，无一条靠推断。**
+
+### 0.7.46：**同一会话里两个运行争同一个角色，第二个无法自举**
+
+本想测「同一运行内切换角色是否释放先前的浏览器」。
+**先查环境的角色声明**（0.7.26 的教训），发现 `acc-k1` 只有 `buyer`，
+于是建了双角色的 `acc-k2`（`['buyer','seller']`）再测。
+
+结果卡住：
+
+```
+建环境后 Chromium=10
+web_test_start_run:   Run run-shop-roles-k2 is running.
+web_test_assume_role: Error: role "buyer"'s browser failed
+  mcp__playwright-role-buyer-g5__browser_navigate: web-test: …
+
+运行: run-shop-roles-k2 | running | activeRole: '' | gen: 1
+```
+
+#### 原因（从守卫判据推出，未单独复现每一步）
+
+同一会话里已有 `run-shop-alice-3` 正以 `buyer` 扮演角色且已核验，
+新运行 `run-shop-roles-k2` 也要 `buyer`：
+
+1. 准备窗口：`ownerOf('buyer')` 指向 `run-shop-alice-3`，
+   `mayPrepareIdentity(session, 'buyer', 'run-shop-alice-3')` 因
+   「该运行已核验 buyer」而**返回 false**（窗口对已核验角色关闭，设计如此）。
+2. 落到授权要求：`browserGrantForSession` 返回的是 `run-shop-alice-3` 的 buyer 授权，
+   角色名匹配，于是**要求出示授权**。
+3. 插件内部的 `readAccount` 调用**没有授权可出示**，被拒。
+
+**结论：一个会话里，两个运行不能同时扮演同一个角色。**
+
+#### 这与已测过的两种并存不同
+
+| 场景 | 结果 |
+|---|---|
+| 两个运行、**两个会话**、不同角色（0.7.38） | ✅ 各持浏览器，结束其一另一存活 |
+| 两个运行、**同一会话**、不同角色（0.7.32 回归②） | ✅ `Chromium=20` |
+| 两个运行、**同一会话**、**同一角色** | ❌ 第二个无法自举 |
+
+**同一会话同角色这一格此前没测过，这轮测出来是不通过。**
+
+**是否算缺陷取决于设计意图，本轮不下结论**：
+若「一个会话同时只应有一个运行扮演某角色」是有意约束，那这是按规则拒绝；
+若应当允许，则需要让准备窗口在「有另一个运行正持有该角色」时也开放。
+**需要先确定意图再决定改不改，不凭猜测改验收条件。**
+
+**这一条也不进候选结论**，作为新发现的未闭项记录。
