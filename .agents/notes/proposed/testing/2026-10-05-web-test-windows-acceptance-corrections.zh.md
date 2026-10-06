@@ -2132,3 +2132,43 @@ run: shop-acc-final-buyer | status: running | activeRole: 'buyer' | gen: 1
 运行建立 → 身份接管（含拒绝错误身份）→ 真实站点核验。配合此前已测的授权代次、
 取消/恢复/重启、断连归属、禁用停止派发、宿主退出进程回收、报告三面一致，
 **第七节 12 场景中 10 个通过，其中 8 个为真实宿主证据**。
+
+### 0.6.43：终验继续——发现真缺陷：被宿主重启打断的运行**无法被续跑**
+
+0.6.42 的终验会话在下一轮复用了同一个 `DSH_HOME`，宿主重启过。继续 `begin_operation`
+时得到：
+
+```
+web_test_begin_operation: Error: web-test: run shop-acc-final-buyer is resuming and
+  refuses new test actions. The DSH host restarted during that run; report what you
+  know through web_test_status.
+web_test_resume_wait: Error: run "shop-acc-final-buyer" is resuming and is not waiting
+  for business time
+web_test_assume_role: Error: run shop-acc-final-buyer is resuming and refuses new
+  test actions.
+```
+
+守卫本身是**对的**（第七节场景 9：宿主重启后必须重新核验，不得沿用旧授权）。但随后
+发现：**工具集里根本没有续跑入口**。
+
+```
+web_test_assume_role, web_test_begin_operation, web_test_finish_run,
+web_test_operation_unknown, web_test_propose_cases, web_test_report_case,
+web_test_resume_wait, web_test_settle_operation, web_test_start_run,
+web_test_status, web_test_wait
+```
+
+**没有 `continue_run` / `resume_run` 之类。** 模型只能反复调 `status` 看同一句话，然后
+卡住。
+
+**这是 0.6.7 的真实缺陷**，也让第七节场景 9 的结论要改：
+
+- 旧版记录写的是"重启后重新核验、UNKNOWN 不自动重提"——那是在**不经过宿主重启**的
+  受控路径上测的（`controlRun` 的 `restarting` 分支）
+- **真实宿主重启**走的是启动时对账，会把运行置为 `resuming`，而**没有工具能把它推回去**
+
+**所以场景 9 应记为"部分通过"**：检测与拒绝正确，**恢复路径缺失**。
+
+**要做的修复**（下一轮）：加一个 `web_test_continue_run` 之类的工具，把 `resuming` 的运行
+交还给运维决定——运维确认后运行回到可认领状态并要求重新核验身份，而不是永久拒绝。
+这是功能缺口，不是环境问题，**下一轮实现并用真实宿主重启复测**。
