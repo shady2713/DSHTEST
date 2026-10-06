@@ -216,4 +216,12 @@ describe('operator holds', () => {
   it('still enforces the allowlist for a session with no hold at all', () => {
     expect(guardReason({ name: 'bash' }, undefined, 'owner')).toMatch(/outside the test execution policy/)
   })
+
+  it('keeps run control reachable while a run is held, so an interrupted run can be continued', () => {
+    // A run a host restart left `resuming` refuses every test action, and
+    // `web_test_status` tells the operator it needs continuing. Without a
+    // control tool the session can read that forever and never act on it.
+    expect(HELD_RUN_ALLOWED_TOOLS).toContain('web_test_control_run')
+  })
+
 })

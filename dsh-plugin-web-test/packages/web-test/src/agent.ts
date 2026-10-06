@@ -134,6 +134,10 @@ export const HELD_RUN_ALLOWED_TOOLS: readonly string[] = [
   `${TOOL_PREFIX}operation_unknown`,
   `${TOOL_PREFIX}settle_operation`,
   `${TOOL_PREFIX}resume_wait`,
+  // This is how a held run is actually released: without it a `resuming` run
+  // reported by `web_test_status` could only be read, never continued, and one
+  // host restart left the session unable to finish its work at all.
+  `${TOOL_PREFIX}control_run`,
 ]
 
 /**
@@ -217,6 +221,21 @@ export function guardReason(
   return `web-test sessions may only call ${TOOL_PREFIX}* and the active role's ${ROLE_BROWSER_PREFIX}* tools; `
     + `"${execution.name}" is outside the test execution policy`
 }
+
+/** Arguments of the run-control tool. */
+export const controlRunArgsSchema = z.object({
+  runKey: z.string().min(1),
+  action: z.enum(['pause', 'resume', 'continue', 'await-user', 'cancel']),
+})
+
+/** Result shape of the run-control tool. */
+export const controlRunResultSchema = z.object({
+  runKey: z.string(),
+  status: z.string(),
+  activeRole: z.string(),
+  generation: z.number().int(),
+  message: z.string(),
+})
 
 /** Result shape of the status tool, kept separate for reuse in tests. */
 export const statusResultSchema = z.object({
@@ -1340,5 +1359,62 @@ export function apply(ctx: Context): void {
         }
       },
   }), 'web-test: status tool')
+
+  ctx.effect(() => tools.register({
+      name: `${TOOL_PREFIX}control_run`,
+      description:
+        'Move one of your runs to another lifecycle state: pause it, resume it, continue a run a host restart left '
+        + 'parked, park it until a business deadline, wait for the operator, or cancel it. Resuming or continuing '
+        + 'starts a new generation, so any authority you were given earlier stops working and you must act as a role '
+        + 'again before the next operation. Use this when web_test_status reports a run the operator needs continued, '
+        + 'or when the operator asks you to pause, resume or cancel.',
+      parameters: {
+        type: 'object',
+        properties: {
+          runKey: { type: 'string', description: 'Run to move, as reported by web_test_status.' },
+          action: {
+            type: 'string',
+            enum: ['pause', 'resume', 'continue', 'await-user', 'cancel'],
+            description: 'Target state. `continue` releases a run a host restart interrupted.',
+          },
+        },
+        required: ['runKey', 'action'],
+        additionalProperties: false,
+      },
+      output: {
+        schema: {
+          type: 'object',
+          properties: {
+            runKey: { type: 'string' },
+            status: { type: 'string' },
+            activeRole: { type: 'string' },
+            generation: { type: 'number' },
+            message: { type: 'string' },
+          },
+          required: ['runKey', 'status', 'activeRole', 'generation', 'message'],
+        },
+        render(_args, value) {
+          const result = controlRunResultSchema.parse(value)
+          return [{
+            type: 'text',
+            text: `Run ${result.runKey} is now ${result.status} at generation ${result.generation}. ${result.message}`,
+          }]
+        },
+      },
+      async execute(args): Promise<z.infer<typeof controlRunResultSchema>> {
+        const input = controlRunArgsSchema.parse(args)
+        const run = await store.controlRun(input.runKey, input.action)
+        const generation = run.generation
+        return {
+          runKey: run.key,
+          status: run.status,
+          activeRole: run.activeRole,
+          generation,
+          message: run.status === 'running'
+            ? 'Act as a role again before the next operation; the previous authority is void.'
+            : 'It will not accept new test actions in this state.',
+        }
+      },
+  }), 'web-test: control_run tool')
 
 }

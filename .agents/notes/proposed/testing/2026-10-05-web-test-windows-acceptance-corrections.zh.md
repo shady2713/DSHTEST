@@ -2172,3 +2172,53 @@ web_test_status, web_test_wait
 **要做的修复**（下一轮）：加一个 `web_test_continue_run` 之类的工具，把 `resuming` 的运行
 交还给运维决定——运维确认后运行回到可认领状态并要求重新核验身份，而不是永久拒绝。
 这是功能缺口，不是环境问题，**下一轮实现并用真实宿主重启复测**。
+
+### 0.6.44：补上恢复路径——0.6.9，场景 9 恢复为通过
+
+0.6.43 记的"恢复路径缺失"有两个成因，都补上了。
+
+**成因一：模型够不着 `controlRun`。** 恢复能力本来就有——`webTest/controlRun` 是 Remote
+方法，`RunControlAction` 里也有 `continue`——但**它只暴露成 RPC，没有工具**，而 hold 守卫
+又不允许别的工具在运行被停住时动。模型只能读 `status` 里那句"需要运维继续"，然后卡住。
+
+**成因二：状态机里根本没有这条边。** 加上工具后第一次跑就撞上：
+
+```
+web_test_control_run: Error: web-test: run "shop-acc-r1-buyer" is resuming and cannot continue
+```
+
+`WebTestStore.nextStatus` 的 `continue` 只接受 `awaiting-user`：
+
+```ts
+if (action === 'continue') return run.status === 'awaiting-user' ? 'running' : undefined
+```
+
+`resuming` 只能靠 `resume` 出去，而 `resume` 语义上是"恢复一个暂停的运行"，不是"运维决定
+继续一个被重启打断的运行"。**两个原因缺一不可**：只加工具会撞上这条，只改状态机会没有入口。
+
+**改动**：
+
+- 新增 `web_test_control_run` 工具（`runKey` + `action`，`action` 为
+  `pause|resume|continue|await-user|cancel`），输出 `runKey/status/activeRole/generation/message`
+- 加入 `HELD_RUN_ALLOWED_TOOLS`——**这是关键**，否则运行被停住时工具仍然够不着，
+  那正是 0.6.43 卡死的场景
+- `nextStatus` 的 `continue` 现在也接受 `resuming`
+
+**真实宿主复测**（杀宿主模拟崩溃 → 重启 → 对账 → 续跑）：
+
+| 阶段 | 状态 |
+|---|---|
+| 重启前 | `status: running | gen: 1` |
+| 重启后对账 | `status: resuming | gen: 1 | activeRole: ''` |
+| 续跑后 | **`Run shop-acc-r1-buyer is now running at generation 2. Act as a role again before the next operation; the previous authority is void.`** |
+
+**第 7 条要求的"重启后重新核验"成立**：重启 → 对账置 `resuming` 并清空角色 → 运维决定 →
+回到 `running` 但**代次 +1**，因此重启前签发的授权作废，必须重新 `assume_role`。
+
+类型检查通过，**117 测试通过**（新增一条锁住 `control_run` 在 hold 时可达）。
+
+产物：`dsh-plugin-web-test-0.6.9.tgz`，`sha256 dacf49ef87e435edb9321742a8050d4fc57e00b1d5c86c64a11ff2851a3139e0`
+（重装后重打的哈希，0.6.7 那份是 `759d57fb…`）。
+
+**0.6.9 取代 0.6.7 成为交付候选**：单角色闭环在交付产物上已端到端验证（0.6.42），
+场景 9 的恢复缺口已补并复测。跨角色与普通会话工具两处限制不变。

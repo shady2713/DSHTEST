@@ -66,7 +66,7 @@ import type {
 } from './types.ts'
 
 /** Plugin version, matching this package's manifest. */
-export const PLUGIN_VERSION = '0.6.7'
+export const PLUGIN_VERSION = '0.6.9'
 
 /**
  * Host release this plugin's peer declaration accepts.
@@ -466,7 +466,12 @@ export class WebTestStore extends Service {
     if (action === 'cancel') return 'cancelled'
     if (action === 'await-user') return run.status === 'running' ? 'awaiting-user' : undefined
     if (action === 'pause') return run.status === 'paused' ? undefined : 'paused'
-    if (action === 'continue') return run.status === 'awaiting-user' ? 'running' : undefined
+    // `continue` releases a run the operator was waiting on and one a host
+    // restart parked as `resuming`. Both return to `running` under a new
+    // generation, so an authority minted before the interruption stays void.
+    if (action === 'continue') {
+      return run.status === 'awaiting-user' || run.status === 'resuming' ? 'running' : undefined
+    }
     if (run.status !== 'paused' && run.status !== 'resuming') return undefined
     return 'running'
   }
