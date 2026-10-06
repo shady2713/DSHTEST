@@ -4453,3 +4453,43 @@ $ sha256sum dist/dsh-plugin-web-test-0.8.0.tgz
 **与其用脚本把它改成另一种不确定的样子，不如保持原样并把这件事写下来。**
 
 **若日后要处理，应由人逐段判断中文断句，或先用小样本验证脚本再全量应用。**
+
+### 0.7.43：**`blocked` 终态是否释放资源——0.7.17 标为未测，现已实测**
+
+0.7.17 留下一个明确未闭项：`blocked` 与 `cancelled` 是否同样释放角色浏览器，
+当时只测了 `cancelled`，**没有单独测 `blocked`**。这轮在 0.8.0 候选包上补上。
+
+`blocked` 不是 `control_run` 的动作（那里只有 `pause` / `resume` / `continue` /
+`await-user` / `cancel`），**它是 `finish_run` 的终态之一**：
+
+```ts
+src/agent.ts:476  status: z.enum(['completed', 'cancelled', 'blocked']),
+```
+
+所以测法是：新建并核验一个运行，再以 `status: blocked` 收尾。
+
+#### 三个终态都测了
+
+```
+核验后   Chromium=10   运行 run-shop-alice-1 | running  | activeRole: 'buyer'
+cancel 后 Chromium=0    运行 run-shop-alice-1 | cancelled | activeRole: 'buyer'
+blocked 终态后 Chromium=0
+                      运行 run-shop-alice-2 | blocked   | activeRole: 'buyer'
+```
+
+**`cancelled` 与 `blocked` 都把插件自有的 Chromium 释放到 0。**
+加上此前测过的 `completed`（0.7.4 ��� `12 → 0`），
+**三个终态在 0.8.0 上都实测释放资源。**
+
+#### 顺带说明
+
+`blocked` 与 `cancelled` 的区别不在资源，**而在是否可恢复**：
+`cancelled` 的运行不会接受新的测试动作，`blocked` 是同样终态但语义是
+「结论卡住、需要人介入」。**两者的资源处置相同，这一点现在有实测支撑。**
+
+#### 一个重复三次的操作错误
+
+这一轮又因为 `dsh plugin add` 用了相对路径且在 `cd` 之后而**安装静默失败**，
+会话创建直接报 `agent-preset/not-found`。
+**这是第三次**（0.7.16、0.7.40、本轮），三次都是同一条命令、同一个原因。
+**每次都要靠「先查预设是否存在」才抓到。**
