@@ -4007,3 +4007,56 @@ seller-g3__browser_snapshot: Page URL: http://127.0.0.1:8902/orders
 **未单独做**。但站点返回的同一条记录同时带 `createdBy: Alice Buyer` 与
 `approvedBy: Bob Approver`，**两个字段本身就说明了 A 的记录被 B 处理过**，
 单独再让 A 读一次不增加证据。**如实标注该项未单独执行。**
+
+### 0.7.32：候选版本 **0.8.0**，干净构建 + 前两项回归通过
+
+```
+源码 SHA: 86d7d494df4b17698a2a9d4de7abdb054347ad48
+包 sha256: 80c48832e3243147629dd72dca40afb693bd1cc75a426bb117415cba03bbf94f
+包内 package.json version: "0.8.0"
+```
+
+删掉 `dist` / `lib` / `tsbuildinfo` 后 `tsc -b --force` 重建，
+**127 测试通过**，`tsdown` 打包，`npm pack` 产出 tarball。
+**包内版本与源码版本一致**，旧包全部保留（`dist` 下共 50 个 tgz）。
+
+#### 回归①：登录 + 身份核验 —— 通过
+
+```
+Run buyer-login-run now acts as buyer; … Present authority
+Chromium=10
+```
+
+#### 回归②：同一会话两个角色 —— 通过
+
+```
+回归②双角色 Chromium=20
+运行: buyer-login-run | running | activeRole: 'buyer'
+运行: seller-login-run | running | activeRole: 'seller'
+```
+
+**两个运行各自持有角色与授权，两个浏览器同时在跑。**
+
+#### 回归③：跨角色业务协作 —— **未取到有效证据**
+
+会话日志里出现的是：
+
+```
+{"account":"Bob Approver","orders":[
+  {"key":"59773afd", … "createdBy":"Alice Buyer","approvedBy":"Bob Approver"}, …
+```
+
+**但这张订单是 0.7.7 那轮审批的，不是 0.8.0 建的。**
+站点进程从很早就一直在跑，订单表是跨轮次累积的，
+**因此这段输出不能作为 0.8.0 做过跨角色协作的证据**。
+
+`Chromium=10` 说明有一个浏览器被释放了，但**释放的是哪一个、为什么，没有查**。
+
+**所以 0.8.0 的回归目前是 ①②通过、③未取证。**
+**不把跨轮次残留的数据当成本轮的结果——这正是「不伪造完成率」的底线。**
+
+#### 下轮必须做的
+
+1. **重启受控站点**，让订单表清零，**所有证据必须来自本轮新建的订单**
+2. 在 0.8.0 上完整跑一次跨角色协作（建单 → 审批）
+3. 查清 `Chromium 20 → 10` 是哪个浏览器被释放、由什么触发
