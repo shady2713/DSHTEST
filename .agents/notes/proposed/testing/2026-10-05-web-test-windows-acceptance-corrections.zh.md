@@ -5039,3 +5039,60 @@ $ git diff --stat 06648889ac..HEAD -- dsh-plugin-web-test/packages/web-test/ dsh
 
 **一个检查如果只在「通过」的方向上验过，它等于没验。**
 **这轮把它在会失败的方向上跑了一次，确认它真的会失败。**
+
+### 0.7.57：`propose_cases` 的两阶段**未测成**，两次都卡在前置条件
+
+0.7.49 定了「目录类工具 = 操作者面（`webTest/*`）」，待裁决的 `propose_cases`
+归为模型工具（`src/client/remote.ts` 里没有它，它是 `tools.register` 注册的）。
+这轮想补它的实测，**两次都没走到那一步**，如实记录。
+
+#### 第一次：撞上 0.7.46 的同会话同角色限制
+
+复用上一轮那个会话（它已持有 `run-shop-alice-3` 的 buyer），
+新运行 `run-shop-roles-k2` 再次要 buyer：
+
+```
+起点 Chromium=10   run-shop-roles-k2 | running | activeRole: ''
+提议后 Chromium=10  run-shop-roles-k2 | running | activeRole: ''
+```
+
+**角色始终没扮演成功，模型自然走不到 `propose_cases`。**
+
+#### 第二次：新开会话，撞上另一个问题
+
+新会话 `session-381ac9dd`，共 5 次调用：
+
+```
+web_test_start_run:   Run acc-k2-buyer-alice is running.
+browser_tabs:         Error: this session has no run that may drive a browser.
+browser_navigate:     Error: run "acc-k2-buyer-alice" names environment "acc-k2",
+                      which is not stored
+web_test_finish_run:  Run acc-k2-buyer-alice closed as blocked.
+```
+
+**`acc-k2` 在这个会话里查不到**，于是没有浏览器可驱动，模型把运行收成 `blocked`。
+
+#### 查了一下库，**排除了一个假设**
+
+```
+环境: acc-k1 | projectKey: shop | 角色: ['buyer']
+环境: acc-k2 | projectKey: shop | 角色: ['buyer', 'seller']
+```
+
+**`acc-k2` 确实在库里，且 `projectKey` 是 `shop`，与 `acc-k1` 同项目。**
+所以**「环境按会话隔离、不存在于新会话」这个假设不成立**。
+
+剩下两种仍需区分：
+
+- 模型可能把 `environmentRevisionKey` 或 `projectKey` 填错了——
+  它给的运行键 `acc-k2-buyer-alice` **直接拿环境键当项目名用**，
+  看起来是它自己填错，但**未确认**；
+- 或者是 `start_run` 对「运行自述的项目与环境」与存储的对应关系有别的判据，
+  **未读那段代码**，不下结论。
+
+**因此仍不写成因。** `propose_cases` 的两阶段行为
+（提议后进入待裁决、裁决前拒绝执行、裁决后才可执行）
+**在 0.8.0 上仍未实测**。
+
+Windows 清单里那条 `web_test_propose_cases` 的验收项因此**更加必要**——
+它正是 Ubuntu 上没测成的那一项。
