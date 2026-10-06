@@ -702,12 +702,15 @@ export function apply(ctx: Context): void {
       await store.putRun(record)
       // Closing a run revokes this run's authority: the terminal status takes it
       // out of `browserGrantForSession`, so no business action can be dispatched
-      // under the role it verified. The browser is also offered its disposal
-      // handle, which is awaited; the process itself is reclaimed only when the
-      // provider's own fiber is destroyed, because `mountSessionMcp` does not
-      // return the effect that owns the browser. See the plugin README.
-      if (existing?.activeRole !== undefined && pool !== undefined) {
-        await pool.releaseRole(existing.activeRole)
+      // under the role it verified. Every browser the run owns is then released,
+      // and each release awaits its own fiber's disposal, so the Chromium this
+      // run started is gone before the call returns rather than when the host
+      // eventually exits.
+      if (pool !== undefined) {
+        // Every browser this run owns, not only the role it is acting as: a run
+        // that switched between two roles owns two, and the other one would
+        // otherwise stay up after the run closed.
+        await pool.releaseRun(input.runKey)
       }
       return { runKey: record.key, status: record.status }
     },

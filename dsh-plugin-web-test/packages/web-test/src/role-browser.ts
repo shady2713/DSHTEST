@@ -245,6 +245,20 @@ export class RoleBrowserPool extends Service {
     if (starting !== undefined) return starting
     const existing = this.started.get(key)
     if (existing !== undefined) return existing
+    // A browser started when the environment was confirmed, before any run
+    // existed, is the same browser this run is about to use. Without adopting it
+    // the first `assume_role` would start a second Chromium for the same role and
+    // leave the first running, so the pre-start is re-filed under this run's key.
+    const preStarted = this.started.get(RoleBrowserPool.keyOf({ ...owner, runKey: '' }))
+    if (preStarted !== undefined && owner.runKey !== '') {
+      const mounted = this.mounts.get(RoleBrowserPool.keyOf({ ...owner, runKey: '' }))
+      this.mounts.delete(RoleBrowserPool.keyOf({ ...owner, runKey: '' }))
+      this.started.delete(RoleBrowserPool.keyOf({ ...owner, runKey: '' }))
+      this.mounts.set(key, mounted ?? (async () => {}))
+      this.started.set(key, preStarted)
+      this.keysByRole.set(role, key)
+      return preStarted
+    }
     const browser: RoleBrowser = { role, serverName: `playwright-role-${role}`, toolNames: [] }
     const settled = this.mountBrowser(key, role, browser)
     this.pending.set(key, settled)
@@ -292,6 +306,25 @@ export class RoleBrowserPool extends Service {
    * @param role - The role to release.
    * @returns once the browser is closed.
    */
+  /**
+   * Release every browser one run owns, and nothing belonging to another run.
+   *
+   * A run that acted as two roles owns two browsers, so releasing only the role it
+   * happens to be acting as leaves the other one running after the run is closed.
+   * The claims are the record of ownership, so the set released here is exactly
+   * the runs that claimed the roles, not every browser in the pool.
+   * @param runKey - Run whose browsers are being released.
+   * @returns once each released browser is closed.
+   */
+  async releaseRun(runKey: string): Promise<void> {
+    const owned = [...this.claims.entries()]
+      .filter(([, claim]) => claim.runKey === runKey)
+      .map(([role]) => role)
+    for (const role of owned) {
+      await this.releaseRole(role)
+    }
+  }
+
   async releaseRole(role: string): Promise<void> {
     const key = this.keysByRole.get(role)
     const mounted = key === undefined ? undefined : this.mounts.get(key)

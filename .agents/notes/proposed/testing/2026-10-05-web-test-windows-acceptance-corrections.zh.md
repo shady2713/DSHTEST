@@ -3001,3 +3001,45 @@ application: applied   changed: True
 **「Windows 必然失败」没有依据**：这是插件自身的释放逻辑，
 在 Ubuntu 上用公开接口已验证禁用即回收；Windows 上要复验的是同一件事，
 但**没有已知的机制性理由说它会失败**。
+
+### 0.7.7：预启动的浏览器被认领，关闭运行释放它拥有的全部资源
+
+#### 上一轮留下的缺口
+
+`putEnvironment` 确认环境时以 `runKey: ''` 预启动首个角色，而 `assume_role` 用带运行的
+归属去 `ensure`——**键不同，于是同一角色起了第二个 Chromium，第一个继续空跑**。
+
+`ensure` 现在会先查同项目、同环境、同角色但无运行的键；命中就把那份**认领**到当前运行
+的键下（连同它的 disposer），而不是新起一个。实测环境确认后 `Chromium=0`——
+预启动本来就不在 Agent 存在时真正起浏览器，**没有出现重复**。
+
+#### 关闭运行只释放了当前角色
+
+0.7.4 真实宿主上双角色协作与切回都成功，但结束后 `Chromium=10`——
+`finish_run` 只释放 `existing.activeRole`，**该运行扮演过的另一个角色的浏览器留了下来**。
+
+新增 `RoleBrowserPool.releaseRun(runKey)`：按 `claims` 找出该运行认领过的**全部**角色并逐个
+释放。**释放集合来自归属记录，不是池里所有浏览器**，所以另一个运行的资源不受影响。
+`finish_run` 改为调用它，并更新了那条早已过时的注释（原文还在说「进程只在宿主退出时才回收」，
+那是 0.6.7 之前的状况）。
+
+#### 真实宿主（0.7.4，双角色）
+
+```
+web_test_assume_role: now acts as buyer. …
+web_test_assume_role: confirmed role "seller" as "" …        ← 空账号被拒
+web_test_assume_role: now acts as seller. …
+web_test_finish_run:  closed as completed.
+结束后 Chromium=0  宿主=1  用户Chrome=25
+```
+
+**两个角色各自通过真实站点核验，运行关闭后插件自有进程归零，宿主存活，
+用户自己的 25 个 Chrome 一个没动。**
+
+类型检查通过，**127 测试通过**。
+
+#### 关于「一个运行结束后另一个仍可执行」
+
+本次只测了**单个运行结束 → 自己的资源全释放**。
+**两个运行并存、结束其一而另一个的浏览器仍存活**尚未在真实宿主上测，
+`releaseRun` 按归属过滤的设计支持这一点，但**没有实测，不声称通过**。
