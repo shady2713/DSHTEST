@@ -1171,3 +1171,38 @@ web-test: run run-B is resuming and refuses new test actions.
    `failed to parse overlay … YAMLException`，而且会话创建返回空响应、看起来像宿主挂了。
 2. `dsh <name> --from-default-profile web --port N --no-open` 会**一直阻塞**在前面（它在
    启动服务），要放后台跑，或者建完 profile 再单独启动。
+
+### 0.6.15：跨进程交接——提供方槽位放开了，但会话归属仍不成立
+
+按 shady 定的形态（每次换角色重启宿主）实测，结论分两半。
+
+**成立的一半**：宿主重启后槽位确实空了。第二个角色 `playwright-role-seller` **注册成功**，
+不再报 `already registered`。也就是说"一个进程一个角色"这个约束按预期跨进程解开了。
+
+**不成立的一半**：`assume_role` 里的身份读取走嵌套派发时失败：
+
+```
+Error: web-test: role "seller"'s browser failed
+       mcp__playwright-role-seller__browser_navigate: playwright-role-seller:
+       browser tool belongs to another Session
+```
+
+这与 0.3.8 记录的一致：提供方在 `agent/created` 时把资源绑定给**那一个** Agent，而工具
+是对 profile 下**所有** Agent 定义的。新宿主进程里，seller 的提供方是随"插件装载"建立
+的，而不是随"这个会话要用它"建立的，所以嵌套读取找不到自己的会话。
+
+要让 seller 正常走完，需要该角色浏览器在**这个会话的 Agent 创建时**就建立。本宿主提供的
+公开接口里，`mountSessionMcp` 不接受"绑定到哪个 Agent"，而派生作用域（0.3.8 试过）会让
+工具完全进不了任何 Agent 的清单。两条路都试过。
+
+所以跨进程交接目前是：**槽位能放开，但身份核验过不去**。跨角色在当前宿主上**没有可用的
+公开接口路径**。这一项按未完成记录，不按通过记录。
+
+## prompt 形态对实测的影响（影响所有前面几轮）
+
+长 prompt（"依次做 1…2…3…4…"）会让模型**只叙述不派发**：会话日志里有
+`turn/start`、`user/message`、`assistant/attempt`，没有任何 `tool/call`，运行根本没建立。
+改成**一句一个动作**的短 prompt 后立刻派发并成功（`run-A: running | role: 'buyer'`）。
+
+0.6.14 那轮"跨进程交接未走通"的原因是 prompt 形态，不是功能。0.6.12 那轮 seller 被
+`already registered` 拒绝是真实的槽位约束，两者不要混为一谈。
