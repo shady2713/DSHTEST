@@ -1674,3 +1674,29 @@ supplying browser use, Agents, tools"，它在**自己那套作用域**上登记
 **收口**：0.6.7 的交付材料不受影响（116 测试通过、证据表完整），两处不通过的对外结论仍是
 0.6.23 那条有独立契约证据的说法。但"泄漏的具体触发条件"目前**没有可靠结论**，不要引用
 0.6.27 或 0.6.29 的表述。
+
+### 0.6.31：profile 行这个混淆项，在干净 home 上直接测掉了
+
+用全新的 `DSH_HOME=/home/weetion/dshfresh`，`--from-default-profile web` 建 profile，
+读 patch，装 0.6.7，再读 patch：
+
+| 时点 | `profiles/iso3/cordis.patch.yml` |
+|---|---|
+| 装插件前 | `[]`（只有注释头） |
+| `dsh plugin add …0.6.7.tgz` 之后 | `[]` |
+
+**插件管理器不会把 loader 行写进 profile 的 patch 层。** 那些行来自插件包内的
+`cordis.patch.yml`，profile 侧要写才会写。
+
+这一条推翻了我在 0.6.30 里的担心方向：不是"管理器把行写了回来"。
+
+对 `dshclean/profiles/iso2` 的补证：我在 4570/4580 两次实验之后、读文件之前，**没有再执行
+任何会添加该行的命令**（期间只做了 `session/create` 和 `putEnvironment` 两个 API 调用），
+而读到的是干净内容。所以那次实验的 profile 状态大概率也是干净的。
+
+**因此倾向性结论回到 0.6.29**：池在预设里就被判泄漏，与是否使用无关。
+但严格说仍缺"实验当时"的直接读取，只能算"倾向"，不算"证明"。
+
+**这一条也说明一件对交付有用的事**：`dshclean` 那个 profile 的 5 行是**我或更早的实验手工
+写进去的**，不是管理器写的。Windows 端用插件管理器安装时不会遇到这层，**但如果复验时手工
+往 profile patch 里加行，加什么行会直接影响装配结果**——这一条要写进 Windows 复验清单。
