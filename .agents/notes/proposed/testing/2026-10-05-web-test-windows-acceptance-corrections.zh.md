@@ -7419,3 +7419,52 @@ web_test_start_run | web_test_finish_run | web_test_propose_cases | web_test_rep
 **「测试存在」不等于「测试在跑东西」。**
 **所以这轮不是读测试代码就下结论，而是加了一行打印看它实际执行了几个**，
 **跑完把那行删掉。**
+
+### 0.8.4：**按记录给验证者的指引，从 tarball 全新安装走了一遍**
+
+记录末尾写着验证者第一步该做什么。**这轮照着做了一遍。**
+
+#### 先跑齐所有门禁
+
+```
+typecheck 干净   134 tests passed   lint 0 warnings 0 errors
+标识符检查 6 项全 ✓
+git diff -- packages/ apps/ vendor/ → 空（宿主未被改动）
+dist 里 51 个 tarball，旧包全部保留
+```
+
+#### 从 tarball 装进一个全新的 HOME
+
+```
+dsh plugin --profile v1 add <绝对路径>/dsh-plugin-web-test-0.8.0.tgz
+Progress: resolved 12, reused 12, downloaded 0, added 12, done
+bundles: ['@deepseek-ai/dsh-base', 'dsh-plugin-web-test', '@deepseek-ai/dsh-web-app']
+宿主=1   状态 303
+```
+
+**用的是绝对路径**——0.7.x 记过，相对路径会静默失败。
+
+#### 验证者第一步：确认版本
+
+```
+web_test_status: Web testing plugin 0.8.0 (active). Projects: 0. Runs: 0.
+```
+
+**从 tarball 装出来的宿主报的就是 0.8.0，且是 active。**
+
+**这正是记录里让 Windows 验证者先做的那一步，在 Linux 上先走通了。**
+
+#### Windows 五项仍是未跑
+
+```
+1. Windows 桌面验收（0.2.0-rc.2）
+2. ACL 行为
+3. 资源回收（Chromium 进程树不同）
+4. disable/enable 的 application 与 fiber 取值
+5. 回归 1–4 跨轮一致性
+```
+
+**这轮一个都没碰，也不该碰。**
+**Ubuntu 上装成功不等于 Windows 上验收通过。**
+
+新包 sha256 f6621d41ff3920eabaf5ef4346691d9d2655355feba08f3f7a33b08b4d11bafd
