@@ -5832,3 +5832,59 @@ expect(seen).toEqual(['paused', 'completed'])        // 不重复宣告
 **这个包还没有在真实宿主上实测终态释放。**
 单测证明了「终态会宣告」，**没证明「宣告之后浏览器真的没了」**——
 **这两件事不一样，下一轮必须实测。**
+
+### 0.7.72：**终态释放在真实宿主上实测通过**，并做了对照
+
+0.7.71 明确写了「单测证明终态会宣告，**没证明宣告之后浏览器真的没了**」。
+这轮在新包 `f1ff5403…` 上建全新宿主 `dshw4` 实测。
+
+#### 被测的路径正是之前漏掉的那条
+
+```
+前提：项目 1 条、环境 1 条（先项目后环境）、Chromium=0
+```
+
+模型按提示走完：`start_run(runKey=w4-finish)` → 登录 → `assume_role` → `finish_run(completed)`。
+
+```
+finish_run 之后 Chromium=0   宿主=1
+运行: w4-finish | completed | activeRole: 'buyer'
+```
+
+#### 但「0」本身说明不了问题，所以查了浏览器确实起来过
+
+```
+browser_snapshot:  ### Page - Page URL: http://127.0.0.1:8902/account
+web_test_assume_role: Run w4-finish now acts as buyer; … Present…
+web_test_finish_run:  Run w4-finish closed as completed.
+```
+
+**页面确实被打开过**——不是「从来没起过浏览器所以是 0」。
+
+#### 对照实验
+
+再起一个运行**只核验不 finish**：
+
+```
+对照（未 finish）Chromium=10
+w4-finish | completed
+w4-keep   | running
+```
+
+| 运行 | 动作 | Chromium |
+|---|---|---|
+| `w4-finish` | `finish_run` 成 `completed` | **0** |
+| `w4-keep` | 只核验，不 finish | **10** |
+
+**同样一套登录与核验流程，差别只在是否 finish，结果差 10 个进程。**
+**这排除了「0 是巧合」。**
+
+#### 结论状态
+
+| 路径 | 状态 |
+|---|---|
+| `controlRun` 暂停/取消释放 | ✅ 0.7.68 实测 |
+| **`finish_run` → `completed` 释放** | ✅ **0.7.72 实测 + 对照** |
+| `finish_run` → `cancelled` / `blocked` 释放 | 走同一 `putRun` 路径，**未单独实测** |
+
+**0.7.70 记的「终态不释放」缺陷已闭环修复并验证。**
