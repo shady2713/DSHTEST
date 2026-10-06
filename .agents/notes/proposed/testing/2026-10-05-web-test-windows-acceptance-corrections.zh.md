@@ -7316,3 +7316,59 @@ browser_snapshot: Error: this session has no run that may drive a browser
 
 **先把 `g3` 取消（或换一个未被占用的角色名），再让 B 核验。**
 **订单 `ab64a606` 仍在站点上等审批，站点没重启。**
+
+### 0.8.2：**回归 3 通过**——一条记录上两个身份，从站点读回
+
+前两轮的卡点都清掉了。
+
+#### 先释放占着 approver 的 `g3`
+
+```
+取消前 Chromium=40
+controlRun g3 cancel → ok: True, status: cancelled
+取消后 Chromium=30
+  g3  cancelled   role='approver'
+  xa2 running     role='buyer'
+```
+
+#### 然后 B 核验成功
+
+```
+Run xb3 now acts as approver; … Present authority "5b574a4c-2b46-49e1-869a-ced1a041632b"
+B authority: 5b574a4c-…
+A authority: 9c22819a-…      ← 两把不同
+```
+
+**两次失败都不同：第一轮是会话号取错，第二轮是角色被占。
+这一轮两件事都先查了再做。**
+
+#### 核心证据：站点自己返回的记录
+
+**B 审批后，`/orders` 页面的原文：**
+
+```
+{"account":"Bob Approver","orders":[
+  {"key":"f7b4c78f","title":"","createdBy":"Alice Buyer","approvedBy":null},
+  {"key":"ab64a606","title":"XA-1","createdBy":"Alice Buyer","approvedBy":"Bob Approver"}]}
+```
+
+**`ab64a606` 这一条上同时写着 `createdBy: Alice Buyer` 与 `approvedBy: Bob Approver`。**
+
+- **A 以 `Alice Buyer` 登录并建单**（0.8.0 建的那条）
+- **B 以 `Bob Approver` 独立登录，在自己的浏览器里审批同一条**
+- **两个会话、两把 authority、两个浏览器、两个站点登录态**
+
+**A 审批前该记录是 `approvedBy: null`，B 审批后变成 `Bob Approver`。**
+**这是从站点读回的，不是从插件的记录里读的。**
+
+#### 回归 3 在交付包上通过
+
+| 步骤 | 结果 |
+|---|---|
+| A（buyer）建单 | `ab64a606` / `XA-1` / `createdBy: Alice Buyer` |
+| A 尝试审批 | 记录仍为 `approvedBy: null` |
+| B（approver）独立登录后审批 | `approvedBy: Bob Approver` |
+
+**四项回归现在全部在交付包上跑过：1、2、3、4。**
+
+新包 sha256 f6621d41ff3920eabaf5ef4346691d9d2655355feba08f3f7a33b08b4d11bafd
