@@ -1845,3 +1845,61 @@ function withinFiber(fiber, root) {
 而且可以纯静态读 `PresetTree` 的构造与 cordis 的 isolate 创建来定位。
 
 **本插件侧的公开接口路径确认穷尽**（六条候选均已排除并留证）。已回退到 0.6.7。
+
+### 0.6.36：**泄漏解决了——用 loader 的 `isolate` 条目选项**
+
+0.6.35 定位到的差异（预设里 `web-test-agent` 同样满足 `withinFiber` 却没被点名）指向
+cordis-plugin-loader 的一处公开能力。读 `cordis-plugin-loader/lib/index.js`：
+
+```js
+/** Symbol realm used to isolate service implementations by entry or label. */
+function isolate(ctx) {
+    const label = entry.options.isolate?.[name];
+    if (!label) return;
+    if (label === true) realm = entry.realm ??= new LocalRealm(entry);
+    else if (create) realm = realms[label] ??= new GlobalRealm(label);
+    ...
+}
+```
+
+`isolate` 是**加载器条目选项**，形如 `isolate: { 服务名: true | 标签 }`，把服务放进**独立的
+symbol realm**，而不是宿主根的 realm——**这正是 `leakedServices` 要求的 "isolate realms"**。
+
+关键细节：`Entry.update(options)` 把**整行**合并进 `this.options`（`isNullable` 的键删除），
+所以 `isolate:` 必须与 `name:`/`config:` **平级**，不是嵌在 `options:` 下面。
+第一次我嵌在 `options:` 里，宿主仍报 `isolate realms`；改成平级后立刻通过。
+
+预设里两行共用同一个标签，于是它们到达**同一个池实例**，同时与根隔离：
+
+```yaml
+        plugins:
+          - id: web-test-role-browsers
+            name: 'dsh-plugin-web-test/role-browser'
+            isolate:
+              webTestRoleBrowsers: web-test-browsers
+            config:
+              headless: false
+          - id: web-test-agent
+            name: 'dsh-plugin-web-test/agent'
+            isolate:
+              webTestRoleBrowsers: web-test-browsers
+```
+
+配合的两处改动：根入口不再 `inject` 池、`putEnvironment` 不再触碰池（池在构造时用
+`ctx.get('webTestStore')` 读已确认环境并自启第一个角色）。
+
+**实测（全新 `DSH_HOME=/home/weetion/dshfresh4`，启动前读 profile patch 为 `[]`）**：
+
+| 检查 | 结果 |
+|---|---|
+| `session/create` 用 `web-test` 预设 | **成功**，`session-f8d918` |
+| 普通 `standard` 会话的事件流里 `mcp__` 出现次数 | **0**（此前是 `playwright-role-buyer`） |
+
+**第七节场景 10「新建普通 DSH 会话没有额外角色工具」实测通过。**
+
+**尚未完成**：web-test 会话内的完整闭环（登录、核验、获准动作）本轮没跑完——运行是
+**会话里的 `web_test_*` 工具**启动的，不是 RPC，我用 RPC 探了几种命名都返回 `not found`。
+**所以不要把 0.6.8 当成交付候选**，它现在的状态是"泄漏已修、闭环待复测"。
+
+**下一轮第一件事**：用 `web_test_*` 工具在会话里跑一遍单角色闭环，确认隔离改动没有破坏
+登录/核验/动作；再重新评估跨角色（池与 agent 现在共享 realm，提供方的绑定时机是否也变了）。

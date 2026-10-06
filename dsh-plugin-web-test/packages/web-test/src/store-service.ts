@@ -66,7 +66,7 @@ import type {
 } from './types.ts'
 
 /** Plugin version, matching this package's manifest. */
-export const PLUGIN_VERSION = '0.6.7'
+export const PLUGIN_VERSION = '0.6.8'
 
 /**
  * Host release this plugin's peer declaration accepts.
@@ -1211,6 +1211,20 @@ export class WebTestStore extends Service {
    * Every declared entry point of a project, newest revision first.
    * @param projectKey - Project whose entry points to read.
    * @returns the stored environment revisions.
+   */
+  /**
+   * The most recently confirmed environment, whichever project it belongs to.
+   * @returns the newest confirmed environment, or `undefined` when none is.
+   */
+  latestEnvironment(): EnvironmentRevisionRecord | undefined {
+    return this.sorted(TABLE_ENVIRONMENT_REVISIONS)
+      .at(-1) as EnvironmentRevisionRecord | undefined
+  }
+
+  /**
+   * List one project's confirmed environments.
+   * @param projectKey - Project whose revisions are wanted.
+   * @returns the revisions, oldest first.
    */
   listEnvironments(projectKey: string): EnvironmentRevisionRecord[] {
     return (this.sorted(TABLE_ENVIRONMENT_REVISIONS) as EnvironmentRevisionRecord[])

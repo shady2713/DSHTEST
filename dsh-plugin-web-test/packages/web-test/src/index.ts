@@ -44,7 +44,7 @@ export { PRESET_ID }
  */
 export class WebTestService extends TypertRemoteService {
   /** Waits for the single writer so every business method goes through it. */
-  static inject = ['tools', 'webTestStore', 'webTestRoleBrowsers']
+  static inject = ['tools', 'webTestStore']
 
   /**
    * @param ctx - Owning Context.
@@ -153,7 +153,6 @@ export class WebTestService extends TypertRemoteService {
     // defines a server's tools on an agent as that agent is created and cannot
     // add them to one that already exists, so a browser mounted after the
     // session exists never reaches it.
-    await this.ctx.webTestRoleBrowsers.ensure(stored.roles[0]?.name ?? '')
     return stored
   }
 
