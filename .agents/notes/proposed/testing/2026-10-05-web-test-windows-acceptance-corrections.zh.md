@@ -6312,3 +6312,49 @@ browser_navigate: this session has no run that may drive a browser
 | 取消 A → 新建 B → A 旧调用被阻 | 单测 0.7.47，**真实宿主未复现** |
 
 **后两条是第 2 项里唯一还没有真实宿主证据的部分。**
+
+### 0.7.82：0.7.81 那个「信号」查清了——**是我的提示写错了环境键**
+
+0.7.81 说 `start_run` 调了却没留下运行记录，原因未查，
+并列了三种可能。**这轮查到的是第四种、也是最平淡的一种：我在提示里用了
+这个宿主里根本不存在的环境键。**
+
+#### 第一次调用的原文
+
+```
+web_test_status:   Projects: 1. Runs: 0.
+web_test_start_run: Error: web-test: environment "acc-w4" is not stored under project "shop"
+web_test_assume_role: role "buyer"'s browser failed … no run that may drive a browser
+```
+
+#### 两个宿主的对照
+
+```
+dshw4 环境: [('acc-w4', 'shop'), ('acc-other', 'other')]
+dshw5 环境: [('acc-ok', 'shop')]
+```
+
+**`acc-w4` 只存在于 `dshw4`（0.7.72 那个宿主），
+而 0.7.81 跑在 `dshw5`（0.7.76 那个），那里只有 `acc-ok`。**
+
+**是我把上一个宿主的键抄进了提示。**
+
+#### 这条报错正是 0.7.60 修的那条
+
+```
+environment "acc-w4" is not stored under project "shop"
+```
+
+**它没说「环境不存在」这种含糊话，而是指名了环境与项目。**
+**如果是修复前的老代码，这里报的是**
+`names environment "acc-w4", which is not stored`——**指向错的字段。**
+
+**所以这次「失败」实际上又验证了一次修复。**
+
+#### 关于 0.7.81 那三种可能
+
+**我列的三种（模型自填 runKey、入口间新不一致、浏览器挂载失败回滚）都不是原因。**
+**真实原因是我自己的提示写错了键。**
+
+**记这一条是因为：0.7.81 明确写了「没有证据就不写成因」，
+这轮的证据推翻了其中每一个——包括我自己当时最怀疑的那个。**
