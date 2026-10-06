@@ -3378,3 +3378,52 @@ runKey shop-acc-c4-buyer-2 … Do nothing else.
 **宿主重启后，旧的挂载不会自动恢复，需要重新 ensure。**
 若属实，`assume_role` 应当仍然报「浏览器未启动」而不是静默不动——
 **下一轮把模型无法调用的原因抓出来，不要再只看状态不变。**
+
+### 0.7.16：卡住的会话已弃用；**缺陷精确定位到一行**
+
+0.7.15 里 `dshc4` 的会话在提示送达后事件数完全不动（575 不变），
+**会话本身已卡死**。改用**全新宿主 + 全新会话**重测，取消序列逐步走通：
+
+**第一步：run-1 完成身份核验。**
+
+```
+web_test_assume_role: Run shop-acc-c5-buyer-1 now acts as buyer. … Present authority "2f5a41c4-…"
+Chromium=12
+```
+
+**第二步：取消 run-1。**
+
+```
+web_test_control_run: Run shop-acc-c5-buyer-1 is now cancelled at generation 1.
+取消后 Chromium=0
+```
+
+**取消释放资源正常。**
+
+**第三步：新建 run-2 并登录 —— 失败，缺陷点名了：**
+
+```
+Chromium=10
+web_test_assume_role: Error: role "buyer"'s browser failed
+  mcp__playwright-role-buyer__browser_navigate: unknown tool "mcp__playwrig…
+```
+
+#### 根因
+
+0.7.6 给重挂载的 server 名加了代次后缀，**新挂载的 server 名是
+`playwright-role-buyer-g2`**；而 `readAccount` 仍然**按角色名拼出旧名**
+`mcp__playwright-role-buyer__*` 去调用——**名字对不上，所以 unknown tool。**
+
+**client 确实注册了，注册在新名字下。** 这正是那条教训的又一次印证：
+**`unknown tool` 只说明当前查的那个名字查不到，不能推断 client 没注册。**
+
+**要改的是 `readAccount`：它必须用该角色**当前挂载的 serverName**，
+而不是从角色名重新拼一个。**（`RoleBrowserPool` 已经在 `started` 里存了
+`RoleBrowser.serverName`，把它取出来用即可。）**
+
+**这一项仍记为「不通过」**，但现在**是同一个已知根因的第二次出现**，
+修法明确到函数级别。
+
+**顺带一条数据**：`Chromium=10` 说明 B 的浏览器**确实起来了**——
+**浏览器能起，只是调用方拿着旧名字去喊它。** 这与 0.7.4 之前
+「第二角色注册不上」是不同的问题，**不要混为一谈**。
