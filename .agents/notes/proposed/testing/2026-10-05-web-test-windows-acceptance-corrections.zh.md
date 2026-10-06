@@ -2054,3 +2054,43 @@ Agent 与会话里实际派发的 Agent 不是同一个，于是浏览器归错�
 2. 若拿不到，则必须在宿主侧让提供方按 Agent 限定
 
 **0.6.7 仍是唯一的完整单角色交付候选**，0.6.8 记录为"修好场景 10 但破坏身份接管"。
+
+### 0.6.41：把 0.6.8 失败的原因定位到"预设是按 profile 挂载一次，不是按会话"
+
+0.6.40 提出的方向（从 `agents` 取当前会话的 Agent 再传给 `mountSessionMcp`）在动手前先读了
+加载器的 `isolate` 实现，有一条关键事实：
+
+```js
+const newMap = Object.create(entry.parent.ctx[Context.isolate]);
+for (const name of Object.keys(entry.options.isolate ?? {})) newMap[name] = access(entry, name, …)
+…
+Object.setPrototypeOf(entry.ctx[Context.isolate], entry.parent.ctx[Context.isolate])
+swap(entry.ctx[Context.isolate], newMap)
+```
+
+**隔离表是链到父级的**：只被点名的服务换 symbol，其余名字照旧从父作用域解析。这解释了
+0.6.37 的观察——池在独立 realm 里，`ctx.get('webTestStore')` 仍然拿得到根的存储，
+**realm 隔离没有破坏跨作用域访问**。
+
+顺着这条线看，真正的问题清楚了：
+
+- **预设是按 profile 挂载一次的**，`mountPreset` 在预设行初始化时跑，`web-test-agent` 那一
+  条 entry 随之建立的是**一个** Agent 定义，而不是每个会话一个
+- 提供方"每个服务器按 Agent 分别界定"（`it scopes each server per agent itself`），
+  绑定落在**注册那一刻存在的那个 Agent** 上
+- 0.6.7：池在**根**，`putEnvironment` 时挂载，浏览器的 `agent/created` 挂钩在会话创建时把
+  浏览器绑到**那个会话**的 Agent → 单角色闭环通
+- 0.6.8：池在**预设**，在 profile 加载时就挂载完成；等会话派发时，绑定的 Agent 与
+  实际派发的 Agent 不是同一个 → `browser tool belongs to another Session`
+
+**所以这不是"realm 隔离破坏了绑定"，而是"预设只有一个 Agent，浏览器只能绑到它"。**
+
+**由此可以判断**：只要浏览器行在预设里，`assume_role` 就不可能按会话正确绑定——除非提供方
+在 `mountSessionMcp` 之外提供"把已有服务器改绑到某个 Agent"的手段，公开接口里没有。
+反过来，池在根时绑定是对的，但工具是全局的，场景 10 就不通过。
+
+**两处失败是同一个张力的两面，而张力在提供方的契约里，不在插件的组合方式上。** 这一条把
+0.6.23 的读法补完整了：不是"没有按 Agent 限定的开关"这么笼统，而是
+**"挂载作用域决定暴露范围，注册时机决定绑定对象，而预设只有一个 Agent"**。
+
+**0.6.7 仍是唯一的完整单角色交付候选。**
