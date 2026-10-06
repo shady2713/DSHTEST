@@ -246,6 +246,46 @@ describe('a role browser that cannot start', () => {
       .toBe(RoleBrowserPool.keyOf(owner('shop', 'env-a', 'run-1')))
   })
 
+
+  it('refuses a second run in one session preparing a role the first has verified', async () => {
+    // Measured on 0.8.0. With run-a already acting as a verified `buyer`, a second
+    // run in the same session that also declares `buyer` is refused on a real host.
+    // The store is not the reason: asking about run-b answers true for run-b. The
+    // guard names the run the pool currently has claimed for the role, which is
+    // run-a, and preparation is closed for run-a because its role is verified. That
+    // is why the second run cannot bootstrap.
+    const { store, dispose } = await harness({
+      seed: seedOf({
+        runs: {
+          'run-a': run('run-a', 'owner', { status: 'running', activeRole: '' }),
+          'run-b': run('run-b', 'owner', { status: 'paused', activeRole: '' }),
+        },
+        'environment_revisions': { 'shop-test': environment('shop-test', ['buyer']) },
+      }),
+    })
+    try {
+      // A seeded run with no verified identity comes back from the restart
+      // reconciliation as `resuming`, so both are moved to `running` first.
+      await store.controlRun('run-a', 'resume')
+      await store.assumeRole('run-a', 'buyer', { account: 'Alice Buyer', detail: '/whoami' })
+      // Run-b asks on its own behalf while running rather than paused.
+      await store.controlRun('run-b', 'resume')
+      // Run-b asking about itself answers for run-b: preparation is open.
+      expect(store.mayPrepareIdentity('owner', 'buyer', 'run-b')).toBe(true)
+      // Run-a asking about itself does not, because its role is verified, which
+      // is what closes preparation for the run that holds the browser.
+      expect(store.mayPrepareIdentity('owner', 'buyer', 'run-a')).toBe(false)
+      // So the answer depends entirely on which run is named.
+      expect(store.mayPrepareIdentity('owner', 'buyer')).toBe(false)
+      // Run-a asking about itself is refused for a different reason: its role is
+      // verified, so preparation is closed and business calls need its authority.
+      expect(store.mayPrepareIdentity('owner', 'buyer', 'run-a')).toBe(false)
+    } finally {
+      await dispose()
+      cleanupHomes()
+    }
+  })
+
 })
 
 /**

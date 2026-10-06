@@ -4573,7 +4573,7 @@ web_test_assume_role: Error: role "buyer"'s browser failed
 运行: run-shop-roles-k2 | running | activeRole: '' | gen: 1
 ```
 
-#### 原因（从守卫判据推出，未单独复现每一步）
+#### 原因（上轮写错了，下一节纠正）
 
 同一会话里已有 `run-shop-alice-3` 正以 `buyer` 扮演角色且已核验，
 新运行 `run-shop-roles-k2` 也要 `buyer`：
@@ -4603,3 +4603,49 @@ web_test_assume_role: Error: role "buyer"'s browser failed
 **需要先确定意图再决定改不改，不凭猜测改验收条件。**
 
 **这一条也不进候选结论**，作为新发现的未闭项记录。
+
+### 0.7.47：0.7.46 写的成因**是错的**，已复现并纠正
+
+0.7.46 把成因写成「`mayPrepareIdentity` 因拥有者已核验而返回 false」。
+这一轮把它复现出来，**结论相反**。
+
+补测试时先撞上两件与预期无关的事：种子里的 running 运行会被对账置成
+`resuming`（与 0.7.36 同一个现象），`assume_role` 因此直接抛
+`run "run-a" is resuming; only a running run can change role`。
+先 `controlRun resume` 把两个运行拉回 `running`，再打诊断：
+
+```
+b=running  grant=run-a/buyer/running
+prepB=true  prepA=false  prepNone=false
+```
+
+**`mayPrepareIdentity('owner','buyer','run-b')` 返回 true——run-b 本身完全可以准备。**
+
+**真正的成因是守卫问的是谁**：
+
+```ts
+if (preparing && store?.mayPrepareIdentity(sessionId, role, ownerOf?.(role)?.runKey)) return undefined
+```
+
+`ownerOf?.(role)` 取的是**池里该角色当前的持有者**，也就是 run-a，
+**不是发起调用的 run-b**。于是 store 被问到的是 run-a，
+而 run-a 的 buyer 已核验 → `prepA = false` → 准备窗口不开 →
+落到授权要求 → 插件内部的 `readAccount` 没有授权 → 被拒。
+
+**所以限制的落点在「按角色而非按运行记归属」**：
+`claims` 以角色名为键，一个角色在池里只有一个持有者，
+第二个运行即使自己干净也拿不到窗口。
+
+#### 新增测试锁住实测行为
+
+```
+run-b 问自己        → true    （准备窗口对它是开的）
+run-a 问自己        → false   （角色已核验，准备窗口关闭）
+不指名任何运行       → false
+```
+
+**答案完全取决于问的是哪个运行**，这一点现在由测试固定，
+128 个测试通过。
+
+**这条不是凭推断写下的**，是打了诊断值才写对的。
+0.7.46 那条「从守卫判据推出、未逐步复现」的记录本身就是该避免的写法。
