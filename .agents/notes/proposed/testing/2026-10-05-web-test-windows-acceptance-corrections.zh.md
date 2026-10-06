@@ -6612,3 +6612,62 @@ async putEnvironment(environment) {
    与 `assume_role` 的挂载叠加。
 
 **本轮上下文已尽，两件都没做。**
+
+### 0.7.88：**`start_run` 的注释描述了代码没有做的事**
+
+0.7.87 列了两件事。第一件查清了，**结论比预期重要。**
+
+#### 注释说 `start_run` 会为每个角色挂浏览器
+
+```ts
+// agent.ts:643
+// Start a browser for every role the environment declares, before the
+// model asks to act as one. The browser provider hands an MCP server's
+// tools to an Agent when that Agent is created, so a browser started
+// mid-turn is not callable until the following turn; starting them here
+// means the next turn can already drive each role's account.
+…
+// Role browsers are started in the background, not awaited here. Awaiting
+// them made this tool wait for a Chromium launch per role, which ran past
+// the tool timeout and left the run unrecorded.
+```
+
+**这两段注释说了三件事**：为每个声明角色启动浏览器、
+放在后台不 await、await 会超时导致运行没被记录。
+
+#### 代码里没有这个调用
+
+```
+grep -n "ensure(" src/agent.ts
+  430:  await pool.ensure(owner ?? { projectKey: '', environmentKey: '', runKey: '', role })
+```
+
+**全文件只有一个浏览器挂载调用，在 `assume_role`（430 行）。**
+
+`start_run` 区间（600–657）内唯一的 "ensure" 是：
+
+```
+const dir = store.ensureEvidenceDir(input.runKey)
+```
+
+**那是建证据目录的文件系统函数，不是挂载。**
+
+#### 所以
+
+**注释描述的「start_run 为每个角色预挂浏览器」这段行为，代码里不存在。**
+
+这解释了 0.7.85 的 20：
+**既然只有 `assume_role` 挂浏览器，那 20 就意味着 `assume_role` 挂过两次**
+（每次 10），**而 `ensure` 的「重挂就换后缀」逻辑正好解释两代并存**。
+
+**也意味着：任何基于「start_run 会预挂浏览器」的推断都是错的——
+包括我此前对预启动路径的理解。**
+
+#### 这条缺陷的性质
+
+**注释与代码不符**，不是逻辑错误，但**它误导阅读**，
+而且很可能就是当初写注释时的意图没落地。
+
+**按仓库规约，注释应描述行为，不描述没发生的事。**
+**修法是把注释改成实际行为，或补上实现。**
+**本轮上下文已尽，不改。**
