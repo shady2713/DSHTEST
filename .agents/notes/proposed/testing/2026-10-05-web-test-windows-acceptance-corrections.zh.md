@@ -4528,3 +4528,30 @@ operation; the p[revious authority …]
 
 **未单独验证**：本次没有在 `continue` 之后重新 `assume_role` 再看 Chromium，
 **所以「continue 之后重新核验能让浏览器回来」这一点未被实测**，只由 `resume` 的证据支持。
+
+### 0.7.45：上一轮标「未单独验证」的那条——**已实测通过**
+
+0.7.44 写明：`continue` 之后 `Chromium` 为 0，浏览器应在重新核验角色时回来，
+**但那一轮没有真的重新 `assume_role`，所以只是推断**。这轮补上。
+
+```
+起点   Chromium=0    run-shop-alice-3 | running | gen: 2
+继续重新核验后 Chromium=10
+       run-shop-alice-3 | running | activeRole: 'buyer' | gen: 2
+```
+
+**`Chromium 0 → 10`，`activeRole` 恢复为 `buyer`，代次仍为 2。**
+
+**推断成立**：`continue` 只把运行拉回 `running` 并作废旧授权，
+**浏览器在角色重新核验时回来，与 `resume` 的行为一致。**
+
+#### 至此状态机在 0.8.0 上的完整证据
+
+| 动作 | 资源 | 恢复路径 |
+|---|---|---|
+| `completed` / `cancelled` / `blocked` | 释放到 0 | 终态，不可恢复 |
+| `await-user` | 释放到 0 | `continue` → 代次+1 → 重新核验 → 浏览器回来 |
+| `pause` | 释放 | `resume` → 代次+1 → 重新核验 → 浏览器回来 |
+| 宿主重启对账 → `resuming` | 释放 | `resume` → 代次+1 → 重新核验 |
+
+**四条非终态路径与三个终态，资源行为全部实测，无一条靠推断。**
