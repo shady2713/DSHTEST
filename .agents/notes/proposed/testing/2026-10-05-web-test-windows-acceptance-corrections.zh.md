@@ -4739,3 +4739,49 @@ cancelled run and across disabling the role-browser row.
 **却从未拿它和后来的实测对照过**。
 「读过多遍」不等于「核对过」——
 **文档里每一句结论都应当能指到一次测量，否则它就是过期结论。**
+
+### 0.7.50：通篇核对交付者会读的两份文件，**又抓到三处**
+
+0.7.49 改了 README 的一节。**既然它是交付者会读的文件，就该通篇核对**，
+而不是只改发现的那一节。这轮做了，结果抓到三处。
+
+#### 1. 「暂停时仍可用」的工具清单少了两条
+
+README 写四条，代码里是六条：
+
+```
+实际: ['status', 'start_run', 'operation_unknown', 'settle_operation',
+       'resume_wait', 'control_run']
+```
+
+**漏掉的是 `start_run` 和 `control_run`**——而这两个恰好是
+**把暂停或被中断的运行接续下去**所用的工具。
+`start_run` 是本会话为「`resuming` 永久卡死会话」那个问题加进白名单的，
+`control_run` 更是本会话新增的工具。**README 完全没提。**
+
+#### 2. 写了一个不存在的接口名
+
+原文写 `` `webTest/controlRun` is the operator's side ``——
+**`webTest/controlRun` 不是任何真实接口**，真实的工具名是 `web_test_control_run`。
+按那个名字去 Windows 上找会找不到。
+
+#### 3. Windows 验收清单漏了三个现役工具
+
+```
+清单未覆盖的现役工具: ['web_test_control_run', 'web_test_finish_run', 'web_test_propose_cases']
+```
+
+**这直接影响交付**——清单是 Windows 执行者照着跑的东西，
+三个工具没有对应条目，**它们在 Windows 上就不会被验证**。
+
+已补一节「0.8.0 新增覆盖项」，五条，**全部标注未验证**，
+并写明整包禁用要用 bundle 名 `dsh-plugin-web-test` 而非 `web`。
+
+**其中「取消文案不再要求调用不存在的 `web_test_resume_run`」那条是原有验收项，写得对**：
+`resume_run` 确实不存在，代码里是 `resume_wait`。
+
+#### 再次印证上轮的教训
+
+**「读过很多遍」和「核对过」是两件事。**
+这三处都在**交付者会实际照着用的文件**里，
+而这些文件我此前**只当作既有背景读过**，从未与代码对照。

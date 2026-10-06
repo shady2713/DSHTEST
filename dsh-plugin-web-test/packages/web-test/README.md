@@ -56,14 +56,14 @@ because it cannot check the environment, the login, or whether a change landed.
 
 ### Operator control and holds
 
-`webTest/controlRun` is the operator's side: `pause`, `resume`, `cancel`,
-`await-user` and `continue`. A hold stops the session that owns the run and no
-other, so one session's pause never stops another session's work. A run with no
-recorded owner stops every session, because the plugin cannot tell whose work it
-would be ending. While a run is held, the tools that record or retire state —
-`web_test_status`, `web_test_settle_operation`, `web_test_operation_unknown` and
-`web_test_resume_wait` — stay reachable; everything that would drive the browser
-is refused.
+`web_test_control_run` is the operator's side: `pause`, `resume`, `cancel`, `await-user`
+and `continue`. A hold stops the session that owns the run and no other, so one session's
+pause never stops another session's work. A run with no recorded owner stops every session,
+because the plugin cannot tell whose work it would be ending. While a run is held, six tools
+stay reachable: `web_test_status`, `web_test_start_run`, `web_test_operation_unknown`,
+`web_test_settle_operation`, `web_test_resume_wait` and `web_test_control_run`. The last
+two are how a held or interrupted run is carried forward, and everything that would drive
+the browser is refused.
 
 ### Reports
 
