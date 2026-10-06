@@ -2762,3 +2762,60 @@ register(name: BrowserUseProviderName): () => Promise<void> {
 把 `McpClient` 挂进该作用域，工具即落在该角色的层里。**不修改宿主、不伪造 Agent 或
 生命周期事件。** 这需要确认 `dsh-scope` 的 `ScopeKey` 是否接受非 Agent 的键，以及
 `dsh-mcp-client` 是否可作为直接依赖。
+
+### 0.7.3：改用公开作用域接口，**两个浏览器同时存在了**
+
+按用户要求「通过已核对的公开 MCP／作用域接口实现插件内适配，不修改宿主，
+不伪造 Agent 或生命周期事件」，0.7.2 放弃了 `mountSessionMcp`。
+
+#### 为什么不能用 `mountSessionMcp` 做多角色
+
+它每次调用都会 `ctx.browserUse.register(name)`，而 `BrowserUseRegistry` 全进程只有
+**一个**槽位且不论名字都拒绝第二次。所以它天然是「**一个调用 = 一个 provider = 每个
+Agent 一个 client**」，无法在一个 Agent 内开第二个 client。
+
+#### 新装配
+
+`ScopeKey = object`（`packages/core/scope/src/index.ts:15`），**任意对象都合法**；
+工具层按该键查找。所以：
+
+- **每个角色一个 fiber**（释放句柄，且只拥有该角色的 client）
+- fiber 内**每个 Agent 一个 scope**：`createScope(provider, agent)`
+- `scope.ctx.plugin(McpClient, Config({ serverName: 'playwright-role-<role>', ... }))`
+
+**两个角色的工具落在同一个 Agent 层里，但 `serverName` 不同，工具名不同，因此不冲突。**
+整个过程**不碰 `browserUse` 槽位**，也不创建任何 Agent 或生命周期事件——
+Agent 只来自宿主自己发出的 `agent/created`。
+
+角色若在 Agent 已存在之后才挂载（会话中途切换角色），就对池自己记录的、
+宿主已公告过的 Agent 补开 scope。
+
+#### 真实宿主结果
+
+```
+web_test_assume_role: Run shop-acc-ab3-signin now acts as buyer. Present authority …
+web_test_assume_role: Error: role "seller"'s browser failed
+  mcp__playwright-role-seller__browser_navigate: unknown tool …
+web_test_assume_role: Error: confirmed role "seller" as "Bob Approver", but that role
+  is bound to "Bob Seller" in environment "acc-ab3"
+Chromium=20
+```
+
+**`Chromium=20`：两个 Chromium 同时在跑**（此前单角色是 10）。**这是隔离真正成立的第一个
+证据**——两个角色各持一个浏览器，互不抢占。
+
+而且 seller 的浏览器**确实起来并读到了页面身份**（`"Bob Approver"` 是站点为 bob 账号
+真实声明的账号）。**所以 `unknown tool` 不是「client 从未注册」**，而是**首次调用与
+client 注册之间的竞态**——正是用户提醒的那一点。
+
+身份核验顺带正确拒绝了一次：环境声明 `Bob Seller`，站点实际声明 `Bob Approver`，
+`assume_role` 拒绝放行。**这是第四节要求的行为，不是缺陷**（受控站点的账号命名与
+环境声明不一致，需要改的是我自己的测试数据）。
+
+#### 还差什么
+
+`ensure` 目前只 await **fiber 激活**，不 await **工具可用**。角色在 Agent 已存在之后
+挂载时，client 要一会儿才注册完，第一次调用就可能撞上 `unknown tool`。
+**下一步：`ensure` 必须等到该角色的工具在该 Agent 层里可见再返回。**
+
+类型检查通过，**124 测试通过**。

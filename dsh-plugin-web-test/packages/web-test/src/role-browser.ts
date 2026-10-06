@@ -20,6 +20,8 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Service } from '@deepseek-ai/cordis'
 import type { Context, Disposable } from '@deepseek-ai/cordis'
+import type { Agent } from '@deepseek-ai/dsh-agent'
+import type { Scope } from '@deepseek-ai/dsh-scope'
 import type ToolsService from '@deepseek-ai/dsh-tools'
 import type { ToolExecutionResult, ToolRunContext } from '@deepseek-ai/dsh-tools'
 import { ToolCallId } from '@deepseek-ai/dsh-llm'
@@ -91,6 +93,16 @@ export class RoleBrowserPool extends Service {
   private activeRole: string | undefined
 
   /**
+   * Agents the host has announced, in the order they appeared.
+   *
+   * A role confirmed before its session exists has no Agent yet, and a role
+   * switched to afterwards belongs to one that already exists. Recording the
+   * announcements is what lets both cases open a client without the pool
+   * inventing an Agent or a lifecycle event of its own.
+   */
+  readonly knownAgents = new Set<Agent>()
+
+  /**
    * @param ctx - Owning context, which supplies the tools and browser services
    * the provider rows need.
    * @param executablePath - Chromium the role browsers launch; the host
@@ -131,6 +143,10 @@ export class RoleBrowserPool extends Service {
     // The disposer returns the promise rather than firing it: cordis awaits an
     // async disposer, so the browser is closed before the service goes away.
     // Returning `void` here left the Chromium running until the host exited.
+    // Agents are announced before any role is mounted, and a role switched to
+    // later belongs to one that already exists, so both are covered by keeping
+    // the pool's own record of what the host announced.
+    ctx.on('agent/created', ({ agent }) => { this.knownAgents.add(agent); return undefined })
     ctx.effect(() => async () => {
       await this.releaseAll()
     })
@@ -227,38 +243,46 @@ export class RoleBrowserPool extends Service {
    */
   private async mountBrowser(role: string, browser: RoleBrowser): Promise<RoleBrowser> {
     const serverName = browser.serverName
-    // The provider is loaded on demand rather than at import time: it pulls the
-    // MCP client's whole peer tree, which a unit test that never starts a
-    // browser should not have to load.
-    const { mountSessionMcp } = await import('@deepseek-ai/dsh-experimental-browser-use-runtime/mcp')
-    // Mounted on its own plugin fiber, not on the pool's context. `mountSessionMcp`
-    // registers the browser-use provider, the per-Agent scopes and the MCP
-    // clients against whatever context it is handed, so handing it the pool's
-    // context put every registration outside any disposable the pool owned:
-    // releasing a role ran a disposer that had nothing to dispose and left the
-    // Chromium running. A fiber's `dispose()` unloads the plugin and settles only
-    // after its cleanup finished, so awaiting it is awaiting the closed browser.
-    const { executablePath, headless } = this
+    // Loaded on demand rather than at import time: these pull the MCP client's
+    // whole peer tree, which a unit test that never starts a browser should not
+    // have to load.
+    const [McpClient, { createScope }] = await Promise.all([
+      import('@deepseek-ai/dsh-mcp-client'),
+      import('@deepseek-ai/dsh-scope'),
+    ])
+    const { executablePath, headless, knownAgents } = this
+    // One fiber per role owns that role's clients and nothing else, so releasing
+    // the role disposes exactly its scopes and awaits each MCP connection's
+    // shutdown. The fiber is what `mountSessionMcp` never gave back: it returns
+    // void, so the caller that mounts it is the only possible owner.
     const fiber = this.ctx.plugin({
-      inject: ['browserUse', 'agents', 'tools', 'systemPrompt'],
+      inject: ['agents', 'tools'],
       apply(provider: Context) {
-        mountSessionMcp(provider, {
-          name: serverName,
-          // Each role launches its own Chromium, so no two roles contend for one
-          // attached browser and neither can land on the other's page.
-          exclusive: false,
-          command: process.execPath,
-          args: playwrightArgs(executablePath, headless),
-          env: {},
-        })
+        // One scope per Agent, per role. `createScope` takes any object as its
+        // key, and the tool layer is looked up under that key, so a client
+        // mounted under an Agent's key contributes tools to that Agent only. Two
+        // roles land in the same layer under different server names, which is
+        // what lets one Agent drive two accounts at once; the registry's single
+        // browser-use slot is never taken, because a role is not a provider.
+        const open = async (agent: Agent): Promise<void> => {
+          const scope = createScope(provider, agent)
+          scopes.set(agent, scope)
+          await scope.ctx.plugin(McpClient, McpClient.Config({
+            transport: 'stdio',
+            serverName,
+            command: process.execPath,
+            args: playwrightArgs(executablePath, headless),
+            ...agent.session.header.cwd === undefined ? {} : { cwd: agent.session.header.cwd },
+          }))
+        }
+        const scopes = new Map<Agent, Scope>()
+        provider.on('agent/created', async ({ agent }) => { await open(agent) })
+        // A role started after its Agent already exists must still come up, so
+        // the Agents seen so far are opened now. The list is this pool's own
+        // record of Agents the host announced; nothing is invented.
+        for (const agent of knownAgents) void open(agent)
       },
     })
-    // `plugin()` returns a thenable over the fiber's readiness, so awaiting it
-    // reports whether the provider actually came up. Not awaiting left a failed
-    // activation silent: the fiber threw while registering the browser-use
-    // provider, the role was still recorded as started, and the only symptom was
-    // a later `unknown tool` for a client that had never existed. A role that
-    // did not start is not recorded, and its disposer is not kept.
     try {
       await fiber
     } catch (error) {
@@ -272,6 +296,7 @@ export class RoleBrowserPool extends Service {
     this.started.set(role, browser)
     return browser
   }
+
 
 
   /**
