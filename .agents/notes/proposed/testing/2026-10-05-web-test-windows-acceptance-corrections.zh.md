@@ -7008,3 +7008,52 @@ web_test_finish_run  : Run t1 closed as completed.
 | 操作者暂停/取消释放 | `f1ff5403…` | 0.7.68，**新包未重测** |
 
 新包 sha256 f6621d41ff3920eabaf5ef4346691d9d2655355feba08f3f7a33b08b4d11bafd
+
+### 0.7.96：**操作者暂停与取消在新包上重测通过**——暂停→恢复→取消，走遍代次变化
+
+0.7.95 留下的最后一项：0.7.68 的操作者暂停/取消释放是在旧包上测的。
+
+#### 暂停
+
+```
+暂停前 Chromium=10   （k1 running, generation 1）
+ok: True | status: paused | generation: 1
+暂停后 Chromium=0
+```
+
+**暂停是非终态却仍释放浏览器，状态写成 `paused`，代次不变。**
+
+#### 恢复（代次递增）
+
+```
+恢复后 Chromium=10   k1 | running | generation: 2
+```
+
+**代次从 1 变 2** —— 恢复后是新一代。
+
+#### 取消
+
+```
+取消前 Chromium=10
+ok: True | status: cancelled
+取消后 Chromium=0   宿主=1   用户Chrome=27
+k1 | cancelled | generation: 2
+```
+
+**这一条比原计划多覆盖了一层：取消的是「暂停后恢复、代次已变」的运行，
+而不是刚建就取消的运行。**
+
+#### 新包上的释放覆盖现已完整
+
+| 路径 | 结果 | 轮次 |
+|---|---|---|
+| 操作者 `controlRun` pause | ✅ 10 → 0，paused，代次不变 | **0.7.96** |
+| 操作者 `controlRun` cancel | ✅ 10 → 0 | **0.7.96** |
+| `finish_run` completed/blocked/cancelled | ✅ 全部 → 0 | 0.7.95 |
+| 双挂载后逐个取消 | ✅ 全部 → 0 | 0.7.94 |
+| 用户自己的 27 个浏览器 | ✅ 全程未受影响 | 0.7.94 / 0.7.96 |
+
+**至此 0.7.65 找到的「资源归属跟着调用方走」这条根因，
+其全部释放路径都在交付包 f6621d41… 上有真实宿主实测。**
+
+新包 sha256 f6621d41ff3920eabaf5ef4346691d9d2655355feba08f3f7a33b08b4d11bafd
