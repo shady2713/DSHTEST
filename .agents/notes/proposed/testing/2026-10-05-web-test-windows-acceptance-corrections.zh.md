@@ -6553,3 +6553,62 @@ user-data-dir: /tmp/playwright_chromiumdev_profile-bb0MKa   （只有一个）
 **要坐实，需要构造一个「先在环境确认时预启动、再由运行收养」的用例，
 然后取消该运行并看浏览器是否留下。**
 **本轮上下文已尽，没做这个定向复现。**
+
+### 0.7.87：查了预启动的调用点，**发现 0.7.85 的那 20 个进程还没有解释**
+
+0.7.86 定位到「收养路径装空句柄」。要坐实它，得知道**预启动是谁做的**。
+
+#### 预启动在 `putEnvironment` 里
+
+```ts
+// src/index.ts:152
+async putEnvironment(environment) {
+  const record = environmentRevisionRecordSchema.parse(environment)
+  const stored = await this.ctx.webTestStore.putEnvironment(record)
+  // The browser is mounted here rather than when a run starts: …
+  await this.ctx.webTestRoleBrowsers.ensure({
+    projectKey: stored.projectKey,
+    environmentKey: stored.key,
+    runKey: '',
+    role: stored.roles[0]?.name ?? '',
+  })
+  return stored
+}
+```
+
+**确认环境时就用 `runKey: ''` 预启动第一个角色的浏览器。**
+**所以「预启动 → 运行收养 → 空句柄」这条链是真实存在的。**
+
+#### 但 0.7.83 那一轮**根本没有预启动**
+
+- `acc-ok` 是在 **0.7.76**（另一个宿主）建的；
+- **0.7.82 重启了宿主**，预启动随宿主一起没了；
+- 0.7.83 起点实测 `Chromium=0`——**这正说明没有预启动的浏览器**。
+
+**所以 0.7.83 里 `run-A` 走的是「首次挂载」分支，不是「收养」分支。**
+**那 20 个进程是怎么来的，本轮没查清。**
+
+**这意味着 0.7.85 的结论要再收一次**：它说的是「A 自己挂了两个」，
+**而「挂了两个」这件事本身还没有解释**。
+
+#### 三轮下来的准确状态
+
+| 轮次 | 结论 | 现在的地位 |
+|---|---|---|
+| 0.7.83 | 未核验的 B 读到了 A 的登录态，守卫部分拦截 | ❌ 已推翻 |
+| 0.7.84 | 遗留挂载来自 0.7.81 | ❌ 已推翻 |
+| 0.7.85 | 遗留的是 A 自己挂的第二个 | ⚠️ **成立但成因未明** |
+| 0.7.86 | 泄漏位置是收养路径的空句柄 | ⚠️ **代码定位成立，但 0.7.83 未触发该路径** |
+
+**空句柄那个缺陷本身仍然成立**（`mounted ?? (async () => {})` 确实是空句柄），
+**只是它不是 0.7.83 那 20 个进程的成因。**
+
+#### 下一轮该做的两件事
+
+1. **在一个全新环境上跑「确认 → 预启动 → 运行收养 → 取消」**，
+   这才会真正触发收养分支，直接验证空句柄是否泄漏；
+2. **查清 0.7.83 那 20 个进程**：
+   `start_run` 是否也为每个声明的角色挂浏览器（0.7.x 的注释提到过），
+   与 `assume_role` 的挂载叠加。
+
+**本轮上下文已尽，两件都没做。**
