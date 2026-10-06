@@ -7111,3 +7111,61 @@ pluginManager/listPlugins → 顶层是 list，共 192 条
 
 **下一轮先弄清「管理器用什么键认这些行」，
 而不是继续换字符串试。**
+
+### 0.7.98：**第 5 项在新包上测成了**——上一轮是我取错了字段
+
+0.7.97 说「三种写法都 `unknown-plugin`，原因未知」。
+**原因是已知的：不是插件的问题，是我读 `listPlugins` 时取错了字段。**
+
+#### 查源码定的，不是试出来的
+
+```ts
+// packages/boot/plugin-manager/src/index.ts:426
+async setPluginEnabled(id: PluginEntryId, enabled: boolean): Promise<ChangeResult> {
+  const row = (await this.listPlugins()).find(item => item.entryId === id)
+  if (row === undefined) throw new ManagementFailure('unknown-plugin')
+```
+
+**键是 `entryId`。** 而我上轮打印的是 `name` 或 `id`——
+**192 条里自然一条都匹配不上，于是我误以为管理器不认这些行。**
+
+#### 正确的 id 带 `include:` 前缀
+
+```
+include:web-test-storage-sqlite
+include:web-test-store
+include:web-test
+include:web-test-role-browsers
+include:web-test-browser-use
+include:web-test-preset
+```
+
+**六行全部 `fiberPhase: active`。**
+
+#### 禁用与重新启用
+
+```
+禁用前 Chromium=10
+setPluginEnabled include:web-test-role-browsers false
+  → changed: True   application: failed   err: operation-error
+禁用后 Chromium=0
+
+禁用后各行:
+  include:web-test                     | fiber: pending
+  include:web-test-role-browsers       | fiber: None      ← 被禁用的那一行
+
+重新启用 → changed: True   application: applied
+启用后: include:web-test-role-browsers | fiber: active
+```
+
+**回收是真的（10 → 0），fiber 状态也如旧记录所述：
+被禁用的行是 `None`，`web-test` 行是 `pending`，其余仍 `active`。**
+
+#### 这一轮的教训比结果更重要
+
+**0.7.97 我做对的**：没继续换字符串碰运气，而是去查「管理器用什么键」。
+**做错的**：查源码之前，我先打印了 `listPlugins` 的 `name`/`id` 字段，
+**用一个错误的字段去否定「管理器认这些行」。**
+
+**这和 0.7.61 的 `ls plugins` 假阴性是同一类错误：
+先下结论、后看证据。区别只在于那次我后来去查了，这次也去查了。**
