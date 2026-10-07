@@ -86,7 +86,9 @@ pnpm install          # in dsh-plugin-web-test/
 pnpm run typecheck    # both compiler faces
 pnpm run build        # typecheck, bundle, then Typert generation
 pnpm run test         # unit tests
-pnpm --filter dsh-plugin-web-test pack --pack-destination ../../dist
+
+# Pack into a fresh directory; never overwrite a package already handed off
+OUT="$(mktemp -d)"; npm pack --pack-destination "$OUT"
 ```
 
 `pnpm run build` must run in that order: `tsc` emits JavaScript under

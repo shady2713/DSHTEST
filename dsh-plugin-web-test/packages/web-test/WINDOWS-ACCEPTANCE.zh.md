@@ -28,13 +28,13 @@ bash scripts/check-candidate-tarball.sh
 
 # 复验须知（本节最新）
 
-**待验包**：`dsh-plugin-web-test-0.8.2.tgz`
+**待验包**：`dsh-plugin-web-test-0.8.3.tgz`
 **SHA-256**：不在这里写。**本文件打进包里，而包的内容决定这个文件的哈希，
 把包的哈希写进包里就是自我引用**——每次重建都会让它立刻过期。候选包的
 哈希记在包外的交付记录里：
 
 ```
-.agents/notes/proposed/testing/2026-10-11-web-test-0.8.1-delivery-candidate.md
+.agents/notes/proposed/testing/2026-10-12-web-test-0.8.2-delivery-candidate.md
 ```
 
 **0.8.0 原包未被覆盖**，`f6621d41ff3920eabaf5ef4346691d9d2655355feba08f3f7a33b08b4d11bafd` 保持不变。
@@ -50,7 +50,7 @@ bash scripts/check-candidate-tarball.sh
 
 ## 复验顺序
 
-1. 装包，确认 `web_test_status` 报 **0.8.2**（不是 0.8.0 或 0.8.1）
+1. 装包，确认 `web_test_status` 报 **0.8.3**（不是 0.8.0、0.8.1 或 0.8.2）
 2. 同 session 建 buyer 与 approver 两个 run：**各自凭据成功，交换凭据必须在工具正文执行前被拒**
 3. 取消其中一个运行：**浏览器进程必须归零**，另一个仍可用
 4. 单行禁用 `web-test-role-browsers`，再整包禁用：**浏览器进程必须归零**
@@ -263,7 +263,7 @@ WAL、SHM 与 evidence 目录存在非 owner 的继承 Allow ACE（含 Modify）
 
 ## 已修：提供了错误凭据的登录类调用曾被当作准备放行
 
-**已在 0.8.2 修复，并由 `execution-guard.spec.ts` 的两条用例钉住。**
+**已在 0.8.3 修复，并由 `execution-guard.spec.ts` 的两条用例钉住。**
 
 guard 的准备分支先于凭据校验：只要该挂载已被认领、且该运行允许准备身份，
 `browser_click`、`browser_navigate` 这类登录工具就直接放行，
@@ -585,13 +585,65 @@ D=dsh-plugin-web-test/dist/dsh-plugin-web-test-0.8.0.tgz
 `README.md` 构建一次：
 
 ```sh
+# 打到新目录，不覆盖任何已经交付过的同名包
+OUT="$(mktemp -d)"
 cd dsh-plugin-web-test/packages/web-test
 rm -rf lib
 node ../../node_modules/typescript/bin/tsc -b tsconfig.json
 ../../node_modules/.bin/tsdown
 node ../../scripts/generate-typert.mjs
-npm pack --pack-destination ../../dist
+npm pack --pack-destination "$OUT"
+sha256sum "$OUT"/dsh-plugin-web-test-*.tgz
 ```
+
+**不要用 `--pack-destination ../../dist`**：那会把结果写回 `dist/`，同名时
+覆盖掉一个已经交付过的包。`dist/` 里的历史包是既有的交付凭据，重打包比较
+一律输出到新建的临时目录。
+
+## 用哪个 shell
+
+**Windows 上请用 Git Bash**（随 Git for Windows 安装，`C:\Program Files\
+Git\bin\bash.exe`）。本机的裸 `bash` 指向 WSL 入口，而 WSL 环境未就绪，
+命令会在还没开始之前就失败。PowerShell 下用 `bash` 同样会命中那个入口。
 
 **构建顺序不能省**：上一次构建留下的分块会让包多出陈旧文件，所以先
 `rm -rf lib`。
+
+## 门禁在隔离检出里跑
+
+```sh
+git clone --shared /path/to/repo "$HOME/dsh-webtest-acceptance"
+cd "$HOME/dsh-webtest-acceptance"
+git checkout <明确的基线提交>
+cd dsh-plugin-web-test && bash scripts/check-candidate-tarball.sh
+```
+
+**不要在日常使用的检出里跑门禁，也不要为了让门禁通过去删除未跟踪的文件。**
+门禁会读工作区文档并与记录中的提交比对，日常检出里的未提交改动会让它失败，
+而删掉那些改动就是在毁掉别人的工作——这不是「工作区不干净」，这是有人在
+用这个检出工作。
+
+## 这次验证的是哪一种可复现
+
+**本记录只验证了「重复打包现有产物」**：在已经构建过的目录里再跑一次
+`npm pack`，得到同样的字节；`check-candidate-tarball.sh` 里的那一项就是它。
+
+**「干净源码构建可复现」没有验证，也不声称。** 它要求从提交重新走
+tsc → tsdown → pack 并得到同样字节，而那依赖构建工具链的版本与顺序。
+新检出的目录没有 `lib/`，直接重打包得到的字节与构建过的目录不同，
+**这不是缺陷**，先构建一次再比较。
+
+## 保留 SYSTEM 与本机 Administrators 的实际含义
+
+受限之后数据根仍保留两个身份：
+
+- `S-1-5-18` 本机系统
+- `S-1-5-32-544` 本机管理员组
+
+它们按**安全标识符**识别，不按显示名——显示名随机器语言变化，`NT AUTHORITY\SYSTEM`
+在别的语言系统上是别的字样，按名字比较正是显式 `Everyone` 权限能活下来的
+原因之一。
+
+实际保证是：目录不再对**其他普通本地账号**可读写；机器自身的系统与管理员
+仍保有完全控制，因此仍有恢复路径。**这不是**「只有当前账号能访问」——
+管理员与系统始终能。这两条是有意保留的。

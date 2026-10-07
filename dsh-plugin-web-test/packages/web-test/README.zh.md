@@ -55,7 +55,9 @@ pnpm install          # 在 dsh-plugin-web-test/ 下
 pnpm run typecheck    # 两个编译面
 pnpm run build        # typecheck → 打包 → Typert 生成
 pnpm run test         # 单元测试
-pnpm --filter dsh-plugin-web-test pack --pack-destination ../../dist
+
+# 打到新目录，不覆盖已交付过的包
+OUT="$(mktemp -d)"; npm pack --pack-destination "$OUT"
 ```
 
 `pnpm run build` 必须按此顺序：`tsc` 在 `lib/types` 下产出 JavaScript，tsdown 从那里打包，Typert 脚本重写 `src/client/remote.ts` 与 `lib/typert.*` 产物。`tsdown.config.ts` 的清理列表只包含各 bundle 自身的产物，因此 `lib/types` 与 Typert 产物得以保留，而早期构建的内容哈希 chunk 不会残留。
