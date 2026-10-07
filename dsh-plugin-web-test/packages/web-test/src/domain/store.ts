@@ -98,6 +98,15 @@ export async function ensureDataRoot(): Promise<string> {
 }
 
 /**
+ * Program name of the platform's own access control tool.
+ *
+ * The name has to resolve on its own: passing a shell's `/c` as the program name
+ * makes `execFile` look for a program literally called `/c` and fail with ENOENT.
+ * @returns the executable to spawn directly, without a shell.
+ */
+export const ICACLS = 'icacls.exe'
+
+/**
  * The `icacls` call that drops every inherited access control entry on a
  * directory, leaving the current user able to use it.
  *
@@ -109,7 +118,7 @@ export async function ensureDataRoot(): Promise<string> {
  * @returns the argument vector to execute.
  */
 export function restrictCommandsForWindows(root: string): string[] {
-  return ['/c', 'icacls', root, '/inheritance:r', '/grant:r', `${grantedAccountFor()}:(OI)(CI)F`]
+  return [ICACLS, root, '/inheritance:r', '/grant:r', `${grantedAccountFor()}:(OI)(CI)F`]
 }
 
 /**

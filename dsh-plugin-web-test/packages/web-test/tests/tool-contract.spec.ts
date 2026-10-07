@@ -162,7 +162,7 @@ describe('data root access control', () => {
 describe('restricting the data root on Windows', () => {
   it('names only this plugin’s own root and clears what it inherited', () => {
     const argv = restrictCommandsForWindows('C:/Users/a/.dsh/plugins/dsh-plugin-web-test')
-    expect(argv.slice(0, 3)).toEqual(['/c', 'icacls', 'C:/Users/a/.dsh/plugins/dsh-plugin-web-test'])
+    expect(argv.slice(0, 3)).toEqual(['icacls.exe', 'C:/Users/a/.dsh/plugins/dsh-plugin-web-test', '/inheritance:r'])
     // Removing inherited entries is what drops the other accounts; granting
     // alone would add this user without taking anything away.
     expect(argv).toContain('/inheritance:r')
