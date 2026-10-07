@@ -135,7 +135,7 @@ const FIELD_VALUES: Record<string, unknown> = {
   caseKey: 'c',
   caseId: 'c',
   operationKey: 'o',
-  outcome: 'observed-success',
+  outcome: 'passed',
   status: 'completed',
   action: 'pause',
   reason: 'settling',
@@ -146,7 +146,7 @@ const FIELD_VALUES: Record<string, unknown> = {
   untilIso: '2030-01-01T00:00:00.000Z',
   steps: [{ index: 1, intent: 'open the order page' }],
   assertions: [{ expected: 'the order exists', outcome: 'passed' }],
-  cases: [{ key: 'c', title: 'buy', steps: [{ index: 1, intent: 'buy' }] }],
+  cases: [{ caseKey: 'c', title: 'buy', intent: 'buy the item' }],
 }
 
 /**
@@ -187,9 +187,24 @@ describe('registered tools accept what they return', () => {
     // Each tool gets its own store. Sharing one meant `finish_run` completed the
     // run and every tool after it refused with "run is completed", so a tool's
     // result depended on the order the suite happened to register them in.
-    const { tools } = await registered()
-    for (const tool of tools) {
-      const { store } = await registered()
+    // Each tool is registered again against its own store. A body closes over
+    // the store that was current when `apply` ran, so handing the first
+    // registration a later store changes nothing: `finish_run` completed that
+    // store's run and every tool after it refused for a run it never touched.
+    const names = (await registered()).tools.map(tool => tool.name)
+    for (const name of names) {
+      const { tools, store } = await registered()
+      const tool = tools.find(one => one.name === name)!
+      // A wait that ends early only ends once its deadline has passed, so the
+      // run has to be in that state rather than freshly running.
+      if (name.endsWith('resume_wait')) {
+        await store.putRun({
+          ...store.getRun('run')!,
+          status: 'awaiting-business-time' as const,
+          waitingUntilMs: Date.now() - 1000,
+          waitingReason: 'settling',
+        })
+      }
       const { args, problem } = argumentsFor(tool)
       if (problem !== '') { problems.push(`${tool.name}: ${problem}`); continue }
       // A body may refuse for a legitimate reason (no verified role, a browser
@@ -216,22 +231,21 @@ describe('registered tools accept what they return', () => {
     // floor below is a count of bodies that really returned a value, not of
     // calls that were attempted.
     //
-    // Three tools still refuse and each for a reason worth naming rather than
-    // hiding: `assume_role` and `begin_operation` need a real browser to mint
-    // the authority the operation tools take, `settle_operation` and
-    // `operation_unknown` need an operation begun first, and the run-control
-    // tools see a completed run because `finish_run` shares their store state.
-    // Raising this floor means making those fixtures real, not relaxing it.
+    // Four tools cannot reach a return without a real browser, because each one
+    // needs a verified role and `assume_role` is what verifies it:
+    // `assume_role` itself, `begin_operation`, `settle_operation` and
+    // `operation_unknown`. Those are exercised as refusal paths elsewhere; the
+    // remaining refusals are named in the failure output so none is hidden.
     expect(
       succeeded.length,
       `只成功执行了 ${succeeded.length} 个: ${succeeded.join(', ')}\n拒绝的:\n${refused.join('\n')}`,
-    ).toBeGreaterThanOrEqual(3)
+    ).toBeGreaterThanOrEqual(6)
     if (succeeded.length === 0) throw new Error(`no tool produced a value; all refused:\n${refused.join('\n')}`)
     expect(problems).toEqual([])
     // Every tool has to be accounted for: none skipped, none silently unchecked.
-    expect(succeeded.length + refused.length).toBe(tools.length)
-    expect(tools.length).toBeGreaterThan(0)
-    expect(tools.every(tool => tool.name.startsWith(TOOL_PREFIX))).toBe(true)
+    expect(succeeded.length + refused.length).toBe(names.length)
+    expect(names.length).toBeGreaterThan(0)
+    expect(names.every(n => n.startsWith(TOOL_PREFIX))).toBe(true)
     await harness({ seed: {} }).then(home => home.dispose())
   })
 
