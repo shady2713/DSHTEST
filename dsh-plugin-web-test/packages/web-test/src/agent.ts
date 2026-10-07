@@ -19,7 +19,7 @@ import { copyFileSync, statSync } from 'node:fs'
 import type { Context } from '@deepseek-ai/cordis'
 import ToolsService from '@deepseek-ai/dsh-tools'
 import { z } from 'zod'
-import { BROWSER_TOOL_SUFFIX, RoleBrowserPool } from './role-browser.ts'
+import { BROWSER_TOOL_SUFFIX, IDENTITY_PROBE, RoleBrowserPool } from './role-browser.ts'
 import type { MountOwner } from './role-browser.ts'
 import type { BrowserOwner } from './role-browser.ts'
 import type { ToolRunContext } from '@deepseek-ai/dsh-tools'
@@ -165,6 +165,9 @@ export function guardReason(
       generation?: number,
     ) => boolean
     generationOf?: (runKey: string) => number | undefined
+    identityProbeFor?: (token: string) => {
+      runKey: string, role: string, generation: number, agentId: string
+    } | undefined
   },
   sessionId = '',
   pool?: {
@@ -256,6 +259,26 @@ export function guardReason(
         + ' so nothing authorises a call through it.'
     }
     const presented = (execution.arguments as { authority?: unknown } | undefined)?.authority
+    // The one case where a call may act on a role the run has already verified:
+    // the plugin's own identity check, which navigates to the account page and
+    // reads it back so a role can be switched to again. The token names one run,
+    // role, generation and Agent, and it authorises exactly these two browser
+    // actions on exactly this mount. Anything else falls through to the ordinary
+    // authority check below, which refuses it.
+    if (typeof presented === 'string' && presented !== '') {
+      const capability = store?.identityProbeFor?.(presented)
+      if (capability !== undefined) {
+        const allowed = toolName === 'browser_navigate' || toolName === 'browser_evaluate'
+          && (execution.arguments as { function?: unknown } | undefined)?.function === IDENTITY_PROBE
+        const matches = capability.runKey === owner.runKey
+          && capability.role === role
+          && capability.generation === owner.generation
+          && capability.agentId === (execution.agent?.id ?? '')
+        if (allowed && matches) return undefined
+        return `web-test: that identity check authorises reading ${JSON.stringify(role)}'s`
+          + ` account only, through this run's own browser. It is not permission to act.`
+      }
+    }
     if (typeof presented !== 'string' || presented === '') {
       return 'web-test: this action needs the authority web_test_assume_role issued.'
         + ' Pass it as the "authority" argument; the token stops working when the run restarts.'
@@ -476,6 +499,7 @@ async function verifyRoleIdentity(
   pool: RoleBrowserPool | undefined,
   owner: BrowserOwner,
   identityUrl: string | undefined,
+  capability: { token: string } | undefined,
 ): Promise<VerifiedIdentity> {
   if (pool === undefined) {
     throw new Error('web-test: this build has no role browser pool, so no role can be verified')
@@ -485,7 +509,7 @@ async function verifyRoleIdentity(
       + ' assumed from the role name')
   }
   await pool.ensure(owner)
-  const account = await pool.readAccount(tools, exec, owner, identityUrl)
+  const account = await pool.readAccount(tools, exec, owner, identityUrl, capability)
   return { account: account.account, detail: account.detail }
 }
 
@@ -1303,7 +1327,21 @@ export function apply(ctx: Context): void {
         runKey: parsed.runKey,
         role: parsed.role,
       }
-      const verified = await verifyRoleIdentity(tools, exec, pool, mountOwner, parsed.accountPage)
+      // A role already verified in this generation has no preparation window
+      // left — closing that window is what stops an unverified caller acting
+      // through that browser. Reading the account back needs the same two browser
+      // actions, so the check gets its own capability, destroyed either way: a
+      // failed switch must not leave a window open on a browser whose account did
+      // not match.
+      const probe = store.mintIdentityProbe(parsed.runKey, parsed.role, requireAgentId(exec))
+      let verified: VerifiedIdentity
+      try {
+        verified = await verifyRoleIdentity(
+          tools, exec, pool, mountOwner, parsed.accountPage, probe,
+        )
+      } finally {
+        if (probe !== undefined) store.consumeIdentityProbe(probe.token)
+      }
       const run = await store.assumeRole(parsed.runKey, parsed.role, verified)
       // The role's browser belongs to this run and generation, so a call queued
       // against an earlier run cannot prepare an identity on it. The mount's own

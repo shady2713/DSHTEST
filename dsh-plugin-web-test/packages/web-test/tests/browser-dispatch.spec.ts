@@ -14,8 +14,8 @@ import { describe, expect, it } from 'vitest'
 import { RELEASED_STATUSES, guardReason } from '../src/agent.ts'
 import { SCHEMA_VERSION } from '../src/records.ts'
 import { Context } from '@deepseek-ai/cordis'
-import { RoleBrowserPool } from '../src/role-browser.ts'
-import type { BrowserOwner, MountOwner } from '../src/role-browser.ts'
+import { IDENTITY_PROBE, RoleBrowserPool } from '../src/role-browser.ts'
+import type { MountOwner } from '../src/role-browser.ts'
 import { cleanupHomes, harness } from './support/harness.ts'
 import { environment, run, seedOf } from './support/seed.ts'
 
@@ -583,6 +583,125 @@ describe('preparation judged against the real store', () => {
       // The mount the new generation actually owns is the one that still works.
       const current: MountOwner = { ...mount, generation: 2 }
       expect(judgedBy(store, current, 2)).toBeUndefined()
+    } finally {
+      await dispose()
+      cleanupHomes()
+    }
+  })
+})
+
+describe('switching back to a role that is already verified', () => {
+  const stand = (store: { generationOf: (k: string) => number | undefined }, runKey: string): {
+    ownerOfServer: (n: string) => MountOwner | undefined
+    claimOf: (n: string) => { runKey: string, generation: number } | undefined
+  } => ({
+    ownerOfServer: name => (name.startsWith('playwright-role-') ? {
+      sessionId: 'owner', projectKey: 'shop', environmentKey: 'shop-test',
+      runKey, role: name.slice('playwright-role-'.length),
+      generation: store.generationOf(runKey) ?? 0, serverName: name,
+    } : undefined),
+    claimOf: name => (name.startsWith('playwright-role-')
+      ? { runKey, generation: store.generationOf(runKey) ?? 0 } : undefined),
+  })
+
+  it('lets the run act as buyer, then seller, then buyer again', async () => {
+    const { store, dispose } = await harness({
+      seed: seedOf({
+        runs: { 'run-a': run('run-a', 'owner', { status: 'running', activeRole: '' }) },
+        'environment_revisions': { 'shop-test': environment('shop-test', ['buyer', 'seller']) },
+      }),
+    })
+    try {
+      await store.controlRun('run-a', 'resume')
+      const agent = 'agent-a'
+      for (const role of ['buyer', 'seller', 'buyer']) {
+        const probe = store.mintIdentityProbe('run-a', role, agent)
+        expect(probe, `no identity check for ${role}`).toBeDefined()
+        // The check itself is admitted through the run's own browser...
+        expect(guardReason(
+          { name: `mcp__playwright-role-${role}__browser_navigate`, arguments: { authority: probe?.token }, agent: { id: agent } },
+          store, 'owner', stand(store, 'run-a'),
+        ), `navigate refused for ${role}`).toBeUndefined()
+        expect(guardReason(
+          { name: `mcp__playwright-role-${role}__browser_evaluate`, arguments: { function: IDENTITY_PROBE, authority: probe?.token }, agent: { id: agent } },
+          store, 'owner', stand(store, 'run-a'),
+        ), `evaluate refused for ${role}`).toBeUndefined()
+        // ...and it authorises nothing else on it.
+        expect(guardReason(
+          { name: `mcp__playwright-role-${role}__browser_click`, arguments: { authority: probe?.token }, agent: { id: agent } },
+          store, 'owner', stand(store, 'run-a'),
+        ), `click admitted for ${role}`).toBeTypeOf('string')
+        store.consumeIdentityProbe(probe?.token ?? '')
+        expect(store.identityProbeFor(probe?.token ?? ''), 'capability survived').toBeUndefined()
+        await store.assumeRole('run-a', role, { account: `${role}@example.test`, detail: 'probe' })
+        expect(store.getRun('run-a')?.activeRole, `did not switch to ${role}`).toBe(role)
+      }
+    } finally {
+      await dispose()
+      cleanupHomes()
+    }
+  })
+
+  it('refuses the check to another agent, another role, and an older generation', async () => {
+    const { store, dispose } = await harness({
+      seed: seedOf({
+        runs: { 'run-a': run('run-a', 'owner', { status: 'running', activeRole: '' }) },
+        'environment_revisions': { 'shop-test': environment('shop-test', ['buyer', 'seller']) },
+      }),
+    })
+    try {
+      await store.controlRun('run-a', 'resume')
+      const probe = store.mintIdentityProbe('run-a', 'buyer', 'agent-a')
+      const click = (role: string, token: string, agentId: string): string | undefined =>
+        guardReason(
+          { name: `mcp__playwright-role-${role}__browser_navigate`, arguments: { authority: token }, agent: { id: agentId } },
+          store, 'owner', stand(store, 'run-a'),
+        )
+      // Another Agent cannot present it.
+      expect(click('buyer', probe?.token ?? '', 'agent-b')).toBeTypeOf('string')
+      // Nor can it authorise a different role's browser.
+      expect(click('seller', probe?.token ?? '', 'agent-a')).toBeTypeOf('string')
+      // Nor does it survive the run moving to a new generation.
+      await store.controlRun('run-a', 'pause')
+      await store.controlRun('run-a', 'resume')
+      expect(click('buyer', probe?.token ?? '', 'agent-a')).toBeTypeOf('string')
+      store.consumeIdentityProbe(probe?.token ?? '')
+    } finally {
+      await dispose()
+      cleanupHomes()
+    }
+  })
+
+  it('cannot be forged, because nothing accepts a value from outside', async () => {
+    const { store, dispose } = await harness({
+      seed: seedOf({
+        runs: { 'run-a': run('run-a', 'owner', { status: 'running', activeRole: '' }) },
+        'environment_revisions': { 'shop-test': environment('shop-test', ['buyer']) },
+      }),
+    })
+    try {
+      await store.controlRun('run-a', 'resume')
+      // A token shaped like one of ours, and a token that was issued and then
+      // destroyed. Neither may open anything.
+      for (const invented of [
+        'S-1-5-21-111-222-333-1001',
+        'probe-0000-0000',
+        (() => {
+          const probe = store.mintIdentityProbe('run-a', 'buyer', 'agent-a')
+          const token = probe?.token ?? ''
+          store.consumeIdentityProbe(token)
+          return token
+        })(),
+      ]) {
+        expect(guardReason(
+          {
+            name: 'mcp__playwright-role-buyer__browser_navigate',
+            arguments: { authority: invented },
+            agent: { id: 'agent-a' },
+          },
+          store, 'owner', stand(store, 'run-a'),
+        ), `invented ${invented} was admitted`).toBeTypeOf('string')
+      }
     } finally {
       await dispose()
       cleanupHomes()

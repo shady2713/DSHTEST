@@ -54,6 +54,31 @@ export interface AuthorityToken {
   grantedAtMs: number
 }
 
+/**
+ * A single-purpose capability this plugin issues to itself.
+ *
+ * It authorises reading one role's account back off the identity page during
+ * `assume_role`, and nothing else. The browser actions it covers are the same
+ * ones a person performs to sign in, so the execution guard cannot tell them
+ * apart by name — it tells them apart by what the token is. This capability is
+ * bound to one run, role, generation, Agent and mount, and is destroyed as soon
+ * as the check it was issued for finishes.
+ */
+export interface IdentityProbeCapability {
+  /** Unforgeable id presented as an authority; the record is re-read on use. */
+  token: string
+  /** Run whose role is being re-verified. */
+  runKey: string
+  /** Run generation the switch is happening in. */
+  generation: number
+  /** Agent the switch is running as; another agent cannot present it. */
+  agentId: string
+  /** Role whose account is being read back. */
+  role: string
+  /** When the capability was issued. */
+  grantedAtMs: number
+}
+
 /** Every durable record kind this plugin stores. */
 export type PolicyRecord = z.infer<typeof policyRecordSchema>
 

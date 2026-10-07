@@ -54,6 +54,7 @@ import type {
   EnvironmentRevisionRecord,
   CasePlanRecord,
   AuthorityToken,
+  IdentityProbeCapability,
   OperationRecord,
   PluginLifecycleState,
   RunHoldStatus,
@@ -621,6 +622,71 @@ export class WebTestStore extends Service {
 
   /** Runs an operator held, so the execution path can refuse them by session. */
   private readonly authority = new Map<string, AuthorityToken>()
+
+  /**
+   * Single-purpose capabilities this plugin issues to itself.
+   *
+   * Re-verifying a role means navigating to the identity page and reading the
+   * account back. Those are the same two browser actions a person performs to
+   * sign in, so the guard judges them the same way — but the role being switched
+   * back to has already been verified in this generation, and closing its
+   * preparation window is what stops an unverified caller from acting through
+   * that browser. Without a path of its own, a verified role can never be
+   * re-entered.
+   *
+   * The capability is bound to one run, one role, one generation, one Agent and
+   * one purpose, and is destroyed as soon as the check finishes. A caller that
+   * presents it for anything else is refused by {@link requireAuthority}, and a
+   * model cannot mint one: nothing here accepts a value from outside.
+   */
+  private readonly identityProbe = new Map<string, IdentityProbeCapability>()
+
+  /**
+   * Issue the capability to re-verify one role's account.
+   * @param runKey - Run the switch belongs to.
+   * @param role - Declared role about to be verified.
+   * @param agentId - Agent the switch is running as.
+   * @returns the capability, or `undefined` when the run cannot be switched.
+   */
+  mintIdentityProbe(runKey: string, role: string, agentId: string): IdentityProbeCapability | undefined {
+    const run = this.requireRun(runKey)
+    if (run.status !== 'running') return undefined
+    if (!this.declaredRoles(run.key).includes(role)) return undefined
+    const capability: IdentityProbeCapability = {
+      token: randomUUID(),
+      runKey,
+      role,
+      generation: run.generation,
+      agentId,
+      grantedAtMs: Date.now(),
+    }
+    this.identityProbe.set(capability.token, capability)
+    return capability
+  }
+
+  /**
+   * The capability a presented token is, when it is one of ours.
+   *
+   * The execution guard asks this before deciding that a call needs an ordinary
+   * authority: a token the model could have invented would not be found here.
+   * @param token - A value presented as an authority.
+   * @returns the capability, or `undefined` when the token is not one.
+   */
+  identityProbeFor(token: string): IdentityProbeCapability | undefined {
+    return this.identityProbe.get(token)
+  }
+
+  /**
+   * Destroy a capability, whether the check it was issued for passed or not.
+   *
+   * Leaving it alive would let one successful switch be replayed, and leaving it
+   * alive after a failed one would leave a window open on a browser whose state
+   * is not what the run believed.
+   * @param token - The capability to discard.
+   */
+  consumeIdentityProbe(token: string): void {
+    this.identityProbe.delete(token)
+  }
   private readonly heldRuns = new Map<string, RunHoldStatus>()
 
   /** When each run's evidence directory was prepared, so stale files can be refused. */
@@ -997,6 +1063,34 @@ export class WebTestStore extends Service {
    * that is no longer running at the generation the token was minted in.
    */
   requireAuthority(token: string, agentId: string): AuthorityToken {
+    const capability = this.identityProbe.get(token)
+    // A capability issued for reading one role's account back is checked on its
+    // own terms: it names the run, role, generation and Agent the switch is for,
+    // and it authorises nothing else. It is deliberately not an ordinary
+    // authority — a caller holding one cannot act as the role, only look at it.
+    if (capability !== undefined) {
+      if (capability.agentId !== agentId) {
+        throw new Error('web-test: that identity check belongs to another agent')
+      }
+      const probeRun = this.records[TABLE_RUNS]?.[capability.runKey] as RunRecord | undefined
+      if (probeRun === undefined || probeRun.status !== 'running') {
+        throw new Error(`web-test: run ${JSON.stringify(capability.runKey)} is not running, so`
+          + ' nothing authorises an identity check against it')
+      }
+      if (probeRun.generation !== capability.generation) {
+        throw new Error(`web-test: that identity check was issued in generation`
+          + ` ${capability.generation} of run ${JSON.stringify(capability.runKey)}, which is`
+          + ` now in generation ${probeRun.generation}`)
+      }
+      if (!this.declaredRoles(probeRun.key).includes(capability.role)) {
+        throw new Error(`web-test: run ${JSON.stringify(capability.runKey)} does not declare`
+          + ` role ${JSON.stringify(capability.role)}`)
+      }
+      return {
+        token, runKey: capability.runKey, generation: capability.generation,
+        agentId: capability.agentId, role: capability.role, grantedAtMs: capability.grantedAtMs,
+      }
+    }
     const authority = this.authority.get(token)
     if (authority === undefined) {
       throw new Error('web-test: this call presented no valid authority; call web_test_assume_role and use the token it returns')

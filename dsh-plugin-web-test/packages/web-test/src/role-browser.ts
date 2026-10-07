@@ -915,6 +915,7 @@ export class RoleBrowserPool extends Service {
     exec: ToolRunContext,
     owner: BrowserOwner,
     identityUrl: string,
+    capability?: { token: string },
   ): Promise<IdentityAnswer> {
     // The namespace comes from the mount this caller owns, not from the role name
     // and not from whichever mount of that role started last: two runs in one
@@ -930,7 +931,11 @@ export class RoleBrowserPool extends Service {
     const navigate = await tools.execute({
       ...child,
       name: `${namespace}browser_navigate`,
-      arguments: { url: identityUrl },
+      // A capability is presented when the role has no preparation window left,
+      // so the execution guard can tell this apart from a caller signing in.
+      arguments: capability === undefined
+        ? { url: identityUrl }
+        : { url: identityUrl, authority: capability.token },
       signal: exec.signal,
     })
     assertToolOk(navigate, `${namespace}browser_navigate`, owner.role)
@@ -938,7 +943,9 @@ export class RoleBrowserPool extends Service {
     const read = await tools.execute({
       ...probe,
       name: `${namespace}browser_evaluate`,
-      arguments: { function: IDENTITY_PROBE },
+      arguments: capability === undefined
+        ? { function: IDENTITY_PROBE }
+        : { function: IDENTITY_PROBE, authority: capability.token },
       signal: exec.signal,
     })
     assertToolOk(read, `${namespace}browser_evaluate`, owner.role)
@@ -967,7 +974,7 @@ export class RoleBrowserPool extends Service {
  * page cannot be mistaken for a signed-in account: an unsigned page answers
  * with an empty string rather than with whatever text happens to be on it.
  */
-const IDENTITY_PROBE = '() => JSON.stringify({ account: document.body.dataset.webtestAccount ?? "", url: location.href, title: document.title })'
+export const IDENTITY_PROBE = '() => JSON.stringify({ account: document.body.dataset.webtestAccount ?? "", url: location.href, title: document.title })'
 
 /**
  * Derive a child call id from the call that asked for it.
