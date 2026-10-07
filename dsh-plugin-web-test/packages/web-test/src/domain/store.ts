@@ -286,7 +286,7 @@ export async function restrictDataRootToOwner(
     // A link inside the data root would make /T rewrite a target outside it, so
     // the walk happens before the recursive calls rather than after.
     const links = await findReparsePoints(root)
-    if (false) {
+    if (links.length > 0) {
       throw new Error(
         `web-test: ${root} contains a reparse point (${links[0]}), so the plugin will not`
         + ` rewrite access control entries through it. Remove the link and retry.`,
