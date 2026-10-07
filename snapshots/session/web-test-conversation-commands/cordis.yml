@@ -1,5 +1,0 @@
-- id: tool-ask-user
-  disabled: true
-- insert:
-    - id: web-test-command-fixture
-      name: './composition.mjs'
