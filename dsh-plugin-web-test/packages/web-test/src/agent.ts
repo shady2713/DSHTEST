@@ -221,12 +221,23 @@ export function guardReason(
       // empty string — which a run that cannot mint an authority carries — still
       // counts as offering nothing, while a real token from another run falls
       // through and is refused by the checks below.
+      // A mount from an earlier generation of the same run is not the current
+      // one: the run moved on, and the client this mount belongs to has been
+      // replaced. Preparing an identity through it would hand the new generation
+      // a browser the old one still owns.
+      const generationAgrees = claim !== undefined && claim.generation === owner.generation
       const offered = (execution.arguments as { authority?: unknown } | undefined)?.authority
       if ((offered === undefined || offered === '')
-        && claim !== undefined && claim.runKey === owner.runKey
+        && claim !== undefined && claim.runKey === owner.runKey && generationAgrees
         && store?.mayPrepareIdentity(sessionId, role, owner.runKey) === true) {
         return undefined
       }
+    }
+    const claim = pool?.claimOf(serverName)
+    if (claim !== undefined && claim.generation !== owner.generation) {
+      return `web-test: that browser was mounted in generation ${claim.generation} of run`
+        + ` ${JSON.stringify(owner.runKey)} and the run is now in generation ${owner.generation},`
+        + ' so nothing authorises a call through it.'
     }
     const presented = (execution.arguments as { authority?: unknown } | undefined)?.authority
     if (typeof presented !== 'string' || presented === '') {

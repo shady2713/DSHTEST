@@ -1009,6 +1009,15 @@ export class WebTestStore extends Service {
     if (current === undefined) {
       throw new Error(`web-test: authority names run ${JSON.stringify(authority.runKey)}, which no longer exists`)
     }
+    // The run acts as one role at a time. After it moves from buyer to seller
+    // the buyer's verified identity is still on record and a buyer token still
+    // passes every other check here, so the role has to be compared against what
+    // the run is doing now.
+    if (current.activeRole !== '' && current.activeRole !== authority.role) {
+      throw new Error(`web-test: authority names role ${JSON.stringify(authority.role)}`
+        + ` of run ${JSON.stringify(authority.runKey)}, which now acts as`
+        + ` ${JSON.stringify(current.activeRole)}; call web_test_assume_role again.`)
+    }
     if (current.status !== 'running') {
       throw new Error(`web-test: authority names run ${JSON.stringify(authority.runKey)}, which is ${current.status}; only a running run may act`)
     }
