@@ -42,10 +42,13 @@ declare module '@deepseek-ai/cordis' {
 }
 
 /** Tool name prefix the pinned Playwright MCP server registers its tools under. */
-const BROWSER_TOOL_PREFIX = 'mcp__playwright-role-'
+/** Prefix every MCP tool namespace carries, before the server's own name. */
+const MCP_PREFIX = 'mcp__'
+
+const BROWSER_TOOL_PREFIX = `${MCP_PREFIX}playwright-role-`
 
 /** Suffix of the tools this module lets the model reach for the active role. */
-const BROWSER_TOOL_SUFFIX = '__'
+export const BROWSER_TOOL_SUFFIX = '__'
 
 /** Generation suffix a re-mounted role's server name carries, e.g. `buyer-g2`. */
 const GENERATION_SUFFIX = /-g\d+$/u
@@ -54,6 +57,222 @@ const GENERATION_SUFFIX = /-g\d+$/u
 const ROLE_STARTUP_TIMEOUT_MS = 60_000
 
 /** What one role's browser resource is and how to address it. */
+/**
+ * The identity one mounted role browser belongs to.
+ *
+ * Every field is what an authorisation has to match: the declared project and
+ * environment revision, the run and its generation, the role, and the exact
+ * mount the tool namespace names.
+ */
+export interface MountOwner {
+  /** Project whose environment declares the role. */
+  projectKey: string
+  /** Confirmed environment revision the role belongs to. */
+  environmentKey: string
+  /** Run acting as the role; empty before a run exists. */
+  runKey: string
+  /** Declared role name. */
+  role: string
+  /** Run generation the mount was created under. */
+  generation: number
+  /** MCP server name, which is the tool namespace's identity. */
+  serverName: string
+  /** Session the mount belongs to; another session may not drive it. */
+  sessionId: string
+}
+
+/**
+ * The mount keys one run owns.
+ *
+ * Selection is by the mount's own owner, never by a role name: two runs in one
+ * session can each declare `buyer`, and a release that reached for the role
+ * reached whichever mount happened to be filed under it.
+ * @param owners - Every mounted browser's owner.
+ * @param runKey - Run whose mounts are wanted.
+ * @returns the distinct keys of that run's mounts.
+ */
+export function mountKeysOfRun(owners: MountOwner[], runKey: string): string[] {
+  return [...new Set(owners
+    .filter(owner => owner.runKey === runKey)
+    .map(owner => RoleBrowserPool.keyOf(owner)))]
+}
+
+/**
+ * Every mounted browser's key.
+ * @param owners - Every mounted browser's owner.
+ * @returns the distinct keys of all mounts.
+ */
+export function allMountKeys(owners: MountOwner[]): string[] {
+  return [...new Set(owners.map(owner => RoleBrowserPool.keyOf(owner)))]
+}
+
+/**
+ * Run every disposer in turn and report the ones that refused.
+ *
+ * A teardown that fails must not stop the sweep, and the caller must not treat a
+ * pool as empty afterwards: the disposer stays filed under its own key so the
+ * next release retries it. `releaseAll` and `releaseRun` both funnel through
+ * here so neither can forget the sweep.
+ * @param dispose - Releases one mount by its key; throws when it refused.
+ * @param keys - The keys to release, in order.
+ * @returns One message per disposer that threw; empty when all of them closed.
+ */
+export async function disposeAll(
+  dispose: (key: string) => Promise<void>,
+  keys: readonly string[],
+): Promise<string[]> {
+  const failures: string[] = []
+  for (const key of keys) {
+    try {
+      await dispose(key)
+    } catch (error) {
+      failures.push(String(error))
+    }
+  }
+  return failures
+}
+
+/**
+ * The tool namespace one owner's browser answers on.
+ *
+ * Read from the mount filed under that owner, never from the newest mount of the
+ * role: two runs in one session can each declare `buyer`, and reading whichever
+ * started last would read an account the caller does not own. With no mount yet
+ * the namespace is derived from the role, which is the name the provider would
+ * have used for its first mount.
+ * @param started - Mounted browsers by their owner key.
+ * @param owner - Identity the read belongs to.
+ * @returns The `mcp__<server>__` namespace to call through.
+ */
+export function namespaceFor(
+  started: ReadonlyMap<string, RoleBrowser>,
+  owner: BrowserOwner,
+): string {
+  const live = started.get(RoleBrowserPool.keyOf(owner))
+  return live === undefined
+    ? RoleBrowserPool.namespaceOf(owner.role)
+    : `mcp__${live.serverName}__`
+}
+
+/**
+ * File a freshly mounted browser under its owner.
+ *
+ * The claim is written in the same step as the mount, not after the identity has
+ * been confirmed. A window in which the mount existed but nothing owned it left
+ * the plugin's own identity read refused by its own guard, and left the browser
+ * unreleased when its run was cancelled.
+ * @param started - Mounted browsers by owner key.
+ * @param owners - Each mounted browser's owner, by server name.
+ * @param claims - Which run and generation owns each server name.
+ * @param key - The owner key the mount is filed under.
+ * @param owner - Identity that mounted it.
+ * @param browser - The browser itself.
+ */
+export function recordMount(
+  started: Map<string, RoleBrowser>,
+  owners: Map<string, MountOwner>,
+  claims: Map<string, { runKey: string, generation: number }>,
+  key: string,
+  owner: BrowserOwner,
+  browser: RoleBrowser,
+): void {
+  started.set(key, browser)
+  claims.set(browser.serverName, { runKey: owner.runKey, generation: owner.generation })
+  owners.set(browser.serverName, {
+    sessionId: owner.sessionId,
+    projectKey: owner.projectKey,
+    environmentKey: owner.environmentKey,
+    runKey: owner.runKey,
+    role: browser.role,
+    generation: owner.generation,
+    serverName: browser.serverName,
+  })
+}
+
+/**
+ * Take one mount out of the pool's tracking, and hand back what has to be put
+ * back if its teardown refuses.
+ *
+ * Releasing is two steps: stop tracking the mount, then await its disposer. If
+ * that disposer throws, the mount is still live, so its disposer, its browser and
+ * its owner all go back under the names they had. Dropping them would let a later
+ * release report an empty pool while the browser was still running.
+ * @param mounts - Disposers by owner key.
+ * @param started - Mounted browsers by owner key.
+ * @param owners - Each mounted browser's owner, by server name.
+ * @param claims - Which run and generation owns each server name.
+ * @param keysByRole - Which owner keys each role has mounts under.
+ * @param key - The owner key being released.
+ * @returns The disposer to await, plus the records to restore when it throws.
+ */
+export interface DetachedMount {
+  /** Disposer to await; undefined when the key held no mount. */
+  dispose: (() => Promise<void>) | undefined
+  /** The browser that was filed under `key`, if any. */
+  browser: RoleBrowser | undefined
+  /** The owner that was filed under the browser's server name, if any. */
+  owner: MountOwner | undefined
+}
+
+/**
+ * Stop tracking one mounted browser.
+ * @param mounts - Disposers by owner key.
+ * @param started - Mounted browsers by owner key.
+ * @param owners - Each mounted browser's owner, by server name.
+ * @param claims - Which run and generation owns each server name.
+ * @param keysByRole - Which owner keys each role has mounts under.
+ * @param key - The owner key being released.
+ * @returns What has to be restored if the disposer refuses.
+ */
+export function detachMount(
+  mounts: Map<string, () => Promise<void>>,
+  started: Map<string, RoleBrowser>,
+  owners: Map<string, MountOwner>,
+  claims: Map<string, { runKey: string, generation: number }>,
+  keysByRole: Map<string, Set<string>>,
+  key: string,
+): DetachedMount {
+  const dispose = mounts.get(key)
+  const browser = started.get(key)
+  const owner = browser === undefined ? undefined : owners.get(browser.serverName)
+  mounts.delete(key)
+  started.delete(key)
+  if (browser !== undefined) {
+    owners.delete(browser.serverName)
+    claims.delete(browser.serverName)
+    const roleKeys = keysByRole.get(browser.role)
+    roleKeys?.delete(key)
+    if (roleKeys !== undefined && roleKeys.size === 0) keysByRole.delete(browser.role)
+  }
+  return { dispose, browser, owner }
+}
+
+/**
+ * Put a refused mount back under the names it had before its teardown.
+ * @param mounts - Disposers by owner key.
+ * @param started - Mounted browsers by owner key.
+ * @param owners - Each mounted browser's owner, by server name.
+ * @param keysByRole - Which owner keys each role has mounts under.
+ * @param key - The owner key whose teardown refused.
+ * @param detached - What {@link detachMount} handed back.
+ */
+export function restoreMount(
+  mounts: Map<string, () => Promise<void>>,
+  started: Map<string, RoleBrowser>,
+  owners: Map<string, MountOwner>,
+  keysByRole: Map<string, Set<string>>,
+  key: string,
+  detached: DetachedMount,
+): void {
+  if (detached.dispose !== undefined) mounts.set(key, detached.dispose)
+  if (detached.browser === undefined) return
+  started.set(key, detached.browser)
+  const roleKeys = keysByRole.get(detached.browser.role) ?? new Set<string>()
+  roleKeys.add(key)
+  keysByRole.set(detached.browser.role, roleKeys)
+  if (detached.owner !== undefined) owners.set(detached.browser.serverName, detached.owner)
+}
+
 export interface RoleBrowser {
   /** Role name the run declared for this browser. */
   readonly role: string
@@ -72,6 +291,16 @@ export interface RoleBrowser {
  * built from the project, the environment, the run and the role together.
  */
 export interface BrowserOwner {
+  /** Session the mount belongs to; another session may not drive it. */
+  sessionId: string
+  /**
+   * Run generation the mount is created under.
+   *
+   * The caller supplies it from the run it is mounting for. Reading it back from
+   * the pool instead cannot work: the mount does not exist yet at that point, so
+   * the lookup returns nothing and every mount would be filed as generation 0.
+   */
+  generation: number
   /** Project whose environment declares the role. */
   projectKey: string
   /** Confirmed environment revision the role belongs to. */
@@ -105,12 +334,41 @@ export interface IdentityAnswer {
  */
 export class RoleBrowserPool extends Service {
   /** Started role browsers, in the order they were created. */
-  private readonly started = new Map<string, RoleBrowser>()
-  /** Roles whose mount is in flight, so a second caller waits on the same one. */
-  private readonly pending = new Map<string, Promise<RoleBrowser>>()
+  /**
+   * The pool's tracking maps, read-only.
+   *
+   * Their element types are exported contracts (`RoleBrowser`, `MountOwner`), and
+   * what the pool still holds cannot be observed without the provider. Exposing
+   * them lets a caller read the pool's state and lets a test drive a real
+   * disposer through it; nothing outside this class may add to or change them.
+   */
+  readonly started = new Map<string, RoleBrowser>()
+  /**
+   * Roles whose mount is in flight, so a second caller waits on the same one.
+   *
+   * The owner is held beside the promise rather than only being written when the
+   * mount completes. A release that arrives in between selects its targets from
+   * the owners, and a start that has not finished has none yet, so without this
+   * the release finds nothing and the browser the start then completes stays up
+   * for a run that no longer exists.
+   */
+  private readonly pending = new Map<string, { settled: Promise<RoleBrowser>, owner: BrowserOwner & { generation: number } }>()
+  /**
+   * Keys released while their mount was still in flight, consumed by that start
+   * once it completes. Without it the release finds nothing to close and the
+   * browser the start then brings up stays for a run that no longer exists.
+   */
+  private readonly abandoned = new Set<string>()
 
   /** Disposers returned by `mountSessionMcp`, one per started role. */
-  private readonly mounts = new Map<string, Disposable<Promise<void>>>()
+  /**
+   * Mounts that have not been released, keyed by owner key.
+   *
+   * Exposed read-only because whether a browser is actually running cannot be
+   * observed without the provider: a caller that needs to know what the pool
+   * still holds reads this, and nothing outside the class may add to it.
+   */
+  readonly mounts = new Map<string, Disposable<Promise<void>>>()
   /** The role this pool currently drives; the host allows only one at a time. */
   private activeRole: string | undefined
 
@@ -133,7 +391,16 @@ export class RoleBrowserPool extends Service {
    * a role and dropped with the browser, so preparation can be judged against the
    * run that actually owns the resource the call would drive.
    */
-  private readonly claims = new Map<string, { runKey: string, generation: number }>()
+  readonly claims = new Map<string, { runKey: string, generation: number }>()
+
+  /**
+   * Who each mounted browser belongs to, by MCP server name.
+   *
+   * The guard judges a browser call against the mount it names, so the mount has
+   * to carry its own owner rather than be inferred from a role name, a session or
+   * the newest mount of a role.
+   */
+  readonly owners = new Map<string, MountOwner>()
 
   /**
    * The composite key each started role is filed under, by role name.
@@ -158,9 +425,9 @@ export class RoleBrowserPool extends Service {
    * @param runKey - Run that switched to the role.
    * @param generation - Run generation at the moment of the switch.
    */
-  claim(role: string, runKey: string, generation: number): void {
-    if (role === '') return
-    this.claims.set(role, { runKey, generation })
+  claim(serverName: string, runKey: string, generation: number): void {
+    if (serverName === '') return
+    this.claims.set(serverName, { runKey, generation })
   }
 
   /**
@@ -168,8 +435,30 @@ export class RoleBrowserPool extends Service {
    * @param role - The role to look up.
    * @returns the owner, or undefined when no run has claimed the role.
    */
-  ownerOf(role: string): { runKey: string, generation: number } | undefined {
-    return this.claims.get(role)
+  claimOf(serverName: string): { runKey: string, generation: number } | undefined {
+    return this.claims.get(serverName)
+  }
+
+  /**
+   * The identity one mounted browser belongs to.
+   *
+   * Keyed by the MCP server name rather than by role, because a role name is
+   * not an owner: two runs in one session can each declare `buyer`, and a call
+   * queued against the first must not be answered from the second.
+   * @param serverName - Server name the tool namespace carries.
+   * @returns the owner, or undefined when nothing is mounted under that name.
+   */
+  ownerOfServer(serverName: string): MountOwner | undefined {
+    return this.owners.get(serverName)
+  }
+
+  /**
+   * The server name one owner's browser is reachable under.
+   * @param owner - Identity being looked up.
+   * @returns the server name, or an empty string when that owner has no mount.
+   */
+  serverNameFor(owner: BrowserOwner): string {
+    return this.started.get(RoleBrowserPool.keyOf(owner))?.serverName ?? ''
   }
 
   /**
@@ -231,6 +520,60 @@ export class RoleBrowserPool extends Service {
    * @param owner - The identity that owns the browser.
    * @returns a key no other owner shares.
    */
+  /**
+   * The exact MCP server name a tool namespace carries.
+   *
+   * Unlike `roleOf` this keeps the generation suffix, because the suffix is
+   * what distinguishes one mount of a role from the mount that replaced it.
+   * @param toolName - Full tool name as dispatched.
+   * @returns the server name, or an empty string when this is not one of ours.
+   */
+  static serverNameOf(toolName: string): string {
+    // The tool namespace is `mcp__<serverName>__<tool>`, and the server name
+    // keeps its `playwright-role-` part: that is the identity the mount was filed
+    // under. Cutting at the role prefix instead would answer with a role name,
+    // which is exactly the field that is not an owner.
+    if (!toolName.startsWith(MCP_PREFIX)) return ''
+    return toolName.slice(MCP_PREFIX.length).split(BROWSER_TOOL_SUFFIX)[0] ?? ''
+  }
+
+  /**
+   * The run generation one owner's mount was created under.
+   * @param owner - Identity being mounted.
+   * @returns the generation recorded by the claim, or 0 when none was claimed.
+   */
+  private generationOf(owner: BrowserOwner): number {
+    return owner.generation
+  }
+
+  /**
+   * Release one mount by the key it is filed under.
+   *
+   * `releaseRole` is for a role name; this is for the composite key `mounts`
+   * holds, which is what a bulk release actually has.
+   * @param key - Key the mount is filed under.
+   */
+  private async releaseByKey(key: string): Promise<void> {
+    const detached = detachMount(
+      this.mounts, this.started, this.owners, this.claims, this.keysByRole, key,
+    )
+    if (detached.browser !== undefined && this.activeRole === detached.browser.role) {
+      this.activeRole = undefined
+    }
+    if (detached.dispose === undefined) {
+      // Still starting, so there is nothing to close yet. The mark tells the
+      // start, when it completes, that the run it was mounting for is gone.
+      if (this.pending.has(key)) this.abandoned.add(key)
+      return
+    }
+    try {
+      await detached.dispose()
+    } catch (error) {
+      restoreMount(this.mounts, this.started, this.owners, this.keysByRole, key, detached)
+      throw error
+    }
+  }
+
   static keyOf(owner: BrowserOwner): string {
     return `${owner.projectKey}\u0000${owner.environmentKey}\u0000${owner.runKey}\u0000${owner.role}`
   }
@@ -253,7 +596,7 @@ export class RoleBrowserPool extends Service {
     // browser that may still fail to come up, and a failure reaches every waiter
     // instead of leaving them holding a resource that was never started.
     const starting = this.pending.get(key)
-    if (starting !== undefined) return starting
+    if (starting !== undefined) return starting.settled
     const existing = this.started.get(key)
     if (existing !== undefined) return existing
     // A browser started when the environment was confirmed, before any run
@@ -266,7 +609,11 @@ export class RoleBrowserPool extends Service {
       this.mounts.delete(RoleBrowserPool.keyOf({ ...owner, runKey: '' }))
       this.started.delete(RoleBrowserPool.keyOf({ ...owner, runKey: '' }))
       this.mounts.set(key, mounted ?? (async () => {}))
-      this.started.set(key, preStarted)
+      // The owner and the claim have to follow the mount. Filing only the mount
+      // leaves the browser owned by the environment's empty run, so every later
+      // call is compared against `runKey === ''` and refused, and a cancel never
+      // selects it as a target.
+      recordMount(this.started, this.owners, this.claims, key, owner, preStarted)
       this.addKeyForRole(role, key)
       return preStarted
     }
@@ -278,8 +625,8 @@ export class RoleBrowserPool extends Service {
     const generation = this.mountCount.get(role) ?? 1
     const serverName = `playwright-role-${role}${generation === 1 ? '' : `-g${generation}`}`
     const browser: RoleBrowser = { role, serverName, toolNames: [] }
-    const settled = this.mountBrowser(key, role, browser)
-    this.pending.set(key, settled)
+    const settled = this.mountBrowser(key, { ...owner, generation: this.generationOf(owner) }, browser)
+    this.pending.set(key, { settled, owner: { ...owner, generation: this.generationOf(owner) } })
     try {
       return await settled
     } finally {
@@ -335,21 +682,41 @@ export class RoleBrowserPool extends Service {
    * @returns once each released browser is closed.
    */
   async releaseRun(runKey: string): Promise<void> {
-    const owned = [...this.claims.entries()]
-      .filter(([, claim]) => claim.runKey === runKey)
-      .map(([role]) => role)
-    for (const role of owned) {
-      await this.releaseRole(role)
+    // Every mount whose owner is this run, released through its own key. Reading
+    // the claims and passing their names to `releaseRole` released nothing: a
+    // claim is filed by server name while `keysByRole` is filed by role, so the
+    // lookup never matched and the run's browsers stayed up after a cancel.
+    const keys = mountKeysOfRun([...this.owners.values()], runKey)
+    // A mount that is still starting has no owner row yet, so it is listed here
+    // instead. Releasing it before its disposer exists is still correct: the
+    // finishing start reads this and closes itself.
+    for (const [key, entry] of this.pending) {
+      if (entry.owner.runKey === runKey && !keys.includes(key)) keys.push(key)
+    }
+
+    const failures = await disposeAll(key => this.releaseByKey(key), keys)
+    if (failures.length > 0) {
+      throw new Error(`web-test: not every browser of run ${JSON.stringify(runKey)} closed:`
+        + ` ${failures.join('; ')}`)
     }
   }
 
   async releaseRole(role: string): Promise<void> {
     const keys = this.keysByRole.get(role) ?? new Set<string>()
     const mounted = [...keys].map(key => this.mounts.get(key))
+    // The browsers are read before the rows go: reading them afterwards always
+    // finds nothing, which left every claim and pending start of this role behind.
+    const browsers = [...keys].map(key => this.started.get(key))
     for (const key of keys) { this.mounts.delete(key); this.started.delete(key) }
     this.keysByRole.delete(role)
-    this.claims.delete(role)
-    this.pending.delete(role)
+    for (const browser of browsers) {
+      if (browser === undefined) continue
+      // The owner too: leaving it behind keeps `ownerOfServer` resolving a mount
+      // that this call just closed.
+      this.claims.delete(browser.serverName)
+      this.owners.delete(browser.serverName)
+    }
+    for (const key of keys) this.pending.delete(key)
     if (this.activeRole === role) this.activeRole = undefined
     for (const effect of mounted) {
       if (effect === undefined) continue
@@ -366,7 +733,17 @@ export class RoleBrowserPool extends Service {
    * @param role - Declared role name.
    * @param key - Key the mount is filed under.
    */
-  private addKeyForRole(role: string, key: string): void {
+  /**
+   * File one owner key under the role that mounted it.
+   *
+   * Part of the pool's public surface because which keys a role still holds is
+   * what `releaseRole` acts on, and that cannot be observed from outside without
+   * the provider. Adding a key here without a mount under it only makes a later
+   * role release a no-op for that key.
+   * @param role - Role that owns the mount.
+   * @param key - Owner key the mount is filed under.
+   */
+  addKeyForRole(role: string, key: string): void {
     const keys = this.keysByRole.get(role) ?? new Set<string>()
     keys.add(key)
     this.keysByRole.set(role, keys)
@@ -378,7 +755,12 @@ export class RoleBrowserPool extends Service {
    * @param browser - The resource to record once the server is mounted.
    * @returns once the server is mounted.
    */
-  private async mountBrowser(key: string, role: string, browser: RoleBrowser): Promise<RoleBrowser> {
+  private async mountBrowser(
+    key: string,
+    owner: BrowserOwner & { generation: number },
+    browser: RoleBrowser,
+  ): Promise<RoleBrowser> {
+    const role = browser.role
     const serverName = browser.serverName
     // Loaded on demand rather than at import time: these pull the MCP client's
     // whole peer tree, which a unit test that never starts a browser should not
@@ -432,8 +814,18 @@ export class RoleBrowserPool extends Service {
       )
     }
     this.mounts.set(key, async () => { await fiber.dispose() })
-    this.started.set(key, browser)
     this.addKeyForRole(role, key)
+    recordMount(this.started, this.owners, this.claims, key, owner, browser)
+    // The run that asked for this browser was released while it was starting.
+    // Closing here is the only chance, and the mark is consumed so it cannot fire
+    // against a later mount of the same key.
+    if (this.abandoned.delete(key)) {
+      await this.releaseByKey(key)
+      throw new Error(
+        `web-test: the run that asked for role ${JSON.stringify(role)} was released while`
+        + ' its browser was starting, so the browser was closed again.',
+      )
+    }
     return browser
   }
 
@@ -448,6 +840,17 @@ export class RoleBrowserPool extends Service {
    * then, and the deny list is rebuilt each time the active role changes.
    * @returns the started role browsers.
    */
+  /**
+   * Who each mounted role browser belongs to.
+   *
+   * Read by the execution guard to judge a call against the mount it names, and
+   * by a caller that has to report what is still up.
+   * @returns one owner per mounted browser.
+   */
+  ownedBrowsers(): MountOwner[] {
+    return [...this.owners.values()]
+  }
+
   list(): RoleBrowser[] {
     return [...this.started.values()]
   }
@@ -510,16 +913,14 @@ export class RoleBrowserPool extends Service {
   async readAccount(
     tools: ToolsService,
     exec: ToolRunContext,
-    role: string,
+    owner: BrowserOwner,
     identityUrl: string,
   ): Promise<IdentityAnswer> {
-    // The namespace comes from the mount that is running, not from the role name:
-    // a re-mount takes a suffixed server name, and asking for the name derived
-    // from the role alone reaches a tool that was never registered under it.
-    const live = this.started.get([...(this.keysByRole.get(role) ?? [])].at(-1) ?? '')
-    const namespace = live === undefined
-      ? RoleBrowserPool.namespaceOf(role)
-      : `mcp__${live.serverName}__`
+    // The namespace comes from the mount this caller owns, not from the role name
+    // and not from whichever mount of that role started last: two runs in one
+    // session can each declare `buyer`, and reading the newest one would confirm
+    // an identity against a browser the caller does not own.
+    const namespace = namespaceFor(this.started, owner)
     // `ToolsRuntime` resolves a tool with `view(scope)`, so the call has to
     // name the same Agent the model used. Without `agent` the lookup falls
     // back to the global view, where an MCP server's tools are not registered
@@ -532,7 +933,7 @@ export class RoleBrowserPool extends Service {
       arguments: { url: identityUrl },
       signal: exec.signal,
     })
-    assertToolOk(navigate, `${namespace}browser_navigate`, role)
+    assertToolOk(navigate, `${namespace}browser_navigate`, owner.role)
     const probe = childCallId(exec, 'identity')
     const read = await tools.execute({
       ...probe,
@@ -540,7 +941,7 @@ export class RoleBrowserPool extends Service {
       arguments: { function: IDENTITY_PROBE },
       signal: exec.signal,
     })
-    assertToolOk(read, `${namespace}browser_evaluate`, role)
+    assertToolOk(read, `${namespace}browser_evaluate`, owner.role)
     return parseIdentity(firstText(read.value))
   }
 
@@ -552,19 +953,10 @@ export class RoleBrowserPool extends Service {
    * @returns once every role's server is disposed.
    */
   async releaseAll(): Promise<void> {
-    // Every mounted role's effect is disposed and awaited, so this returns only
-    // after each provider has torn its browser down. Yielding a tick instead
-    // would report the browsers closed while they were still running.
-    const roles = [...this.mounts.keys()]
-    const failures: string[] = []
-    for (const role of roles) {
-      try {
-        await this.releaseRole(role)
-      } catch (error) {
-        failures.push(String(error))
-      }
+    const failures = await disposeAll(key => this.releaseByKey(key), [...this.mounts.keys()])
+    if (failures.length > 0) {
+      throw new Error(`web-test: not every role browser closed: ${failures.join('; ')}`)
     }
-    if (failures.length > 0) throw new Error(`web-test: not every role browser closed: ${failures.join('; ')}`)
   }
 }
 

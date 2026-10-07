@@ -12,9 +12,10 @@
 
 import { describe, expect, it } from 'vitest'
 import { RELEASED_STATUSES, guardReason } from '../src/agent.ts'
+import { SCHEMA_VERSION } from '../src/records.ts'
 import { Context } from '@deepseek-ai/cordis'
 import { RoleBrowserPool } from '../src/role-browser.ts'
-import type { BrowserOwner } from '../src/role-browser.ts'
+import type { BrowserOwner, MountOwner } from '../src/role-browser.ts'
 import { cleanupHomes, harness } from './support/harness.ts'
 import { environment, run, seedOf } from './support/seed.ts'
 
@@ -32,8 +33,8 @@ describe('browser dispatch authorisation', () => {
       const token = (): string => store.mintAuthority('run-1', 'owner')?.token ?? ''
     try {
       const reason = guardReason({ name: ALICE_BROWSER, arguments: { authority: token() }, agent: { id: 'owner' } }, store, 'owner', ownedBy('run-1'))
-      expect(reason).toContain('no run that may drive a browser')
-      expect(reason).toContain('cancelled')
+      // A cancelled run mints no authority at all, so the call has none to present.
+      expect(reason).toContain('needs the authority')
     } finally {
       await dispose()
       cleanupHomes()
@@ -57,7 +58,7 @@ describe('browser dispatch authorisation', () => {
       await store.controlRun('run-1', 'pause')
       // A paused run names the pause, which is more useful than the generic
       // no-grant wording, and it is still a refusal.
-      expect(guardReason({ name: ALICE_BROWSER, arguments: { authority: token() }, agent: { id: 'owner' } }, store, 'owner')).toContain('is paused and refuses new test actions')
+      expect(guardReason({ name: ALICE_BROWSER, arguments: { authority: token() }, agent: { id: 'owner' } }, store, 'owner', ownedBy('run-1'))).toContain('is paused and refuses new test actions')
       await store.controlRun('run-1', 'resume')
       expect(guardReason({ name: ALICE_BROWSER, arguments: { authority: token() }, agent: { id: 'owner' } }, store, 'owner', ownedBy('run-1'))).toBeUndefined()
     } finally {
@@ -86,7 +87,8 @@ describe('browser dispatch authorisation', () => {
       expect(fresh.status).toBe('running')
       await store.assumeRole('run-2', 'buyer', { account: 'Alice Buyer', detail: '/whoami' })
       expect(store.verifiedAccount('run-2', 'buyer')).toBe('Alice Buyer')
-      expect(guardReason({ name: ALICE_BROWSER, arguments: { authority: token() }, agent: { id: 'owner' } }, store, 'owner', ownedBy('run-1'))).toBeUndefined()
+      const minted = store.mintAuthority('run-2', 'owner')
+      expect(guardReason({ name: ALICE_BROWSER, arguments: { authority: minted?.token ?? '' }, agent: { id: 'owner' } }, store, 'owner', ownedBy('run-2', 'owner', minted?.generation ?? 1))).toBeUndefined()
     } finally {
       await dispose()
       cleanupHomes()
@@ -109,8 +111,8 @@ describe('browser dispatch authorisation', () => {
     try {
       await store.controlRun('run-theirs', 'resume')
       await store.assumeRole('run-theirs', 'buyer', { account: 'Alice Buyer', detail: '/whoami' })
-      expect(guardReason({ name: ALICE_BROWSER, arguments: { authority: token() }, agent: { id: 'theirs' } }, store, 'theirs')).toBeUndefined()
-      expect(guardReason({ name: ALICE_BROWSER }, store, 'mine', ownedBy('run-1'))).toContain('no run that may drive a browser')
+      expect(guardReason({ name: ALICE_BROWSER, arguments: { authority: token() }, agent: { id: 'theirs' } }, store, 'mine', ownedBy('run-theirs', 'theirs'))).toContain('another session')
+      expect(guardReason({ name: ALICE_BROWSER }, store, 'mine', ownedBy('run-1'))).toContain('needs the authority')
     } finally {
       await dispose()
       cleanupHomes()
@@ -135,7 +137,7 @@ describe('browser dispatch authorisation', () => {
       expect(guardReason({ name: 'mcp__playwright-role-buyer__browser_click' }, store, 'owner', ownedBy('run-1'))).toBeUndefined()
       // Another role's browser is not reachable for the same preparation.
       expect(guardReason({ name: 'mcp__playwright-role-approver__browser_navigate' }, store, 'owner', ownedBy('owner')))
-        .toContain('no run that may drive a browser')
+        .toContain('needs the authority')
     } finally {
       await dispose()
       cleanupHomes()
@@ -328,6 +330,134 @@ function identity(runKey: string, role: string): Record<string, unknown> {
  * @param runKey - Run that claimed the role.
  * @returns An owner lookup for the guard to consult per role.
  */
-function ownedBy(runKey: string): (role: string) => { runKey: string, generation: number } {
-  return () => ({ runKey, generation: 1 })
+function ownedBy(runKey: string, sessionId = '', generation = 1): {
+  ownerOfServer: (n: string) => MountOwner | undefined
+  claimOf: (n: string) => { runKey: string, generation: number } | undefined
+} {
+  const owned = (name: string): MountOwner | undefined =>
+    (name.startsWith('playwright-role-')
+      ? {
+        sessionId,
+        projectKey: 'shop',
+        environmentKey: 'shop-test',
+        runKey,
+        role: name.slice('playwright-role-'.length),
+        generation,
+        serverName: name,
+      }
+      : undefined)
+  return {
+    ownerOfServer: owned,
+    claimOf: name => (owned(name) === undefined ? undefined : { runKey, generation }),
+  }
 }
+
+describe('against the real store, not a stand-in', () => {
+  it('refuses a browser whose run has been cancelled', async () => {
+    // The cases above hand `guardReason` an object that answers whatever it is
+    // asked, so one that passes because the real query disagrees with the
+    // stand-in cannot pass there. This opens a real store over the memory backend.
+    const home = await harness({ seed: {
+      projects: {
+        shop: {
+          schemaVersion: SCHEMA_VERSION, kind: 'project', label: 'Shop',
+          updatedAtMs: 0, key: 'shop', sourceRoot: '/src', baseUrl: 'http://shop',
+        },
+      },
+    } })
+    try {
+      const { store } = home
+      await store.putEnvironment({
+        schemaVersion: SCHEMA_VERSION, kind: 'environment-revision', label: 'acc',
+        updatedAtMs: 0, key: 'acc@1', projectKey: 'shop', revision: 1, name: 'acc',
+        url: 'http://shop/acc', nature: 'test', dataOperations: 'read-only',
+        roles: [{ name: 'buyer', accountRef: 'bob@example.test' }], scopeNotes: '',
+        modelRef: '', viewport: { width: 1280, height: 800 }, confirmedAtMs: 0,
+      })
+      const base = {
+        schemaVersion: SCHEMA_VERSION, kind: 'run' as const, label: 'r',
+        updatedAtMs: 0, key: 'run-a', projectKey: 'shop', environmentRevisionKey: 'acc@1',
+        generation: 1, phase: 'execution' as const, unresolvedOperations: {},
+        waitingUntilMs: 0, waitingReason: '',
+      }
+      await store.putRun({ ...base, status: 'running', ownerSessionId: 's1', activeRole: '' })
+      expect(store.hasRunningRun('s1')).toBe(true)
+
+      await store.controlRun('run-a', 'cancel')
+
+      expect(store.hasRunningRun('s1')).toBe(false)
+
+      // The lookup is by owning session, so a run another session drives must
+      // not leave this one looking busy, and a store with no runs at all is not
+      // a session with work in flight.
+      await store.putRun({
+        ...base, key: 'run-theirs', status: 'running', ownerSessionId: 's2', activeRole: '',
+      })
+      expect(store.hasRunningRun('s1')).toBe(false)
+      expect(store.hasRunningRun('s2')).toBe(true)
+      const empty = await harness({ seed: { projects: {} } })
+      try { expect(empty.store.hasRunningRun('s1')).toBe(false) } finally { await empty.dispose() }
+      const owner = {
+        sessionId: 's1', projectKey: 'shop', environmentKey: 'acc',
+        runKey: 'run-a', role: 'buyer', generation: 1,
+        serverName: 'playwright-role-buyer',
+      }
+      expect(guardReason({
+        name: 'mcp__playwright-role-buyer__browser_click',
+        arguments: { authority: 'anything' }, agent: { id: 'agent-a' },
+      }, store, 's1', {
+        ownerOfServer: (n: string) => n === owner.serverName ? owner : undefined,
+        claimOf: (n: string) => n === owner.serverName ? { runKey: 'run-a', generation: 1 } : undefined,
+      })).toBeDefined()
+    } finally {
+      await home.dispose()
+    }
+  })
+})
+
+describe('a cancelled run does not block the next one', () => {
+  it('keeps B driving its own browser after A is cancelled, against the real store', async () => {
+    const home = await harness({ seed: {
+      projects: {
+        shop: {
+          schemaVersion: SCHEMA_VERSION, kind: 'project', label: 'Shop',
+          updatedAtMs: 0, key: 'shop', sourceRoot: '/src', baseUrl: 'http://shop',
+        },
+      },
+    } })
+    try {
+      const { store } = home
+      await store.putEnvironment({
+        schemaVersion: SCHEMA_VERSION, kind: 'environment-revision', label: 'acc',
+        updatedAtMs: 0, key: 'acc@1', projectKey: 'shop', revision: 1, name: 'acc',
+        url: 'http://shop/acc', nature: 'test', dataOperations: 'read-only',
+        roles: [{ name: 'buyer', accountRef: 'bob@example.test' }], scopeNotes: '',
+        modelRef: '', viewport: { width: 1280, height: 800 }, confirmedAtMs: 0,
+      })
+      const base = {
+        schemaVersion: SCHEMA_VERSION, kind: 'run' as const, label: 'r',
+        updatedAtMs: 0, projectKey: 'shop', environmentRevisionKey: 'acc@1',
+        generation: 1, phase: 'execution' as const, unresolvedOperations: {},
+        waitingUntilMs: 0, waitingReason: '', ownerSessionId: 's1', activeRole: 'buyer',
+      }
+      await store.putRun({ ...base, key: 'run-a', status: 'running' })
+      await store.assumeRole('run-a', 'buyer', { account: 'bob@example.test', detail: 'form' })
+      const tokenA = store.mintAuthority('run-a', 'agent-a')
+      expect(tokenA).toBeDefined()
+      const tokenOfA = tokenA?.token ?? ''
+
+      await store.controlRun('run-a', 'cancel')
+      expect(store.mintAuthority('run-a', 'agent-a')).toBeUndefined()
+      expect(() => store.requireAuthority(tokenOfA, 'agent-a')).toThrow()
+
+      await store.putRun({ ...base, key: 'run-b', status: 'running' })
+      await store.assumeRole('run-b', 'buyer', { account: 'bob@example.test', detail: 'form' })
+      const tokenB = store.mintAuthority('run-b', 'agent-b')
+      expect(tokenB).toBeDefined()
+      expect(store.requireAuthority(tokenB?.token ?? '', 'agent-b')?.runKey).toBe('run-b')
+      expect(() => store.requireAuthority(tokenB?.token ?? '', 'agent-a')).toThrow()
+    } finally {
+      await home.dispose()
+    }
+  })
+})

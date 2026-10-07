@@ -66,7 +66,7 @@ import type {
 } from './types.ts'
 
 /** Plugin version, matching this package's manifest. */
-export const PLUGIN_VERSION = '0.8.0'
+export const PLUGIN_VERSION = '0.8.1'
 
 /**
  * Host release this plugin's peer declaration accepts.
@@ -360,6 +360,10 @@ export class WebTestStore extends Service {
     // directory that already exists, so the mode is set explicitly afterwards.
     mkdirSync(dir, { recursive: true })
     chmodSync(dir, 0o700)
+    // The data root is restricted during startup; this only says something when
+    // that restriction never applied on this platform.
+    const warning = accessControlWarning(process.platform, dir)
+    if (warning !== '') console.warn(warning)
     return dir
   }
 
@@ -542,34 +546,6 @@ export class WebTestStore extends Service {
    * @returns the held run and the reason it is held.
    */
   /**
-   * The session's active run and the role it is verified to be acting as.
-   *
-   * This is the whole browser authorisation: a browser tool is dispatched only
-   * when the run it belongs to is executing and that run's role was confirmed
-   * against the site. Cancelling a run therefore revokes its browser without
-   * touching another run or another session, because a later run is a
-   * different run with its own authorisation.
-   * @param sessionId - Session asking.
-   * @returns the run key, its status, and the verified role, or nothing when
-   * the session has no run that may drive a browser.
-   */
-  browserGrantForSession(sessionId: string): { runKey: string, status: RunRecord['status'], role: string } | undefined {
-    // Skipped runs are not the end of the search: a session that cancelled run
-    // A and started run B owns both, and B is the one that may drive a
-    // browser. Stopping at A's cancelled status would jam every later run,
-    // which is the failure this guard has to avoid.
-    for (const run of this.sorted(TABLE_RUNS) as RunRecord[]) {
-      if (run.ownerSessionId !== sessionId) continue
-      if (run.status !== 'running') continue
-      // A running run with no confirmed role owns the session, and holding the
-      // browser back is the answer rather than a reason to look elsewhere.
-      if (run.activeRole === '' || this.verifiedAccount(run.key, run.activeRole) === '') return undefined
-      return { runKey: run.key, status: run.status, role: run.activeRole }
-    }
-    return undefined
-  }
-
-  /**
    * The role the session's run is acting as right now.
    *
    * Read by the execution guard on every browser call, so browser reachability
@@ -577,6 +553,28 @@ export class WebTestStore extends Service {
    * @param sessionId - Session asking.
    * @returns the active role, or an empty string when none is set or verified.
    */
+
+/**
+ * Whether this session has a run that is still executing.
+ *
+ * A released run stops being one of these immediately, which is what lets a
+ * cancel revoke the browser it owned without waiting for anything else.
+ * @param sessionId - Session asking.
+ * @returns true when the session owns a run whose status is running.
+ */  /**
+   * Whether this session has a run that is still executing.
+   *
+   * A cancelled run stops being one of these immediately, which is what lets the
+   * cancel revoke the browser it owned without waiting for anything else.
+   * @param sessionId - Session asking.
+   * @returns true when the session owns a run whose status is running.
+   */
+  hasRunningRun(sessionId: string): boolean {
+    return (this.sorted(TABLE_RUNS) as RunRecord[]).some(
+      run => run.ownerSessionId === sessionId && run.status === 'running',
+    )
+  }
+
   activeRoleForSession(sessionId: string): string {
     for (const run of this.sorted(TABLE_RUNS) as RunRecord[]) {
       if (run.ownerSessionId !== sessionId) continue
@@ -1447,3 +1445,40 @@ declare module '@deepseek-ai/cordis' {
 }
 
 export default WebTestStore
+
+/**
+ * Whether this platform can actually restrict a directory to its owner.
+ *
+ * Node applies a mode passed to `mkdir` on POSIX, but ignores it on Windows,
+ * where `chmod` only toggles the read-only bit and a new directory keeps the
+ * access control entries it inherits from its parent. So on Windows the mode is
+ * recorded, not enforced, and saying otherwise would be a claim the platform
+ * does not honour.
+ * @param platform - Platform the directory lives on.
+ * @returns true when a mode is enforced, false when it is not.
+ */
+export function restrictsDirectoryToOwner(platform: NodeJS.Platform = process.platform): boolean {
+  return platform !== 'win32'
+}
+
+/**
+ * What to tell an operator about a directory's access control after preparing it.
+ *
+ * The data root is restricted during startup, so this is a statement about what
+ * that restriction can and cannot achieve on this platform, not about whether it
+ * ran.
+ * @param platform - Platform the directory was created on.
+ * @param dir - Directory that was prepared.
+ * @returns a one-line warning, or an empty string when the mode was enforced.
+ */
+export function accessControlWarning(
+  platform: NodeJS.Platform,
+  dir: string,
+): string {
+  if (restrictsDirectoryToOwner(platform)) return ''
+  return `web-test: ${dir} inherits its access control list from its parent directory.`
+    + ' This plugin cannot restrict it to the current user on Windows: Node ignores the'
+    + ' mode passed to mkdir and chmod only toggles the read-only bit. Treat everything'
+    + ' under the data root as readable by other local users unless the directory is'
+    + ' restricted by other means.'
+}

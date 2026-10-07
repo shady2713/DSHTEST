@@ -19,7 +19,8 @@ import { copyFileSync, statSync } from 'node:fs'
 import type { Context } from '@deepseek-ai/cordis'
 import ToolsService from '@deepseek-ai/dsh-tools'
 import { z } from 'zod'
-import { RoleBrowserPool } from './role-browser.ts'
+import { BROWSER_TOOL_SUFFIX, RoleBrowserPool } from './role-browser.ts'
+import type { MountOwner } from './role-browser.ts'
 import type { BrowserOwner } from './role-browser.ts'
 import type { ToolRunContext } from '@deepseek-ai/dsh-tools'
 import type { VerifiedIdentity } from './store-service.ts'
@@ -153,12 +154,17 @@ export function guardReason(
   execution: Readonly<{ name: string, arguments?: unknown, agent?: { id: string } }>,
   store?: {
     holdForSession: (sessionId: string) => { runKey: string, status: string } | undefined
-    browserGrantForSession: (sessionId: string) => { runKey: string, status: string, role: string } | undefined
-    requireAuthority: (token: string, agentId: string) => { runKey: string, role: string }
+    hasRunningRun: (sessionId: string) => boolean
+    requireAuthority: (token: string, agentId: string) => {
+      runKey: string, role: string, generation: number, agentId: string
+    }
     mayPrepareIdentity: (sessionId: string, role: string, runKey?: string) => boolean
   },
   sessionId = '',
-  ownerOf?: (role: string) => { runKey: string, generation: number } | undefined,
+  pool?: {
+    ownerOfServer: (serverName: string) => MountOwner | undefined
+    claimOf: (serverName: string) => { runKey: string, generation: number } | undefined
+  },
 ): string | undefined {
   // A run the operator paused, or that a restart interrupted, stops dispatching
   // here, in the execution path, so a model that ignores the pause still cannot
@@ -173,7 +179,7 @@ export function guardReason(
   // which owns its run but not the conversation around it.
   const testAction = execution.name.startsWith(TOOL_PREFIX) || execution.name.startsWith(ROLE_BROWSER_PREFIX)
   const held = testAction ? store?.holdForSession(sessionId) : undefined
-  const running = store?.browserGrantForSession(sessionId)?.status === 'running'
+  const running = store?.hasRunningRun(sessionId) === true
   if (held !== undefined && !running && !HELD_RUN_ALLOWED_TOOLS.includes(execution.name)) {
     return `web-test: run ${held.runKey} is ${held.status} and refuses new test actions. `
       + (held.status === 'resuming'
@@ -183,51 +189,76 @@ export function guardReason(
   }
   if (execution.name.startsWith(TOOL_PREFIX)) return undefined
   if (execution.name.startsWith(ROLE_BROWSER_PREFIX)) {
-    const role = RoleBrowserPool.roleOf(execution.name)
-    // Preparing an identity is not business work, and gating it behind a
-    // verified role would be circular: the first switch can never happen. So
-    // a role's own browser is reachable for identity work while the run is
-    // executing, and every other tool still needs the verified role.
-    const preparing = LOGIN_TOOLS.has(execution.name.slice(ROLE_BROWSER_PREFIX.length).split('__')[1] ?? '')
-    // One authorisation decides every other browser call: the run it belongs to
-    // must be executing, and its role must have been confirmed against the
-    // site. A cancelled run therefore loses its browser, a later run gets its
-    // own, and another session is judged on its own run.
-    // Preparation is admitted before the grant is consulted, because the grant
-    // is what verification produces: the first sign-in cannot require the result
-    // of the sign-in. The window is bounded by the owning run, so it is that
-    // run's own declaration and status that decide it, not the session's.
-    if (preparing && store?.mayPrepareIdentity(sessionId, role, ownerOf?.(role)?.runKey)) return undefined
-    const grant = store?.browserGrantForSession(sessionId)
-    if (grant === undefined) {
-      return `web-test: this session has no run that may drive a browser. A run needs to be running and to have`
-        + ' called web_test_assume_role with its accountPage, which is also how a cancelled or paused run gives up'
-        + ' its browser. Start a new run to work again.'
+    // A browser call is judged against the mount it actually names. The role in
+    // the name is not an owner: two runs in one session can each declare
+    // `buyer`, and taking the session's first qualifying run handed each role's
+    // browser the other role's authority.
+    const serverName = RoleBrowserPool.serverNameOf(execution.name)
+    const owner = pool?.ownerOfServer(serverName)
+    if (owner === undefined) {
+      return `web-test: ${JSON.stringify(serverName)} is not a browser this plugin has mounted`
+        + ` for this session, so nothing authorises a call through it.`
     }
-    // The role's server name may carry a generation suffix, so the name is
-    // compared through the same parse the role came from rather than by prefix.
-    if (role === grant.role) {
-      // Preparation needs no authority — establishing the role is how the
-      // authority comes into existence, and `mayPrepareIdentity` already limits
-      // it to a running run that declares this role. Outside that window every
-      // call must present the token `web_test_assume_role` issued, so a call
-      // queued before the run was cancelled or restarted cannot act on the role
-      // a later start granted.
-      const presented = (execution.arguments as { authority?: unknown } | undefined)?.authority
-      if (typeof presented !== 'string' || presented === '') {
-        return 'web-test: this action needs the authority web_test_assume_role issued.'
-          + ' Pass it as the "authority" argument; the token stops working when the run is cancelled or restarted.'
-      }
-      try {
-        store?.requireAuthority(presented, execution.agent?.id ?? '')
-      } catch (error) {
-        return String(error instanceof Error ? error.message : error)
-      }
-      return undefined
+    if (owner.sessionId !== '' && sessionId !== '' && owner.sessionId !== sessionId) {
+      return `web-test: that browser belongs to another session's run, so this one may not`
+        + ` drive it.`
     }
-    return `web-test: run ${grant.runKey} acts as role ${JSON.stringify(grant.role)}; the browser tool`
-      + ` "${execution.name}" belongs to another role's account, or is not a login step. Switch role with`
-      + ' web_test_assume_role, and act only after it has confirmed the account.'
+    const role = owner.role
+    // Preparation is admitted before the authority is consulted, because the
+    // authority is what verification produces. It is bounded by the mount's own
+    // owner: the run that claimed this mount, still executing. A wrong token does
+    // not fall back to it, and a mount with no owner never reaches it.
+    const toolName = execution.name.split(BROWSER_TOOL_SUFFIX).at(-1) ?? ''
+    const preparing = LOGIN_TOOLS.has(toolName)
+    if (preparing) {
+      const claim = pool?.claimOf(serverName)
+      // Preparation needs a claim that matches the mount's own owner; without
+      // one it falls through to the authority check rather than being waved
+      // through.
+      //
+      // Preparation is only the answer when the call presents no credential. A
+      // call that does present one is asking to act as that token's run, so an
+      // empty string — which a run that cannot mint an authority carries — still
+      // counts as offering nothing, while a real token from another run falls
+      // through and is refused by the checks below.
+      const offered = (execution.arguments as { authority?: unknown } | undefined)?.authority
+      if ((offered === undefined || offered === '')
+        && claim !== undefined && claim.runKey === owner.runKey
+        && store?.mayPrepareIdentity(sessionId, role, owner.runKey) === true) {
+        return undefined
+      }
+    }
+    const presented = (execution.arguments as { authority?: unknown } | undefined)?.authority
+    if (typeof presented !== 'string' || presented === '') {
+      return 'web-test: this action needs the authority web_test_assume_role issued.'
+        + ' Pass it as the "authority" argument; the token stops working when the run restarts.'
+    }
+    let authority: { runKey: string, role: string, generation: number, agentId: string }
+    try {
+      authority = store?.requireAuthority(presented, execution.agent?.id ?? '') ?? {
+        runKey: '', role: '', generation: -1, agentId: '',
+      }
+    } catch (error) {
+      return String(error instanceof Error ? error.message : error)
+    }
+    // A valid token is not enough: it has to be the token for this mount's own
+    // run, role and generation. Presenting the buyer's authority to the
+    // approver's browser is refused here rather than answered by whichever run
+    // happened to sort first for the session.
+    // `requireAuthority` has already compared the token's generation with the
+    // live run's, so this side only checks what it can: a mount whose generation
+    // was recorded must match. A run record without one has nothing to compare.
+    const generationAgrees = owner.generation === 0
+      || authority.generation === undefined
+      || authority.generation === owner.generation
+    if (authority.runKey !== owner.runKey || authority.role !== owner.role
+      || !generationAgrees) {
+      return `web-test: that authority belongs to run ${JSON.stringify(authority.runKey)} acting as`
+        + ` ${JSON.stringify(authority.role)}, not to run ${JSON.stringify(owner.runKey)} acting as`
+        + ` ${JSON.stringify(owner.role)} through ${JSON.stringify(serverName)}`
+
+    }
+    return undefined
   }
   // Any other `mcp__` tool belongs to another provider, not to this plugin, so
   // it is left alone. Tools the host gives every session — reading a file,
@@ -416,9 +447,8 @@ async function verifyRoleIdentity(
   tools: ToolsService,
   exec: ToolRunContext,
   pool: RoleBrowserPool | undefined,
-  role: string,
+  owner: BrowserOwner,
   identityUrl: string | undefined,
-  owner?: BrowserOwner,
 ): Promise<VerifiedIdentity> {
   if (pool === undefined) {
     throw new Error('web-test: this build has no role browser pool, so no role can be verified')
@@ -427,8 +457,8 @@ async function verifyRoleIdentity(
     throw new Error('web-test: assume_role needs accountPage: the account has to be read back from the site, not'
       + ' assumed from the role name')
   }
-  await pool.ensure(owner ?? { projectKey: '', environmentKey: '', runKey: '', role })
-  const account = await pool.readAccount(tools, exec, role, identityUrl)
+  await pool.ensure(owner)
+  const account = await pool.readAccount(tools, exec, owner, identityUrl)
   return { account: account.account, detail: account.detail }
 }
 
@@ -718,7 +748,7 @@ export function apply(ctx: Context): void {
       })
       await store.putRun(record)
       // Closing a run revokes this run's authority: the terminal status takes it
-      // out of `browserGrantForSession`, so no business action can be dispatched
+      // out of a session-wide grant, so no business action can be dispatched
       // under the role it verified. Every browser the run owns is then released,
       // and each release awaits its own fiber's disposal, so the Chromium this
       // run started is gone before the call returns rather than when the host
@@ -1238,16 +1268,21 @@ export function apply(ctx: Context): void {
       // filed under the project, environment and run that will use it rather
       // than under the role name alone.
       const owner = store.getRun(parsed.runKey)
-      const verified = await verifyRoleIdentity(tools, exec, pool, parsed.role, parsed.accountPage, {
+      const mountOwner = {
+        sessionId: owner?.ownerSessionId ?? '',
+        generation: owner?.generation ?? 0,
         projectKey: owner?.projectKey ?? '',
         environmentKey: owner?.environmentRevisionKey ?? '',
         runKey: parsed.runKey,
         role: parsed.role,
-      })
+      }
+      const verified = await verifyRoleIdentity(tools, exec, pool, mountOwner, parsed.accountPage)
       const run = await store.assumeRole(parsed.runKey, parsed.role, verified)
-      // The role's browser now belongs to this run and generation, so a call
-      // queued against an earlier run cannot prepare an identity on it.
-      pool?.claim(parsed.role, run.key, run.generation)
+      // The role's browser belongs to this run and generation, so a call queued
+      // against an earlier run cannot prepare an identity on it. The mount's own
+      // server name is the claim's key: a role name is shared by every run that
+      // declares it.
+      pool?.claim(pool.serverNameFor(mountOwner), run.key, run.generation)
       // The authority names the generation it was minted in, so a call that was
       // queued before a restart cannot act under the authority a later start
       // produces. It is unforgeable: the run it names is re-read on every use.

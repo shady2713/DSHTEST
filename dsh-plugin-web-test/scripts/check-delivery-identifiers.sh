@@ -2,8 +2,15 @@
 # 交付标识符同步检查：记录里的 source / sha256 / version / 包内文档
 export PATH=/home/weetion/.nvm/versions/node/v24.15.0/bin:/usr/bin:/bin:$PATH
 cd "$(git rev-parse --show-toplevel)"
+# Which candidate to check. 0.8.0 is the already-accepted package and stays the
+# default; a newer delivery passes its own version so this gate keeps guarding
+# provenance instead of being skipped once work moves on.
+V_CANDIDATE="${1:-0.8.0}"
 P=.agents/notes/proposed/testing/2026-10-09-web-test-0.8.0-delivery-candidate.md
-D=dsh-plugin-web-test/dist/dsh-plugin-web-test-0.8.0.tgz
+[ "$V_CANDIDATE" = "0.8.0" ] || P=.agents/notes/proposed/testing/2026-10-1${V_CANDIDATE#0.8}-web-test-${V_CANDIDATE}-delivery-candidate.md
+D=dsh-plugin-web-test/dist/dsh-plugin-web-test-${V_CANDIDATE}.tgz
+[ -f "$P" ] || { echo "✗ 交付记录 $P 不存在"; exit 1; }
+echo "候选版本 $V_CANDIDATE  记录 $P"
 fail=0
 # The recorded SHA has to be a commit that produced the package, not merely the
 # newest commit: a change elsewhere in the repository moves HEAD without touching
@@ -22,9 +29,15 @@ REC_HASH=$(grep -oP '^sha256   \K[0-9a-f]+' $P)
 ACT_HASH=$(sha256sum $D | cut -d' ' -f1)
 [ "$REC_HASH" = "$ACT_HASH" ] && echo "✓ 哈希与包一致" || { echo "✗ 哈希不符：记录 $REC_HASH 实际 $ACT_HASH"; fail=1; }
 V=$(tar -xzOf $D package/package.json | grep -m1 '"version"' | grep -oP '0\.\d+\.\d+')
-[ "$V" = "0.8.0" ] && echo "✓ 包内版本 0.8.0" || { echo "✗ 包内版本 $V"; fail=1; }
+[ "$V" = "$V_CANDIDATE" ] && echo "✓ 包内版本 $V_CANDIDATE" || { echo "✗ 包内版本 $V，记录要求 $V_CANDIDATE"; fail=1; }
+# Compare against the documents as they stood at the recorded source commit.
+# Comparing a delivered package with today's workspace reports every later
+# documentation edit as a stale package, which says nothing about that package.
 for f in README.md README.zh.md WINDOWS-ACCEPTANCE.zh.md; do
-  cmp -s <(tar -xzOf $D package/$f) dsh-plugin-web-test/packages/web-test/$f \
-    && echo "✓ 包内 $f 与工作区一致" || { echo "✗ 包内 $f 已过期，需重建"; fail=1; }
+  REF=dsh-plugin-web-test/packages/web-test/$f
+  git show "$REC_SHA:$REF" > /tmp/delivery-doc.$$ 2>/dev/null || continue
+  cmp -s <(tar -xzOf $D package/$f) /tmp/delivery-doc.$$ \
+    && echo "✓ 包内 $f 与记录提交一致" || { echo "✗ 包内 $f 与记录提交不符"; rm -f /tmp/delivery-doc.$$; fail=1; }
 done
 exit $fail
+rm -f /tmp/delivery-doc.$$

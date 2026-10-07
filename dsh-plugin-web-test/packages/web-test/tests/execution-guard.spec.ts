@@ -9,12 +9,13 @@
 
 import { describe, expect, it } from 'vitest'
 import { ROLE_BROWSER_PREFIX, HELD_RUN_ALLOWED_TOOLS, TOOL_PREFIX, guardReason } from '../src/agent.ts'
+import type { MountOwner } from '../src/role-browser.ts'
 
 /** A store whose only held run is the one a test declares. */
 function holding(runKey: string, status: string): GuardStore {
   return {
     holdForSession: (sessionId: string) => (sessionId === 'owner' ? { runKey, status } : undefined),
-    browserGrantForSession: () => undefined,
+    hasRunningRun: () => false,
     mayPrepareIdentity: () => false,
   }
 }
@@ -22,38 +23,201 @@ function holding(runKey: string, status: string): GuardStore {
 /** The store surface the guard reads. */
 interface GuardStore {
   holdForSession: (sessionId: string) => { runKey: string, status: string } | undefined
-  browserGrantForSession: (sessionId: string) => { runKey: string, status: string, role: string } | undefined
-  mayPrepareIdentity: (sessionId: string, role: string) => boolean
-  requireAuthority?: (token: string, agentId: string) => { runKey: string, role: string }
+  hasRunningRun: (sessionId: string) => boolean
+  mayPrepareIdentity: (sessionId: string, role: string, runKey?: string) => boolean
+  requireAuthority?: (token: string, agentId: string) => {
+    runKey: string, role: string, generation: number, agentId: string
+  }
+}
+
+/** The pool surface the guard reads: every mount carries its own owner. */
+interface GuardPool {
+  ownerOfServer: (serverName: string) => MountOwner | undefined
+  claimOf: (serverName: string) => { runKey: string, generation: number } | undefined
+}
+
+/** A pool holding one mounted browser owned by one run. */
+function mounting(owner: MountOwner, claimed = true): GuardPool {
+  return {
+    ownerOfServer: name => (name === owner.serverName ? owner : undefined),
+    claimOf: name => (claimed && name === owner.serverName
+      ? { runKey: owner.runKey, generation: owner.generation }
+      : undefined),
+  }
+}
+
+/** A pool holding the given role browsers, each owned by its own run. */
+function mountingTwo(all: MountOwner[]): GuardPool {
+  return {
+    ownerOfServer: name => all.find(m => m.serverName === name),
+    claimOf: name => {
+      const found = all.find(m => m.serverName === name)
+      return found === undefined
+        ? undefined
+        : { runKey: found.runKey, generation: found.generation }
+    },
+  }
+}
+
+/** The browser tool name a mounted server exposes. */
+function toolOf(serverName: string, tool: string): string {
+  return `mcp__${serverName}__${tool}`
+}
+
+/** The two runs the Windows acceptance found mis-matched. */
+const BUYER: MountOwner = {
+  sessionId: 'session-1', projectKey: 'shop', environmentKey: 'acc', runKey: 'run-buyer',
+  role: 'buyer', generation: 1, serverName: 'playwright-role-buyer',
+}
+const APPROVER: MountOwner = {
+  sessionId: 'session-1', projectKey: 'shop', environmentKey: 'acc', runKey: 'run-approver',
+  role: 'approver', generation: 1, serverName: 'playwright-role-approver',
+}
+
+/** A store that honours exactly the tokens those two runs were issued. */
+function twoRunStore(): GuardStore {
+  return {
+    holdForSession: () => undefined,
+    hasRunningRun: () => true,
+    mayPrepareIdentity: () => false,
+    requireAuthority: (token, agentId) => {
+      if (agentId !== 'agent-a') {
+        throw new Error(`web-test: that authority belongs to another agent (${agentId})`)
+      }
+      if (token === 'tok-buyer') {
+        return { runKey: BUYER.runKey, role: BUYER.role, generation: 1, agentId: 'agent-a' }
+      }
+      if (token === 'tok-approver') {
+        return { runKey: APPROVER.runKey, role: APPROVER.role, generation: 1, agentId: 'agent-a' }
+      }
+      throw new Error('web-test: this call presented no valid authority')
+    },
+  }
 }
 
 /** A store whose run has a verified role and one live authority. */
 function actingAs(role: string, accepted: string[]): GuardStore {
   return {
     holdForSession: () => undefined,
-    browserGrantForSession: () => ({ runKey: 'run-1', status: 'running', role }),
+    hasRunningRun: () => true,
     mayPrepareIdentity: () => false,
     requireAuthority: (token, agentId) => {
       if (agentId !== 'agent-a') throw new Error(`web-test: that authority belongs to another agent (${agentId})`)
-      if (!accepted.includes(token)) throw new Error('web-test: authority was minted in generation 0 of run "run-1", which is now generation 1')
-      return { runKey: 'run-1', role }
+      if (!accepted.includes(token)) throw new Error('web-test: authority was minted in generation 1, not 2')
+      return { runKey: ALICE.runKey, role, generation: ALICE.generation, agentId: 'agent-a' }
     },
   }
 }
+
+/** The mount those business-action tests drive. */
+const ALICE: MountOwner = {
+  sessionId: 'session-1', projectKey: 'shop', environmentKey: 'acc', runKey: 'run-1',
+  role: 'alice', generation: 2, serverName: 'playwright-role-alice',
+}
+
+/** The pool that mounts ALICE's browser. */
+const alicePool: GuardPool = mounting(ALICE)
+
+
+describe('two runs declaring one role', () => {
+  const first: MountOwner = {
+    sessionId: 'session-1', projectKey: 'shop', environmentKey: 'acc',
+    runKey: 'run-a', role: 'buyer', generation: 1, serverName: 'playwright-role-buyer',
+  }
+  const second: MountOwner = {
+    sessionId: 'session-1', projectKey: 'shop', environmentKey: 'acc',
+    runKey: 'run-c', role: 'buyer', generation: 1, serverName: 'playwright-role-buyer-g2',
+  }
+
+  const store: GuardStore = {
+    holdForSession: () => undefined,
+    hasRunningRun: () => true,
+    mayPrepareIdentity: (_sessionId, role, runKey) => runKey === 'run-c',
+    requireAuthority: (token, agentId) => {
+      if (agentId !== 'agent-a') throw new Error('web-test: that authority belongs to another agent')
+      if (token !== 'tok-c') throw new Error('web-test: this call presented no valid authority')
+      return { runKey: 'run-c', role: 'buyer', generation: 1, agentId: 'agent-a' }
+    },
+  }
+
+  it('lets the run adopt a browser the environment mounted before it existed', () => {
+    // `putEnvironment` mounts with no run and no session, so a role browser can be
+    // on the agent by the time a run asks for it. That owner names no session, and
+    // a session check that read it literally would refuse every call through it.
+    const preStarted: MountOwner = {
+      sessionId: '', projectKey: 'shop', environmentKey: 'acc',
+      runKey: '', role: 'buyer', generation: 0, serverName: 'playwright-role-buyer',
+    }
+    const adopted: MountOwner = { ...preStarted, runKey: 'run-a', generation: 1 }
+    const claimOf = (serverName: string) =>
+      serverName === adopted.serverName ? { runKey: 'run-a', generation: 1 } : undefined
+    const store: GuardStore = {
+      holdForSession: () => undefined,
+      hasRunningRun: () => true,
+      mayPrepareIdentity: () => false,
+      requireAuthority: () => ({ runKey: 'run-a', role: 'buyer', generation: 1, agentId: 'agent-a' }),
+    }
+    expect(guardReason(
+      {
+        name: toolOf(adopted.serverName, 'browser_click'),
+        arguments: { authority: 'tok-a' }, agent: { id: 'agent-a' },
+      },
+      store, 'session-1', { ownerOfServer: () => adopted, claimOf },
+    )).toBeUndefined()
+  })
+
+  it('refuses a token that belongs to another run of the same role', () => {
+    // The gap a test found: preparation used to answer a login tool on a claimed
+    // mount whatever the call presented, so run-a's authority drove run-c's
+    // browser. A presented token must be judged, not laundered into a sign-in.
+    const crossed: GuardStore = {
+      holdForSession: () => undefined,
+      hasRunningRun: () => true,
+      mayPrepareIdentity: () => true,
+      requireAuthority: () => ({ runKey: 'run-a', role: 'buyer', generation: 1, agentId: 'agent-a' }),
+    }
+    const refusal = guardReason(
+      {
+        name: toolOf(second.serverName, 'browser_click'),
+        arguments: { authority: 'tok-a' }, agent: { id: 'agent-a' },
+      },
+      crossed, 'session-1', mountingTwo([first, second]),
+    )
+    expect(refusal).toContain('not to run')
+  })
+
+  it('still admits preparation when the call offers no credential at all', () => {
+    expect(guardReason(
+      { name: toolOf(second.serverName, 'browser_navigate'), agent: { id: 'agent-a' } },
+      store, 'session-1', mountingTwo([first, second]),
+    )).toBeUndefined()
+  })
+
+  it('admits run C through its own mount while run A holds the same role', () => {
+    expect(guardReason(
+      {
+        name: toolOf(second.serverName, 'browser_click'),
+        arguments: { authority: 'tok-c' }, agent: { id: 'agent-a' },
+      },
+      store, 'session-1', mountingTwo([first, second]),
+    )).toBeUndefined()
+  })
+
+})
 
 describe('business action authority', () => {
   it('admits an action that presents the authority it was issued', () => {
     const store = actingAs('alice', ['tok-live'])
     expect(guardReason(
       { name: 'mcp__playwright-role-alice__browser_click', arguments: { authority: 'tok-live' }, agent: { id: 'agent-a' } },
-      store,
+      store, 'session-1', alicePool,
     )).toBeUndefined()
   })
 
   it('refuses an action that presents no authority', () => {
     const refusal = guardReason(
       { name: 'mcp__playwright-role-alice__browser_click', arguments: {}, agent: { id: 'agent-a' } },
-      actingAs('alice', ['tok-live']),
+      actingAs('alice', ['tok-live']), 'session-1', alicePool,
     )
     expect(refusal).toContain('needs the authority')
   })
@@ -61,15 +225,15 @@ describe('business action authority', () => {
   it('refuses an action carrying an authority from an earlier generation', () => {
     const refusal = guardReason(
       { name: 'mcp__playwright-role-alice__browser_click', arguments: { authority: 'tok-old' }, agent: { id: 'agent-a' } },
-      actingAs('alice', ['tok-live']),
+      actingAs('alice', ['tok-live']), 'session-1', alicePool,
     )
-    expect(refusal).toContain('generation 0')
+    expect(refusal).toContain('generation 1, not 2')
   })
 
   it('refuses an action presenting another agent\'s authority', () => {
     const refusal = guardReason(
       { name: 'mcp__playwright-role-alice__browser_click', arguments: { authority: 'tok-live' }, agent: { id: 'agent-b' } },
-      actingAs('alice', ['tok-live']),
+      actingAs('alice', ['tok-live']), 'session-1', alicePool,
     )
     expect(refusal).toContain('another agent')
   })
@@ -77,7 +241,7 @@ describe('business action authority', () => {
   it('leaves a login step free of authority', () => {
     expect(guardReason(
       { name: 'mcp__playwright-role-alice__browser_click', arguments: {}, agent: { id: 'agent-a' } },
-      { ...actingAs('alice', []), mayPrepareIdentity: () => true },
+      { ...actingAs('alice', []), mayPrepareIdentity: () => true }, 'session-1', alicePool, 'session-1', alicePool,
     )).toBeUndefined()
   })
 })
@@ -89,40 +253,80 @@ describe('tool allowlist', () => {
     }
   })
 
-  it('admits the active role\'s browser under its authority and refuses another role\'s', () => {
-    const asAlice: GuardStore = {
-      holdForSession: () => undefined,
-      browserGrantForSession: () => ({ runKey: 'run-1', status: 'running', role: 'alice' }),
-      mayPrepareIdentity: () => false,
-      requireAuthority: () => ({ runKey: 'run-1', role: 'alice' }),
-    }
+  it('admits each mounted browser under its own run authority', () => {
+    const store = twoRunStore()
     expect(guardReason(
-      { name: 'mcp__playwright-role-alice__browser_navigate', arguments: { authority: 'tok' }, agent: { id: 'agent-a' } },
-      asAlice,
+      { name: toolOf(BUYER.serverName, 'browser_navigate'), arguments: { authority: 'tok-buyer' }, agent: { id: 'agent-a' } },
+      store, 'session-1', mountingTwo([BUYER, APPROVER]),
     )).toBeUndefined()
-    // A second role's browser is a different account, so naming it must not be
-    // a way to act as that account.
-    const crossed = guardReason({ name: 'mcp__playwright-role-bob__browser_navigate' }, asAlice)
-    expect(crossed).toContain('belongs to another role')
-    expect(crossed).toContain('web_test_assume_role')
+    expect(guardReason(
+      { name: toolOf(APPROVER.serverName, 'browser_navigate'), arguments: { authority: 'tok-approver' }, agent: { id: 'agent-a' } },
+      store, 'session-1', mountingTwo([BUYER, APPROVER]),
+    )).toBeUndefined()
+
+    // Swapping them is refused, and the answer does not depend on run ordering.
+    for (const [serverName, token] of [
+      [APPROVER.serverName, 'tok-buyer'],
+      [BUYER.serverName, 'tok-approver'],
+    ]) {
+      const refusal = guardReason(
+        { name: toolOf(serverName, 'browser_navigate'), arguments: { authority: token }, agent: { id: 'agent-a' } },
+        store, 'session-1', mountingTwo([APPROVER, BUYER]),
+      )
+      expect(refusal).toContain('not to run')
+      expect(refusal).toContain('acting as')
+    }
   })
 
-  it('refuses every browser when the session has no verified role', () => {
+  it('refuses a browser whose owner it cannot resolve', () => {
     const reason = guardReason(
-      { name: 'mcp__playwright-role-alice__browser_navigate' },
-      { holdForSession: () => undefined, browserGrantForSession: () => undefined, mayPrepareIdentity: () => false },
+      { name: toolOf('playwright-role-alice', 'browser_navigate'), agent: { id: 'agent-a' } },
+      { holdForSession: () => undefined, hasRunningRun: () => true, mayPrepareIdentity: () => true },
+      'session-1',
+      mountingTwo([{ ...APPROVER, serverName: 'playwright-role-other' }]),
     )
-    expect(reason).toContain('no run that may drive a browser')
+    expect(reason).toContain('not a browser this plugin has mounted')
   })
 
-  it('refuses a role whose identity the site never confirmed', () => {
-    // The store answers with an empty role when the run's role has no recorded
-    // account, so an unverified role cannot become reachable.
-    const unverified = guardReason(
-      { name: 'mcp__playwright-role-alice__browser_navigate' },
-      { holdForSession: () => undefined, browserGrantForSession: () => undefined, mayPrepareIdentity: () => false },
+  it('refuses a wrong token instead of falling back to preparation', () => {
+    const store: GuardStore = {
+      holdForSession: () => undefined, hasRunningRun: () => true, mayPrepareIdentity: () => false,
+      requireAuthority: () => { throw new Error('web-test: authority was minted in generation 1, not 2') },
+    }
+    const refusal = guardReason(
+      {
+        name: toolOf(BUYER.serverName, 'browser_navigate'),
+        arguments: { authority: 'tok-old' }, agent: { id: 'agent-a' },
+      },
+      store, 'session-1', mounting({ ...BUYER, generation: 2 }),
     )
-    expect(unverified).toContain('no run that may drive a browser')
+    // Preparation is closed here, so the wrong token is reported as wrong. It is
+    // not admitted as a preparation, which is the fallback this rules out.
+    expect(refusal).toContain('generation 1, not 2')
+  })
+
+  it('refuses preparation on a mount no run has claimed', () => {
+    const refusal = guardReason(
+      { name: toolOf(BUYER.serverName, 'browser_navigate'), agent: { id: 'agent-a' } },
+      { holdForSession: () => undefined, hasRunningRun: () => true, mayPrepareIdentity: () => true },
+      'session-1', mounting({ ...BUYER, runKey: '' }, false),
+    )
+    // Preparation is not waved through on a mount no run has claimed: the call
+    // falls through to the authority check and is refused there instead.
+    expect(refusal).toBeDefined()
+    expect(refusal).toContain('needs the authority')
+  })
+
+  it('refuses an authority from another generation of the same run', () => {
+    const store: GuardStore = {
+      holdForSession: () => undefined, hasRunningRun: () => true, mayPrepareIdentity: () => false,
+      requireAuthority: () => ({ runKey: BUYER.runKey, role: BUYER.role, generation: 0, agentId: 'agent-a' }),
+    }
+    const refusal = guardReason(
+      { name: toolOf(BUYER.serverName, 'browser_click'), arguments: { authority: 'tok-old' }, agent: { id: 'agent-a' } },
+      store, 'session-1', mounting(BUYER),
+    )
+    expect(refusal).toContain('not to run')
   })
 
   it('leaves a shell tool to the host', () => {
@@ -172,17 +376,18 @@ describe('operator holds', () => {
   it('admits a sign-in before the role is verified, including pressing its button', () => {
     const preparing: GuardStore = {
       holdForSession: () => undefined,
-      browserGrantForSession: () => undefined,
+      hasRunningRun: () => true,
       mayPrepareIdentity: (_sessionId, role) => role === 'alice',
     }
     // Reading, filling, and pressing the form's button is how a person gets
     // signed in before the first verified switch.
-    expect(guardReason({ name: 'mcp__playwright-role-alice__browser_navigate' }, preparing)).toBeUndefined()
-    expect(guardReason({ name: 'mcp__playwright-role-alice__browser_fill_form' }, preparing)).toBeUndefined()
-    expect(guardReason({ name: 'mcp__playwright-role-alice__browser_click' }, preparing)).toBeUndefined()
+    expect(guardReason({ name: 'mcp__playwright-role-alice__browser_navigate' }, preparing, 'session-1', alicePool)).toBeUndefined()
+    expect(guardReason({ name: 'mcp__playwright-role-alice__browser_fill_form' }, preparing, 'session-1', alicePool)).toBeUndefined()
+    expect(guardReason({ name: 'mcp__playwright-role-alice__browser_click' }, preparing, 'session-1', alicePool)).toBeUndefined()
     // And a role the run does not declare is never prepared.
-    expect(guardReason({ name: 'mcp__playwright-role-bob__browser_navigate' }, preparing))
-      .toContain('no run that may drive a browser')
+    // A role this plugin never mounted is refused on the mount, not on the role.
+    expect(guardReason({ name: 'mcp__playwright-role-bob__browser_navigate' }, preparing, 'session-1', alicePool))
+      .toContain('not a browser this plugin has mounted')
   })
 
   it('asks for the operator, not for a tool that does not exist', () => {
@@ -231,8 +436,8 @@ describe('operator holds', () => {
     // breakage than the one the hold prevents.
     const store = {
       holdForSession: () => ({ runKey: 'run-a', status: 'paused' }),
-      browserGrantForSession: () => undefined,
-      requireAuthority: () => ({ runKey: 'run-a', role: 'buyer' }),
+      hasRunningRun: () => false,
+      requireAuthority: () => ({ runKey: 'run-a', role: 'buyer', generation: 1, agentId: 'agent-a' }),
       mayPrepareIdentity: () => false,
     }
     expect(guardReason({ name: 'read_file' }, store, 'session-a')).toBeUndefined()

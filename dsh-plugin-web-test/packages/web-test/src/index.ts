@@ -77,7 +77,7 @@ export class WebTestService extends TypertRemoteService {
           execution,
           store,
           execution.agent?.id ?? '',
-          role => ctx.webTestRoleBrowsers?.ownerOf(role),
+          ctx.webTestRoleBrowsers,
         )
       }),
       'web-test: execution guard',
@@ -159,6 +159,8 @@ export class WebTestService extends TypertRemoteService {
     // add them to one that already exists, so a browser mounted after the
     // session exists never reaches it.
     await this.ctx.webTestRoleBrowsers.ensure({
+      sessionId: '',
+      generation: 0,
       projectKey: stored.projectKey,
       environmentKey: stored.key,
       runKey: '',
