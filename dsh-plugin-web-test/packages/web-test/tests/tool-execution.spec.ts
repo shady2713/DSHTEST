@@ -81,7 +81,7 @@ async function registered(): Promise<{ tools: Registered[], store: WebTestStore 
     schemaVersion: SCHEMA_VERSION, kind: 'environment-revision' as const, label: 'acc',
     updatedAtMs: 0, key: 'acc-x', projectKey: 'shop', revision: 1, name: 'acc',
     url: 'http://shop', nature: 'test' as const, dataOperations: 'read-only' as const,
-    roles: [{ name: 'buyer', accountRef: 'alice@example.test' }], scopeNotes: '',
+    roles: [{ name: 'buyer', accountRef: 'buyer@example.test' }], scopeNotes: '',
     modelRef: '', viewport: { width: 1280, height: 800 }, confirmedAtMs: 1,
   })
   await store.putRun({
@@ -141,7 +141,7 @@ const FIELD_VALUES: Record<string, unknown> = {
   reason: 'settling',
   intent: 'create order',
   requestDigest: 'digest',
-  authority: 'tok-a',
+  authority: '',
   accountPage: 'http://127.0.0.1:8902/',
   untilIso: '2030-01-01T00:00:00.000Z',
   steps: [{ index: 1, intent: 'open the order page', observed: 'the order page', outcome: 'passed' }],
@@ -215,6 +215,16 @@ describe('registered tools accept what they return', () => {
     for (const name of names) {
       const { tools, store } = await registered()
       const tool = tools.find(one => one.name === name)!
+      // A data operation needs a verified role and the authority that role's
+      // switch issued. Both are the plugin's own persisted state and its own
+      // token, so the tool can be driven for real without a browser: the browser
+      // is only involved in deciding *which* account the role holds, and that
+      // decision is already on record.
+      if (name.endsWith('begin_operation')) {
+        await store.assumeRole('run', 'buyer', { account: 'buyer@example.test', detail: 'probe' })
+        // The role is bound to that account by the environment, so a switch that
+        // confirms a different one is refused and the run keeps its old role.
+      }
       // A wait that ends early only ends once its deadline has passed, so the
       // run has to be in that state rather than freshly running.
       // An operation record has to exist before the tools that settle or abandon
@@ -248,6 +258,11 @@ describe('registered tools accept what they return', () => {
       }
       const { args, problem } = argumentsFor(tool)
       if (problem !== '') { problems.push(`${tool.name}: ${problem}`); continue }
+      // The authority is minted after the role is verified, which is the order
+      // the tool itself requires, so this is a real token rather than a fixture.
+      if (name.endsWith('begin_operation')) {
+        args['authority'] = store.mintAuthority('run', 'agent-1')?.token ?? ''
+      }
       // A body may refuse for a legitimate reason (no verified role, a browser
       // this unit test cannot mount). That is a refusal, not a pass and not a
       // contract fault, so it is counted as a refusal and never as a success.
@@ -272,15 +287,15 @@ describe('registered tools accept what they return', () => {
     // floor below is a count of bodies that really returned a value, not of
     // calls that were attempted.
     //
-    // Ten of the twelve reach a return here. The other two cannot without a real
-    // browser, because each needs a verified role and `assume_role` is what
-    // verifies it: `assume_role` itself, and `begin_operation`, which mints the
-    // operation's authority. Those are exercised as refusal paths rather than
-    // counted as successes; every refusal is named in the failure output.
+    // Eleven of the twelve reach a return here. The one that cannot is
+    // `assume_role` itself, because deciding which account a role holds is a
+    // question for the site and this build has no browser to ask. It is
+    // exercised as a refusal path rather than counted as a success; every
+    // refusal is named in the failure output.
     expect(
       succeeded.length,
       `只成功执行了 ${succeeded.length} 个: ${succeeded.join(', ')}\n拒绝的:\n${refused.join('\n')}`,
-    ).toBeGreaterThanOrEqual(10)
+    ).toBeGreaterThanOrEqual(11)
     if (succeeded.length === 0) throw new Error(`no tool produced a value; all refused:\n${refused.join('\n')}`)
     expect(problems).toEqual([])
     // Every tool has to be accounted for: none skipped, none silently unchecked.

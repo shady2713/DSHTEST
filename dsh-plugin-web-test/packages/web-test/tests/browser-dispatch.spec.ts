@@ -708,3 +708,33 @@ describe('switching back to a role that is already verified', () => {
     }
   })
 })
+
+describe('a switch that does not match the account the environment binds', () => {
+  it('fails and leaves the run acting as whoever it was acting as', async () => {
+    const { store, dispose } = await harness({
+      seed: seedOf({
+        runs: { 'run-a': run('run-a', 'owner', { status: 'running', activeRole: '' }) },
+        'environment_revisions': { 'shop-test': environment('shop-test', ['buyer', 'seller'], {
+          buyer: 'buyer@example.test', seller: 'seller@example.test',
+        }) },
+      }),
+    })
+    try {
+      await store.controlRun('run-a', 'resume')
+      await store.assumeRole('run-a', 'buyer', { account: 'buyer@example.test', detail: 'probe' })
+      expect(store.getRun('run-a')?.activeRole).toBe('buyer')
+      // The page answers as somebody else. The switch fails, and the run keeps
+      // the role it already had rather than falling back to an unverified one.
+      await expect(store.assumeRole('run-a', 'seller', { account: 'someone-else', detail: 'probe' }))
+        .rejects.toThrow('bound to')
+      expect(store.getRun('run-a')?.activeRole).toBe('buyer')
+      // The identity check that attempt was issued is gone either way.
+      const after = store.mintIdentityProbe('run-a', 'seller', 'agent-a')
+      expect(after?.token ?? '').not.toBe('')
+      store.consumeIdentityProbe(after?.token ?? '')
+    } finally {
+      await dispose()
+      cleanupHomes()
+    }
+  })
+})
