@@ -1070,6 +1070,7 @@ export class WebTestStore extends Service {
       role,
       account: verified.account,
       detail: verified.detail,
+      generation: this.getRun(runKey)?.generation ?? 0,
       verifiedAtMs: Date.now(),
       label: `${role} as ${verified.account === '' ? 'no account' : verified.account}`,
       updatedAtMs: Date.now(),
@@ -1115,7 +1116,12 @@ export class WebTestStore extends Service {
     return [...roles].sort()
   }
 
-  mayPrepareIdentity(sessionId: string, role: string, ownerRunKey?: string): boolean {
+  mayPrepareIdentity(
+    sessionId: string,
+    role: string,
+    ownerRunKey?: string,
+    generation?: number,
+  ): boolean {
     if (role === '') return false
     for (const run of this.sorted(TABLE_RUNS) as RunRecord[]) {
       if (run.ownerSessionId !== sessionId) continue
@@ -1126,14 +1132,32 @@ export class WebTestStore extends Service {
       // walking in through whichever run is unverified and running now. A caller
       // that cannot name an owner is refused rather than allowed on the session.
       if (ownerRunKey !== undefined && ownerRunKey !== run.key) continue
-      // The window is open only until this role is the verified one. Leaving it
-      // open afterwards let every browser call skip the authority check, because
-      // preparation is exactly what a call without authority is allowed to do.
-      // A role switch re-opens it, since the new role is not verified yet.
-      if (run.activeRole === role && this.verifiedAccount(run.key, role) !== '') return false
+      // The window belongs to the run's current generation. A mount and its claim
+      // can both still name generation 1 while the run itself has moved to 2, and
+      // comparing only those two made a stale mount look current. The run's own
+      // record is what says which generation is live.
+      if (generation !== undefined && run.generation !== generation) continue
+      // The window is open only until this role is verified in this generation,
+      // and it does not open again afterwards. Tying it to the active role left a
+      // role that had already been verified open again after a switch, because
+      // the active role was now somebody else: every browser call on the old
+      // mount then skipped the authority check for the rest of the run.
+      const identity = this.getRoleIdentity(run.key, role)
+      if (identity !== undefined && identity.account !== '' && identity.generation === run.generation) {
+        return false
+      }
       return true
     }
     return false
+  }
+
+  /**
+   * The generation a run is on right now.
+   * @param runKey - Run to read.
+   * @returns the run's current generation, or `undefined` when no such run exists.
+   */
+  generationOf(runKey: string): number | undefined {
+    return this.getRun(runKey)?.generation
   }
 
   /**

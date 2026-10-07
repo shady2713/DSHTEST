@@ -17,6 +17,7 @@ function holding(runKey: string, status: string): GuardStore {
     holdForSession: (sessionId: string) => (sessionId === 'owner' ? { runKey, status } : undefined),
     hasRunningRun: () => false,
     mayPrepareIdentity: () => false,
+    generationOf: () => 1,
   }
 }
 
@@ -25,6 +26,7 @@ interface GuardStore {
   holdForSession: (sessionId: string) => { runKey: string, status: string } | undefined
   hasRunningRun: (sessionId: string) => boolean
   mayPrepareIdentity: (sessionId: string, role: string, runKey?: string) => boolean
+  generationOf: () => 1,
   requireAuthority?: (token: string, agentId: string) => {
     runKey: string, role: string, generation: number, agentId: string
   }
@@ -80,6 +82,7 @@ function twoRunStore(): GuardStore {
     holdForSession: () => undefined,
     hasRunningRun: () => true,
     mayPrepareIdentity: () => false,
+    generationOf: () => 1,
     requireAuthority: (token, agentId) => {
       if (agentId !== 'agent-a') {
         throw new Error(`web-test: that authority belongs to another agent (${agentId})`)
@@ -101,6 +104,11 @@ function actingAs(role: string, accepted: string[]): GuardStore {
     holdForSession: () => undefined,
     hasRunningRun: () => true,
     mayPrepareIdentity: () => false,
+    // The live run this store stands in for is on the same generation as the
+    // mount it is asked about. Naming a different one would make every
+    // preparation through it look stale, which is the opposite of what these
+    // cases are about.
+    generationOf: () => ALICE.generation,
     requireAuthority: (token, agentId) => {
       if (agentId !== 'agent-a') throw new Error(`web-test: that authority belongs to another agent (${agentId})`)
       if (!accepted.includes(token)) throw new Error('web-test: authority was minted in generation 1, not 2')
@@ -133,6 +141,7 @@ describe('two runs declaring one role', () => {
     holdForSession: () => undefined,
     hasRunningRun: () => true,
     mayPrepareIdentity: (_sessionId, role, runKey) => runKey === 'run-c',
+    generationOf: () => 1,
     requireAuthority: (token, agentId) => {
       if (agentId !== 'agent-a') throw new Error('web-test: that authority belongs to another agent')
       if (token !== 'tok-c') throw new Error('web-test: this call presented no valid authority')
@@ -155,6 +164,7 @@ describe('two runs declaring one role', () => {
       holdForSession: () => undefined,
       hasRunningRun: () => true,
       mayPrepareIdentity: () => false,
+      generationOf: () => 1,
       requireAuthority: () => ({ runKey: 'run-a', role: 'buyer', generation: 1, agentId: 'agent-a' }),
     }
     expect(guardReason(
@@ -174,6 +184,7 @@ describe('two runs declaring one role', () => {
       holdForSession: () => undefined,
       hasRunningRun: () => true,
       mayPrepareIdentity: () => true,
+      generationOf: () => 1,
       requireAuthority: () => ({ runKey: 'run-a', role: 'buyer', generation: 1, agentId: 'agent-a' }),
     }
     const refusal = guardReason(
@@ -378,6 +389,7 @@ describe('operator holds', () => {
       holdForSession: () => undefined,
       hasRunningRun: () => true,
       mayPrepareIdentity: (_sessionId, role) => role === 'alice',
+      generationOf: () => ALICE.generation,
     }
     // Reading, filling, and pressing the form's button is how a person gets
     // signed in before the first verified switch.
@@ -439,6 +451,7 @@ describe('operator holds', () => {
       hasRunningRun: () => false,
       requireAuthority: () => ({ runKey: 'run-a', role: 'buyer', generation: 1, agentId: 'agent-a' }),
       mayPrepareIdentity: () => false,
+      generationOf: () => 1,
     }
     expect(guardReason({ name: 'read_file' }, store, 'session-a')).toBeUndefined()
     expect(guardReason({ name: 'mcp__playwright-role-buyer__browser_navigate' }, store, 'session-a'))
@@ -460,6 +473,7 @@ describe('an authority is bound to what the run is doing now', () => {
       holdForSession: () => undefined,
       hasRunningRun: () => true,
       mayPrepareIdentity: () => false,
+      generationOf: () => 1,
       requireAuthority: () => { throw new Error('not reached') },
     }
     const reason = guardReason(
@@ -482,6 +496,7 @@ describe('an authority is bound to what the run is doing now', () => {
       holdForSession: () => undefined,
       hasRunningRun: () => true,
       mayPrepareIdentity: () => true,
+      generationOf: () => 1,
       requireAuthority: () => { throw new Error('not reached') },
     }
     const reason = guardReason(

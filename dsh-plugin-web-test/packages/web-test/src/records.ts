@@ -135,6 +135,8 @@ export const roleIdentityRecordSchema = z.object({
   /** What the site answered, which is the only accepted evidence of identity. */
   account: z.string(),
   detail: z.string().default(''),
+  /** Generation the verification belongs to, so an older one does not count. */
+  generation: z.number().int().nonnegative().default(0),
   verifiedAtMs: z.number().int().nonnegative().default(0),
 })
 

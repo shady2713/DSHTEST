@@ -32,7 +32,7 @@ describe('browser dispatch authorisation', () => {
       // A verified role's own calls now need the authority it was issued.
       const token = (): string => store.mintAuthority('run-1', 'owner')?.token ?? ''
     try {
-      const reason = guardReason({ name: ALICE_BROWSER, arguments: { authority: token() }, agent: { id: 'owner' } }, store, 'owner', ownedBy('run-1'))
+      const reason = guardReason({ name: ALICE_BROWSER, arguments: { authority: token() }, agent: { id: 'owner' } }, store, 'owner', ownedBy(store, 'run-1'))
       // A cancelled run mints no authority at all, so the call has none to present.
       expect(reason).toContain('needs the authority')
     } finally {
@@ -54,13 +54,13 @@ describe('browser dispatch authorisation', () => {
     try {
       await store.controlRun('run-1', 'resume')
       await store.assumeRole('run-1', 'buyer', { account: 'Alice Buyer', detail: '/whoami' })
-      expect(guardReason({ name: ALICE_BROWSER, arguments: { authority: token() }, agent: { id: 'owner' } }, store, 'owner', ownedBy('run-1'))).toBeUndefined()
+      expect(guardReason({ name: ALICE_BROWSER, arguments: { authority: token() }, agent: { id: 'owner' } }, store, 'owner', ownedBy(store, 'run-1'))).toBeUndefined()
       await store.controlRun('run-1', 'pause')
       // A paused run names the pause, which is more useful than the generic
       // no-grant wording, and it is still a refusal.
-      expect(guardReason({ name: ALICE_BROWSER, arguments: { authority: token() }, agent: { id: 'owner' } }, store, 'owner', ownedBy('run-1'))).toContain('is paused and refuses new test actions')
+      expect(guardReason({ name: ALICE_BROWSER, arguments: { authority: token() }, agent: { id: 'owner' } }, store, 'owner', ownedBy(store, 'run-1'))).toContain('is paused and refuses new test actions')
       await store.controlRun('run-1', 'resume')
-      expect(guardReason({ name: ALICE_BROWSER, arguments: { authority: token() }, agent: { id: 'owner' } }, store, 'owner', ownedBy('run-1'))).toBeUndefined()
+      expect(guardReason({ name: ALICE_BROWSER, arguments: { authority: token() }, agent: { id: 'owner' } }, store, 'owner', ownedBy(store, 'run-1'))).toBeUndefined()
     } finally {
       await dispose()
       cleanupHomes()
@@ -88,7 +88,7 @@ describe('browser dispatch authorisation', () => {
       await store.assumeRole('run-2', 'buyer', { account: 'Alice Buyer', detail: '/whoami' })
       expect(store.verifiedAccount('run-2', 'buyer')).toBe('Alice Buyer')
       const minted = store.mintAuthority('run-2', 'owner')
-      expect(guardReason({ name: ALICE_BROWSER, arguments: { authority: minted?.token ?? '' }, agent: { id: 'owner' } }, store, 'owner', ownedBy('run-2', 'owner', minted?.generation ?? 1))).toBeUndefined()
+      expect(guardReason({ name: ALICE_BROWSER, arguments: { authority: minted?.token ?? '' }, agent: { id: 'owner' } }, store, 'owner', ownedBy(store, 'run-2', 'owner', minted?.generation))).toBeUndefined()
     } finally {
       await dispose()
       cleanupHomes()
@@ -111,8 +111,8 @@ describe('browser dispatch authorisation', () => {
     try {
       await store.controlRun('run-theirs', 'resume')
       await store.assumeRole('run-theirs', 'buyer', { account: 'Alice Buyer', detail: '/whoami' })
-      expect(guardReason({ name: ALICE_BROWSER, arguments: { authority: token() }, agent: { id: 'theirs' } }, store, 'mine', ownedBy('run-theirs', 'theirs'))).toContain('another session')
-      expect(guardReason({ name: ALICE_BROWSER }, store, 'mine', ownedBy('run-1'))).toContain('needs the authority')
+      expect(guardReason({ name: ALICE_BROWSER, arguments: { authority: token() }, agent: { id: 'theirs' } }, store, 'mine', ownedBy(store, 'run-theirs', 'theirs'))).toContain('another session')
+      expect(guardReason({ name: ALICE_BROWSER }, store, 'mine', ownedBy(store, 'run-1'))).toContain('needs the authority')
     } finally {
       await dispose()
       cleanupHomes()
@@ -133,10 +133,10 @@ describe('browser dispatch authorisation', () => {
       await store.assumeRole('run-1', 'buyer', { account: '', detail: 'the site reported no account' })
       // The sign-in itself stays reachable: the run is running and declares the
       // role, even though nothing has been verified yet.
-      expect(guardReason({ name: ALICE_BROWSER, }, store, 'owner', ownedBy('run-1'))).toBeUndefined()
-      expect(guardReason({ name: 'mcp__playwright-role-buyer__browser_click' }, store, 'owner', ownedBy('run-1'))).toBeUndefined()
+      expect(guardReason({ name: ALICE_BROWSER, }, store, 'owner', ownedBy(store, 'run-1'))).toBeUndefined()
+      expect(guardReason({ name: 'mcp__playwright-role-buyer__browser_click' }, store, 'owner', ownedBy(store, 'run-1'))).toBeUndefined()
       // Another role's browser is not reachable for the same preparation.
-      expect(guardReason({ name: 'mcp__playwright-role-approver__browser_navigate' }, store, 'owner', ownedBy('owner')))
+      expect(guardReason({ name: 'mcp__playwright-role-approver__browser_navigate' }, store, 'owner', ownedBy(store, 'run-1')))
         .toContain('needs the authority')
     } finally {
       await dispose()
@@ -330,10 +330,21 @@ function identity(runKey: string, role: string): Record<string, unknown> {
  * @param runKey - Run that claimed the role.
  * @returns An owner lookup for the guard to consult per role.
  */
-function ownedBy(runKey: string, sessionId = '', generation = 1): {
+function ownedBy(
+  store: { generationOf: (key: string) => number | undefined },
+  runKey: string,
+  sessionId = '',
+  generation?: number,
+): {
   ownerOfServer: (n: string) => MountOwner | undefined
   claimOf: (n: string) => { runKey: string, generation: number } | undefined
 } {
+  // The generation is read from the run at the moment the call is judged. Naming
+  // it as a literal left the mount claiming a generation the run had already
+  // left behind, which only showed up once the preparation path started comparing
+  // the three of them: pausing and resuming moves the run on, and the mount did
+  // not. A literal here was a fixture that disagreed with the store it stood in
+  // for.
   const owned = (name: string): MountOwner | undefined =>
     (name.startsWith('playwright-role-')
       ? {
@@ -342,13 +353,13 @@ function ownedBy(runKey: string, sessionId = '', generation = 1): {
         environmentKey: 'shop-test',
         runKey,
         role: name.slice('playwright-role-'.length),
-        generation,
+        generation: generation ?? store.generationOf(runKey) ?? 0,
         serverName: name,
       }
       : undefined)
   return {
     ownerOfServer: owned,
-    claimOf: name => (owned(name) === undefined ? undefined : { runKey, generation }),
+    claimOf: name => (owned(name) === undefined ? undefined : { runKey, generation: generation ?? store.generationOf(runKey) ?? 0 }),
   }
 }
 
@@ -458,6 +469,123 @@ describe('a cancelled run does not block the next one', () => {
       expect(() => store.requireAuthority(tokenB?.token ?? '', 'agent-a')).toThrow()
     } finally {
       await home.dispose()
+    }
+  })
+})
+
+/**
+ * A no-credential browser call on a mount the session still holds, judged by the
+ * real store rather than by a stubbed answer.
+ * @param store - Store to judge against.
+ * @param mount - Mount the call names.
+ * @returns the refusal reason, or `undefined` when the call is admitted.
+ */
+function judgedBy(
+  store: Parameters<typeof guardReason>[1],
+  mount: MountOwner,
+  claimGeneration: number,
+): string | undefined {
+  return guardReason(
+    { name: `mcp__${mount.serverName}__browser_click`, arguments: {}, agent: { id: 'agent-a' } },
+    store, 'owner',
+    { ownerOfServer: () => mount, claimOf: () => ({ runKey: mount.runKey, generation: claimGeneration }) },
+  )
+}
+
+describe('preparation judged against the real store', () => {
+  const BASE = {
+    seed: seedOf({
+      runs: { 'run-a': run('run-a', 'owner', { status: 'running', activeRole: 'buyer' }) },
+      'environment_revisions': { 'shop-test': environment('shop-test', ['buyer', 'seller']) },
+    }),
+  }
+
+  it('admits the role it is still verifying, and refuses one already verified', async () => {
+    const { store, dispose } = await harness(BASE)
+    try {
+      // A seeded run arrives interrupted; resuming it is what puts it back into
+      // the state these cases are about.
+      await store.controlRun('run-a', 'resume')
+      await store.putRoleIdentity({
+        schemaVersion: SCHEMA_VERSION, kind: 'role-identity' as const, label: 'buyer',
+        updatedAtMs: 0, key: 'run-a/buyer', runKey: 'run-a', role: 'buyer',
+        account: 'alice@example.test', detail: '',
+        generation: store.generationOf('run-a') ?? 0, verifiedAtMs: 1,
+      })
+      const mount: MountOwner = {
+        serverName: 'playwright-role-buyer', runKey: 'run-a', role: 'buyer',
+        generation: store.generationOf('run-a') ?? 0, sessionId: 'owner',
+      }
+      // Buyer is verified in this generation, so its own browser needs no window.
+      expect(judgedBy(store, mount, store.generationOf('run-a') ?? 0)).toBeTypeOf('string')
+      // Seller has never been verified, so preparing it still works.
+      const seller: MountOwner = { ...mount, serverName: 'playwright-role-seller', role: 'seller' }
+      expect(judgedBy(store, seller, store.generationOf('run-a') ?? 0)).toBeUndefined()
+    } finally {
+      await dispose()
+      cleanupHomes()
+    }
+  })
+
+  it('refuses the old role once the run has switched to another one', async () => {
+    // Windows reported this combination: the run verified `buyer`, moved to
+    // `seller`, and the buyer mount and its claim were both still generation 1.
+    // The preparation window used to reopen for buyer, because it was tied to the
+    // active role rather than to what had already been verified.
+    const { store, dispose } = await harness({
+      seed: seedOf({
+        runs: { 'run-a': run('run-a', 'owner', { status: 'running', activeRole: 'seller' }) },
+        'environment_revisions': { 'shop-test': environment('shop-test', ['buyer', 'seller']) },
+      }),
+    })
+    try {
+      await store.controlRun('run-a', 'resume')
+      await store.putRoleIdentity({
+        schemaVersion: SCHEMA_VERSION, kind: 'role-identity' as const, label: 'buyer',
+        updatedAtMs: 0, key: 'run-a/buyer', runKey: 'run-a', role: 'buyer',
+        account: 'alice@example.test', detail: '',
+        generation: store.generationOf('run-a') ?? 0, verifiedAtMs: 1,
+      })
+      const mount: MountOwner = {
+        serverName: 'playwright-role-buyer', runKey: 'run-a', role: 'buyer',
+        generation: store.generationOf('run-a') ?? 0, sessionId: 'owner',
+      }
+      expect(judgedBy(store, mount, store.generationOf('run-a') ?? 0)).toBeTypeOf('string')
+    } finally {
+      await dispose()
+      cleanupHomes()
+    }
+  })
+
+  it('refuses a mount whose owner and claim agree while the run has moved on', async () => {
+    // The other combination Windows reported: owner generation 1, claim
+    // generation 1, but the run itself is on generation 2. Comparing only the
+    // first two made a mount the run had already replaced look current.
+    const { store, dispose } = await harness({
+      seed: seedOf({
+        runs: { 'run-a': run('run-a', 'owner', { status: 'running', activeRole: '' }) },
+        'environment_revisions': { 'shop-test': environment('shop-test', ['buyer']) },
+      }),
+    })
+    try {
+      await store.controlRun('run-a', 'resume')
+      await store.controlRun('run-a', 'pause')
+      await store.controlRun('run-a', 'resume')
+      expect(store.generationOf('run-a')).toBe(2)
+      // The mount and its claim both still say 1, which is what the run left
+      // behind. Reading them from the store instead would have made this case
+      // indistinguishable from the working one below.
+      const mount: MountOwner = {
+        serverName: 'playwright-role-buyer', runKey: 'run-a', role: 'buyer',
+        generation: 1, sessionId: 'owner',
+      }
+      expect(judgedBy(store, mount, 1)).toBeTypeOf('string')
+      // The mount the new generation actually owns is the one that still works.
+      const current: MountOwner = { ...mount, generation: 2 }
+      expect(judgedBy(store, current, 2)).toBeUndefined()
+    } finally {
+      await dispose()
+      cleanupHomes()
     }
   })
 })

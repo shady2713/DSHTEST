@@ -158,7 +158,13 @@ export function guardReason(
     requireAuthority: (token: string, agentId: string) => {
       runKey: string, role: string, generation: number, agentId: string
     }
-    mayPrepareIdentity: (sessionId: string, role: string, runKey?: string) => boolean
+    mayPrepareIdentity: (
+      sessionId: string,
+      role: string,
+      runKey?: string,
+      generation?: number,
+    ) => boolean
+    generationOf?: (runKey: string) => number | undefined
   },
   sessionId = '',
   pool?: {
@@ -225,11 +231,21 @@ export function guardReason(
       // one: the run moved on, and the client this mount belongs to has been
       // replaced. Preparing an identity through it would hand the new generation
       // a browser the old one still owns.
+      // The mount, its claim and the run all have to name the same generation.
+      // Comparing only the first two let a mount and its claim stay at 1 while
+      // the run moved to 2, and the preparation window opened for a browser the
+      // current generation has already replaced.
+      // A data service that cannot say which generation its run is on cannot
+      // clear a preparation: the answer has to come from the live record. An
+      // absent answer leaves `generationAgrees` false, so the call falls through
+      // to the authority check instead of being waved through.
+      const live = store?.generationOf?.(owner.runKey)
       const generationAgrees = claim !== undefined && claim.generation === owner.generation
+        && live !== undefined && live === owner.generation
       const offered = (execution.arguments as { authority?: unknown } | undefined)?.authority
       if ((offered === undefined || offered === '')
         && claim !== undefined && claim.runKey === owner.runKey && generationAgrees
-        && store?.mayPrepareIdentity(sessionId, role, owner.runKey) === true) {
+        && store?.mayPrepareIdentity(sessionId, role, owner.runKey, owner.generation) === true) {
         return undefined
       }
     }
