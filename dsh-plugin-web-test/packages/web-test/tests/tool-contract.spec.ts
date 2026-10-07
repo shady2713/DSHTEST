@@ -160,36 +160,57 @@ describe('data root access control', () => {
 })
 
 describe('restricting the data root on Windows', () => {
-  it('names only this plugin’s own root and clears what it inherited', () => {
-    const argv = restrictCommandsForWindows('C:/Users/a/.dsh/plugins/dsh-plugin-web-test')
-    expect(argv.slice(0, 3)).toEqual(['icacls.exe', 'C:/Users/a/.dsh/plugins/dsh-plugin-web-test', '/inheritance:r'])
-    // Removing inherited entries is what drops the other accounts; granting
-    // alone would add this user without taking anything away.
-    expect(argv).toContain('/inheritance:r')
-    expect(argv).toContain('/grant:r')
+  const OWNER = 'CORP\\a'
+  const ACL = [
+    'C:\\Users\\a\\data                          CORP\\a:(OI)(CI)(F)',
+    '                              Everyone:(OI)(CI)(RX)',
+    '                              NT AUTHORITY\\SYSTEM:(OI)(CI)(F)',
+    '                              BUILTIN\\Administrators:(OI)(CI)(F)',
+  ].join('\r\n')
+
+  it('removes each unwanted principal, because dropping inheritance leaves explicit grants', () => {
+    const root = 'C:/Users/a/.dsh/plugins/dsh-plugin-web-test'
+    const commands = restrictCommandsForWindows(root, ACL, OWNER)
+    expect(commands[0]).toEqual(['icacls.exe', root, '/inheritance:r'])
+    // `Everyone` had an explicit grant, which /inheritance:r does not touch.
+    expect(commands).toContainEqual(['icacls.exe', root, '/remove:g', 'Everyone'])
+    expect(commands[commands.length - 1]).toEqual(['icacls.exe', root, '/grant:r', `${OWNER}:(OI)(CI)F`])
+    // SYSTEM and Administrators keep access, or the machine loses its own path.
+    expect(commands.join(' ')).not.toContain('SYSTEM')
+    expect(commands.join(' ')).not.toContain('Administrators')
     // One directory, named outright: no parent, no recursion into .dsh.
-    expect(argv.join(' ')).not.toContain('/T')
-    expect(argv.join(' ')).not.toContain('.dsh ')
+    expect(commands[0]).not.toContain('/T')
   })
 
-  it('runs the restriction on Windows and nothing elsewhere', async () => {
+  it('reads the current entries before restricting, and nothing runs off Windows', async () => {
     const seen: string[][] = []
-    const record = (argv: string[]) => { seen.push(argv); return Promise.resolve() }
-    await restrictDataRootToOwner('C:/data', 'win32', record)
-    await restrictDataRootToOwner('/data', 'linux', record)
-    // The directory first, so what is created next inherits the restriction, and
-    // then what is already there, which inherited nothing of it.
-    expect(seen).toHaveLength(2)
-    expect(seen[0]).toEqual(restrictCommandsForWindows('C:/data'))
-    expect(seen[1]).toEqual(restrictTreeCommandsForWindows('C:/data'))
-    expect(seen[0]).not.toContain('/T')
-    expect(seen[1]).toContain('/T')
+    // The first call reads the directory and still sees `Everyone`; after the
+    // removals run, reading it back has to come back clean.
+    const record = (argv: string[]) => {
+      seen.push(argv)
+      return Promise.resolve(seen.length === 1 ? ACL : '')
+    }
+    await restrictDataRootToOwner('C:/data', 'win32', record, OWNER)
+    await restrictDataRootToOwner('/data', 'linux', record, OWNER)
+    expect(seen.length).toBeGreaterThan(0)
+    expect(seen[0]).toEqual(['icacls.exe', 'C:/data'])
+    expect(seen[1]).toEqual(['icacls.exe', 'C:/data', '/inheritance:r'])
+    expect(seen.every(argv => argv[0] === 'icacls.exe')).toBe(true)
+    expect(seen.some(argv => argv.includes('/T'))).toBe(true)
   })
 
   it('refuses to continue when the platform rejects the restriction', async () => {
     const refuse = () => Promise.reject(new Error('access is denied'))
-    await expect(restrictDataRootToOwner('C:/data', 'win32', refuse))
+    await expect(restrictDataRootToOwner('C:/data', 'win32', refuse, OWNER))
       .rejects.toThrow('could not restrict C:/data')
+  })
+
+  it('refuses to open the database when another principal still has access', async () => {
+    // Every call succeeds, but `Everyone` is still there afterwards: a call that
+    // reports success is not proof that the directory is restricted.
+    const record = (argv: string[]) => Promise.resolve(argv.includes('/T') ? ACL : '')
+    await expect(restrictDataRootToOwner('C:/data', 'win32', record, OWNER))
+      .rejects.toThrow('still grants access to Everyone')
   })
 })
 

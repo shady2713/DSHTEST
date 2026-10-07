@@ -107,34 +107,106 @@ export async function ensureDataRoot(): Promise<string> {
 export const ICACLS = 'icacls.exe'
 
 /**
- * The `icacls` call that drops every inherited access control entry on a
- * directory, leaving the current user able to use it.
+ * Principals that keep access when the data root is restricted.
  *
- * The root is reset rather than edited, so the entries come from the parent
- * directory rather than from whatever a previous run left behind. The directory
- * is named directly and no reparse point is followed into: the target is this
- * plugin's own data root and nothing under it yet.
- * @param root - Absolute plugin data root to restrict.
- * @returns the argument vector to execute.
+ * SYSTEM and the local Administrators group have to keep it, or the machine
+ * loses its own recovery path and the plugin cannot open its own database.
+ * @param owner - Account the plugin runs as.
+ * @returns the principal names allowed to remain.
  */
-export function restrictCommandsForWindows(root: string): string[] {
-  return [ICACLS, root, '/inheritance:r', '/grant:r', `${grantedAccountFor()}:(OI)(CI)F`]
+export function principalsToKeep(owner: string): string[] {
+  return [owner, 'NT AUTHORITY\\SYSTEM', 'BUILTIN\\Administrators']
 }
 
 /**
- * The `icacls` call that re-applies the same restriction to everything already
- * under a directory.
+ * Read the principals an access control entry list currently names.
  *
- * Restricting the directory itself only governs what is created afterwards: an
- * existing SQLite database, its write-ahead log and shared-memory file, and the
- * evidence directories from earlier runs keep the entries they were created
- * with. Recursion stays inside the plugin's own data root and no reparse point
- * is followed, so nothing outside it is touched.
- * @param root - Absolute plugin data root to walk.
+ * `icacls` prints one entry per line with the path in the first column and the
+ * principal after it, separated by a run of spaces wide enough to align the
+ * column; an entry continuing the previous path leaves that column blank. A
+ * principal can contain a space (`NT AUTHORITY\\SYSTEM`), so the name is taken as
+ * everything between the column separator and the rights, which open with a
+ * parenthesis.
+ * @param output - Standard output of `icacls` on a path.
+ * @returns the principal names named by the output, in the order printed.
+ */
+export function principalsOf(output: string): string[] {
+  return output.split('\n').flatMap((line) => {
+    const match = /^.*?\s{2,}([^:]+):\(/.exec(line)
+    return match === null ? [] : [(match[1] as string).trim()]
+  })
+}
+
+/**
+ * The call that drops every entry a directory inherits from its parent.
+ * @param root - Absolute plugin data root to restrict.
  * @returns the argument vector to execute.
  */
-export function restrictTreeCommandsForWindows(root: string): string[] {
-  return [...restrictCommandsForWindows(root), '/T']
+export function inheritanceRemovalFor(root: string): string[] {
+  return [ICACLS, root, '/inheritance:r']
+}
+
+/**
+ * The call that takes access away from one named principal.
+ *
+ * `/inheritance:r` drops inherited entries only. An explicit grant written by an
+ * earlier run, or inherited into a file before its parent was changed, stays in
+ * place: that is how an explicit `Everyone` read survives a "restricted"
+ * directory. Each unwanted principal therefore has to be removed by name.
+ * @param root - Absolute plugin data root to restrict.
+ * @param principal - Principal to take access from.
+ * @returns the argument vector to execute.
+ */
+export function removalFor(root: string, principal: string): string[] {
+  return [ICACLS, root, '/remove:g', principal]
+}
+
+/**
+ * The call that gives the owning account full control, replacing its own entry.
+ * @param root - Absolute plugin data root to restrict.
+ * @param owner - Account the plugin runs as.
+ * @returns the argument vector to execute.
+ */
+export function grantFor(root: string, owner: string): string[] {
+  return [ICACLS, root, '/grant:r', `${owner}:(OI)(CI)F`]
+}
+
+/**
+ * The calls that restrict one directory, in the order they have to run.
+ *
+ * Read the current entries, drop the inherited ones, take access away from every
+ * principal that is not the owning account, then write that account's own full
+ * control. Reading first is what makes the removal complete rather than a guess.
+ * @param root - Absolute plugin data root to restrict.
+ * @param current - Standard output of `icacls` on that directory.
+ * @param owner - Account the plugin runs as.
+ * @returns the argument vectors to execute in order.
+ */
+export function restrictCommandsForWindows(
+  root: string,
+  current: string,
+  owner: string,
+): string[][] {
+  const keep = principalsToKeep(owner)
+  const unwanted = [...new Set(principalsOf(current).filter(name => !keep.includes(name)))]
+  return [
+    inheritanceRemovalFor(root),
+    ...unwanted.map(name => removalFor(root, name)),
+    grantFor(root, owner),
+  ]
+}
+
+/**
+ * Append the recursive form of each call.
+ *
+ * Restricting a directory only governs what is created afterwards: an existing
+ * SQLite database, its write-ahead log and shared-memory file, and the evidence
+ * directories from earlier runs keep the entries they were created with.
+ * @param commands - Calls produced for one directory.
+ * @returns the same calls with `/T` appended, to run against everything under it.
+ */
+export function restrictTreeCommandsForWindows(commands: string[][]): string[][] {
+  return commands.map(argv => [...argv, '/T'])
 }
 
 /**
@@ -162,28 +234,58 @@ export function grantedAccountFor(
  * is the platform's own tool.
  *
  * @param root - Absolute plugin data root to restrict.
+ * @param platform - Platform the data root lives on.
+ * @param exec - Runs one argument vector and resolves with its standard output.
+ * @param owner - Account the plugin runs as.
  * @returns nothing.
- * @throws when the platform refuses the restriction, so the store does not open
- * over a directory that is readable by other accounts.
+ * @throws when the platform refuses the restriction, or when the result still names
+ * a principal that must not keep access, so the store does not open over a
+ * directory another local account can read.
  */
 export async function restrictDataRootToOwner(
   root: string,
   platform: NodeJS.Platform = process.platform,
-  run: (argv: string[]) => Promise<unknown> = (argv) => execFile(
-    argv[0] as string, argv.slice(1), { windowsHide: true },
-  ),
+  exec: (argv: string[]) => Promise<string> = async (argv) =>
+    (await execFile(argv[0] as string, argv.slice(1), { windowsHide: true })).stdout,
+  owner: string = grantedAccountFor(),
 ): Promise<void> {
   if (restrictsDirectoryToOwner(platform)) return
+  const keep = principalsToKeep(owner)
   try {
     // The root and everything already under it. Evidence directories are created
     // later and inherit from the root, so they need no call of their own.
-    await run(restrictCommandsForWindows(root))
-    await run(restrictTreeCommandsForWindows(root))
+    // Read first: that read is what makes the removal list complete instead of a
+    // guess at which principals are present.
+    const current = await exec([ICACLS, root])
+    const commands = restrictCommandsForWindows(root, current, owner)
+    for (const argv of commands) await exec(argv)
+    // Everything already under the root: the database, its write-ahead log and
+    // shared-memory file, and the evidence directories from earlier runs keep the
+    // entries they were created with. Evidence created later inherits from the
+    // restricted root.
+    for (const argv of restrictTreeCommandsForWindows(commands)) await exec(argv)
   } catch (error) {
     throw new Error(
       `web-test: could not restrict ${root} to the current account, so the plugin will not`
       + ` open its database there. ${String(error)}`,
       { cause: error },
+    )
+  }
+  let after: string
+  try {
+    after = await exec([ICACLS, root, '/T'])
+  } catch (error) {
+    throw new Error(
+      `web-test: could not read back the access control entries of ${root} to confirm that`
+      + ` only ${owner} keeps access. ${String(error)}`,
+      { cause: error },
+    )
+  }
+  const remaining = [...new Set(principalsOf(after).filter(name => !keep.includes(name)))]
+  if (remaining.length > 0) {
+    throw new Error(
+      `web-test: ${root} still grants access to ${remaining.join(', ')} after restricting it`
+      + ` to ${owner}, so the plugin will not open its database there.`,
     )
   }
 }
