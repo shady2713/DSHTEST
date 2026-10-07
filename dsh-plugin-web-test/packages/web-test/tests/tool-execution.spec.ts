@@ -144,9 +144,9 @@ const FIELD_VALUES: Record<string, unknown> = {
   authority: 'tok-a',
   accountPage: 'http://127.0.0.1:8902/',
   untilIso: '2030-01-01T00:00:00.000Z',
-  steps: [{ index: 1, intent: 'open the order page' }],
-  assertions: [{ expected: 'the order exists', outcome: 'passed' }],
-  cases: [{ caseKey: 'c', title: 'buy', intent: 'buy the item' }],
+  steps: [{ index: 1, intent: 'open the order page', observed: 'the order page', outcome: 'passed' }],
+  assertions: [{ expected: 'the order exists', actual: 'the order exists', outcome: 'passed' }],
+  cases: [{ caseKey: 'c', title: 'buy', steps: [{ index: 1, intent: 'buy' }] }],
 }
 
 /**
@@ -154,7 +154,17 @@ const FIELD_VALUES: Record<string, unknown> = {
  * @param tool - A registered tool definition.
  * @returns the argument object, or a problem when a required field has no value.
  */
-function argumentsFor(tool: { parameters: Record<string, unknown> }):
+const TOOL_VALUES: Record<string, Record<string, unknown>> = {
+  // The planned step and the reported step are different records: a plan says
+  // what a step will do, a result says what it did and whether it held.
+  web_test_propose_cases: { steps: [{ index: 1, intent: 'buy the item' }] },
+  web_test_report_case: {
+    steps: [{ index: 1, intent: 'open the order page', observed: 'the order page', outcome: 'passed' }],
+    assertions: [{ expected: 'the order exists', actual: 'the order exists', outcome: 'passed' }],
+  },
+}
+
+function argumentsFor(tool: { parameters: Record<string, unknown>, name: string }):
 { args: Record<string, unknown>, problem: string } {
   // A tool declares its input either as the schema itself or wrapped in
   // `{ schema }`, the same way its output does. Both are accepted so a tool
@@ -162,8 +172,10 @@ function argumentsFor(tool: { parameters: Record<string, unknown> }):
   const schema = (tool.parameters['schema'] ?? tool.parameters) as Record<string, unknown>
   const required = (schema['required'] ?? []) as string[]
   const properties = (schema['properties'] ?? {}) as Record<string, unknown>
+  const own = TOOL_VALUES[tool.name] ?? {}
   const args: Record<string, unknown> = {}
   for (const field of required) {
+    if (Object.hasOwn(own, field)) { args[field] = own[field]; continue }
     if (!Object.hasOwn(FIELD_VALUES, field)) {
       return { args, problem: `no value recorded for required field ${field}` }
     }
@@ -172,7 +184,9 @@ function argumentsFor(tool: { parameters: Record<string, unknown> }):
   // Optional fields the body reads are supplied too, so the call is the one the
   // tool documents rather than the shortest one its schema allows.
   for (const field of Object.keys(properties)) {
-    if (!Object.hasOwn(args, field) && Object.hasOwn(FIELD_VALUES, field)) {
+    if (!Object.hasOwn(args, field) && Object.hasOwn(own, field)) {
+      args[field] = own[field]
+    } else if (!Object.hasOwn(args, field) && Object.hasOwn(FIELD_VALUES, field)) {
       args[field] = FIELD_VALUES[field]
     }
   }
@@ -205,6 +219,16 @@ describe('registered tools accept what they return', () => {
           waitingReason: 'settling',
         })
       }
+      // A result is reported against a case the run already proposed, so the
+      // plan has to exist before the body is called.
+      if (name.endsWith('report_case')) {
+        await store.putCasePlan({
+          schemaVersion: SCHEMA_VERSION, kind: 'case-plan' as const, label: 'c',
+          updatedAtMs: 0, key: 'run/c', runKey: 'run', caseKey: 'c',
+          title: 'buy the item', status: 'confirmed' as const,
+          steps: [{ index: 1, intent: 'buy the item' }], notes: '', confirmedAtMs: 1,
+        })
+      }
       const { args, problem } = argumentsFor(tool)
       if (problem !== '') { problems.push(`${tool.name}: ${problem}`); continue }
       // A body may refuse for a legitimate reason (no verified role, a browser
@@ -231,15 +255,15 @@ describe('registered tools accept what they return', () => {
     // floor below is a count of bodies that really returned a value, not of
     // calls that were attempted.
     //
-    // Four tools cannot reach a return without a real browser, because each one
-    // needs a verified role and `assume_role` is what verifies it:
-    // `assume_role` itself, `begin_operation`, `settle_operation` and
-    // `operation_unknown`. Those are exercised as refusal paths elsewhere; the
-    // remaining refusals are named in the failure output so none is hidden.
+    // Eight of the twelve reach a return here. The other four cannot without a
+    // real browser, because each needs a verified role and `assume_role` is what
+    // verifies it: `assume_role` itself, `begin_operation`, `settle_operation`
+    // and `operation_unknown`. Those are exercised as refusal paths rather than
+    // counted as successes; every refusal is named in the failure output.
     expect(
       succeeded.length,
       `只成功执行了 ${succeeded.length} 个: ${succeeded.join(', ')}\n拒绝的:\n${refused.join('\n')}`,
-    ).toBeGreaterThanOrEqual(6)
+    ).toBeGreaterThanOrEqual(8)
     if (succeeded.length === 0) throw new Error(`no tool produced a value; all refused:\n${refused.join('\n')}`)
     expect(problems).toEqual([])
     // Every tool has to be accounted for: none skipped, none silently unchecked.
