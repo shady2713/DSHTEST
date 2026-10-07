@@ -1,3 +1,5 @@
+import { mkdir, rm, symlink } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 /**
  * A tool's declared output has to accept what its body returns.
  *
@@ -220,5 +222,30 @@ describe('which account the Windows grant names', () => {
     // A machine with no domain still names the account it runs as.
     expect(grantedAccountFor({ USERNAME: 'a', USERDOMAIN: 'DESKTOP-1' })).toBe('DESKTOP-1\\a')
     expect(grantedAccountFor({ USERNAME: 'a' })).toBe('a')
+  })
+})
+
+describe('a reparse point inside the data root', () => {
+  it('stops before the recursive calls, so a target outside the root is not rewritten', async () => {
+    const root = join(tmpdir(), `webtest-link-${process.pid}`)
+    const outside = join(tmpdir(), `webtest-target-${process.pid}`)
+    await mkdir(join(root, 'nested'), { recursive: true })
+    await mkdir(outside, { recursive: true })
+    await symlink(outside, join(root, 'nested', 'escape'), 'junction')
+    try {
+      const seen: string[][] = []
+      const record = (argv: string[]) => {
+        seen.push(argv)
+        return Promise.resolve('')
+      }
+      await expect(restrictDataRootToOwner(root, 'win32', record, 'CORP\\a'))
+        .rejects.toThrow('contains a reparse point')
+      // Nothing recursive ran: a target outside the plugin's own directory is
+      // never touched, not even after the non-recursive calls succeeded.
+      expect(seen.some(argv => argv.includes('/T'))).toBe(false)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+      await rm(outside, { recursive: true, force: true })
+    }
   })
 })
