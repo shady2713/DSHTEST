@@ -26,11 +26,17 @@ bash scripts/check-candidate-tarball.sh
 
 ---
 
-# 0.8.1 复验须知（本节最新）
+# 复验须知（本节最新）
 
-**待验包**：`dsh-plugin-web-test-0.8.1.tgz`
-**SHA-256**：`784b869e9086d4ac12e98a151bbbfffe0439819813683e06bf7ace6b1b4a287b`
-**基线提交**：`993a2e9bc793c27436b148b5c5a2b4d15821a1dd`
+**待验包**：`dsh-plugin-web-test-0.8.2.tgz`
+**SHA-256**：不在这里写。**本文件打进包里，而包的内容决定这个文件的哈希，
+把包的哈希写进包里就是自我引用**——每次重建都会让它立刻过期。候选包的
+哈希记在包外的交付记录里：
+
+```
+.agents/notes/proposed/testing/2026-10-11-web-test-0.8.1-delivery-candidate.md
+```
+
 **0.8.0 原包未被覆盖**，`f6621d41ff3920eabaf5ef4346691d9d2655355feba08f3f7a33b08b4d11bafd` 保持不变。
 
 ## 本包修的四个点
@@ -40,11 +46,11 @@ bash scripts/check-candidate-tarball.sh
 3. `releaseAll` 按真实键释放；一个 disposer 失败不阻断其余，且失败项仍被跟踪
 4. **准备分支只在调用未递上任何凭据时生效**——此前一个属于别的运行的 authority 能驱动同角色另一个运行的浏览器
 
-**第 4 条是本包新修的，0.8.1 之前存在。**
+**第 4 条是本包新修的，0.8.1 及更早存在。**
 
 ## 复验顺序
 
-1. 装包，确认 `web_test_status` 报 **0.8.1**（不是 0.8.0）
+1. 装包，确认 `web_test_status` 报 **0.8.2**（不是 0.8.0 或 0.8.1）
 2. 同 session 建 buyer 与 approver 两个 run：**各自凭据成功，交换凭据必须在工具正文执行前被拒**
 3. 取消其中一个运行：**浏览器进程必须归零**，另一个仍可用
 4. 单行禁用 `web-test-role-browsers`，再整包禁用：**浏览器进程必须归零**
@@ -199,7 +205,7 @@ README 已按此更正措辞。**修复需在 Windows 上进行**，本包未包
 | 1–15 |  |  |  |  |
 | 0.8.0 新增 1–5 |  |  |  |  |
 
-## 0.8.0 新增覆盖项
+## 0.8.0 新增覆盖项（历史记录，结论以本节为准）
 
 0.6.12 时代的清单没有覆盖后来出现的 `web_test_control_run`、`web_test_finish_run`
 与 `web_test_propose_cases`，也没有覆盖整包禁用。这五条在 Ubuntu 上都有实测，
@@ -257,7 +263,7 @@ WAL、SHM 与 evidence 目录存在非 owner 的继承 Allow ACE（含 Modify）
 
 ## 已修：提供了错误凭据的登录类调用曾被当作准备放行
 
-**已在 0.8.1 修复，并由 `execution-guard.spec.ts` 的两条用例钉住。**
+**已在 0.8.2 修复，并由 `execution-guard.spec.ts` 的两条用例钉住。**
 
 guard 的准备分支先于凭据校验：只要该挂载已被认领、且该运行允许准备身份，
 `browser_click`、`browser_navigate` 这类登录工具就直接放行，
@@ -564,3 +570,28 @@ D=dsh-plugin-web-test/dist/dsh-plugin-web-test-0.8.0.tgz
 
 **对 0.8.1 做的等价检查**：解包后 `README.md`、`WINDOWS-ACCEPTANCE.zh.md`、
 `README.zh.md` 三份均与工作区一致。**这个才是 0.8.1 该满足的条件。**
+
+## 「可复现」指的是哪一种
+
+两种不同的说法，别混：
+
+- **重复打包现有产物**：在已经构建过的目录里再跑一次 `npm pack`，字节相同。
+  `check-candidate-tarball.sh` 验的就是这一条。
+- **干净源码构建可复现**：从提交重新 `tsc` → `tsdown` → `pack`，得到同样字节。
+
+**后者不能在 Windows 上直接验**：新检出的工作区没有 `lib/`，而 `tsdown`
+读的是构建产物。在没有 `lib/` 的目录里重打包得到的字节，与在构建过的
+目录里得到的不同，**这不是缺陷**。Windows 复验要重打包，先按
+`README.md` 构建一次：
+
+```sh
+cd dsh-plugin-web-test/packages/web-test
+rm -rf lib
+node ../../node_modules/typescript/bin/tsc -b tsconfig.json
+../../node_modules/.bin/tsdown
+node ../../scripts/generate-typert.mjs
+npm pack --pack-destination ../../dist
+```
+
+**构建顺序不能省**：上一次构建留下的分块会让包多出陈旧文件，所以先
+`rm -rf lib`。
