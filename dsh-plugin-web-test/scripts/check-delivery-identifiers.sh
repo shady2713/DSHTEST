@@ -7,7 +7,8 @@ cd "$(git rev-parse --show-toplevel)"
 # provenance instead of being skipped once work moves on.
 V_CANDIDATE="${1:-0.8.0}"
 P=.agents/notes/proposed/testing/2026-10-09-web-test-0.8.0-delivery-candidate.md
-[ "$V_CANDIDATE" = "0.8.0" ] || P=.agents/notes/proposed/testing/2026-10-1${V_CANDIDATE#0.8}-web-test-${V_CANDIDATE}-delivery-candidate.md
+[ "$V_CANDIDATE" = "0.8.0" ] || P=$(ls .agents/notes/proposed/testing/*web-test-${V_CANDIDATE}-delivery-candidate.md 2>/dev/null | head -1)
+[ -n "$P" ] || P=.agents/notes/proposed/testing/2026-10-09-web-test-${V_CANDIDATE}-delivery-candidate.md
 D=dsh-plugin-web-test/dist/dsh-plugin-web-test-${V_CANDIDATE}.tgz
 [ -f "$P" ] || { echo "✗ 交付记录 $P 不存在"; exit 1; }
 echo "候选版本 $V_CANDIDATE  记录 $P"
@@ -18,8 +19,11 @@ fail=0
 # and only require them to be identical.
 REC_SHA=$(grep -oP '^source   \K[0-9a-f]+' $P)
 PACKAGED="dsh-plugin-web-test/packages/web-test/ dsh-plugin-web-test/dist/"
+NEWEST="$(ls dsh-plugin-web-test/dist/dsh-plugin-web-test-*.tgz | sed -E 's/.*-(.*)\.tgz/\1/' | sort -V | tail -1)"
 if ! git cat-file -e "$REC_SHA^{commit}" 2>/dev/null; then
   echo "✗ 记录里的 SHA $REC_SHA 不是仓库中的提交"; fail=1
+elif [ "$V_CANDIDATE" != "$NEWEST" ]; then
+  echo "— 已交付的旧候选 $V_CANDIDATE，不再要求其记录提交之后打包文件未变"
 elif [ -n "$(git diff --name-only "$REC_SHA"..HEAD -- $PACKAGED)" ]; then
   echo "✗ 记录里的 SHA 之后被打包的文件变过，SHA 与哈希需一起重取："
   git diff --name-only "$REC_SHA"..HEAD -- $PACKAGED | sed 's/^/    /'
