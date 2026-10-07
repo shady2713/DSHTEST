@@ -67,7 +67,12 @@ echo "✓ 全新安装通过"
 #    plugin under delivery is dsh-plugin-web-test; packages/*/web-test is a
 #    different implementation and editing it to suit this one is the mistake this
 #    check exists to catch.
-OUTSIDE="$(git -C "$ROOT/.." status --porcelain \
+# Untracked paths are not a change to the repository: they are build residue or
+# somebody's work in progress. This check is about tracked files moving outside
+# the plugin, and reading `??` entries as if they were edits would make it fail
+# on a directory nobody touched on purpose — and the obvious "fix" for that
+# would be deleting files that are not this gate's to delete.
+OUTSIDE="$(git -C "$ROOT/.." status --porcelain --untracked-files=no \
   | awk '{print $2}' \
   | grep -vE '^\.agents/notes/proposed/testing/' \
   | grep -vE '^dsh-plugin-web-test/' \
