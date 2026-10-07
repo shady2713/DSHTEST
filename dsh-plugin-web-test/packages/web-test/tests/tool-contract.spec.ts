@@ -31,6 +31,8 @@ import {
 import {
   grantedAccountFor,
   restrictCommandsForWindows,
+  decodeAclDump,
+  anySidsPresent,
   sidOfAccount,
   sidsInTree,
   restrictDataRootToOwner,
@@ -164,70 +166,94 @@ describe('data root access control', () => {
 })
 
 describe('restricting the data root on Windows', () => {
-  const OWNER = 'CORP\\a'
-  const OWNER_SID = 'S-1-5-21-111-222-333-1001'
+  const OWNER = 'S-1-5-21-111-222-333-1001'
   const EVERYONE = 'S-1-1-0'
-  /** The owner on the root only, the shape Windows reported as left behind. */
-  const DUMP_ROOT = [
+  /** A real dump spells well-known principals as aliases, not as numbers. */
+  const DUMP_ALIASED = [
     'C:\\Users\\a\\data',
-    `D:(A;;FA;;;${OWNER_SID})(A;;FRFX;;;${EVERYONE})(A;;FA;;;S-1-5-18)(A;;FA;;;S-1-5-32-544)`,
+    'D:(A;;FA;;;S-1-5-21-111-222-333-1001)(A;;FRFX;;;WD)(A;;FA;;;SY)(A;;FA;;;BA)',
   ].join('\r\n')
-  /** The same tree once the explicit grant is gone from both levels. */
-  const DUMP_CLEAN = [
-    'C:\\Users\\a\\data',
-    `D:(A;;FA;;;${OWNER_SID})(A;;FA;;;S-1-5-18)(A;;FA;;;S-1-5-32-544)`,
-  ].join('\r\n')
-  /** Nobody on the root, an explicit Everyone on a file that already existed. */
+  /** Nobody aliased on the root, an explicit everyone on a file that existed. */
   const DUMP_CHILD = [
     'C:\\Users\\a\\data',
-    `D:(A;;FA;;;${OWNER_SID})(A;;FA;;;S-1-5-18)(A;;FA;;;S-1-5-32-544)`,
+    'D:(A;;FA;;;S-1-5-21-111-222-333-1001)(A;;FA;;;SY)(A;;FA;;;BA)',
     '',
     'C:\\Users\\a\\data\\evidence',
-    `D:(A;;FA;;;${OWNER_SID})(A;;FRFX;;;${EVERYONE})(A;;FA;;;S-1-5-18)`,
+    'D:(A;;FA;;;S-1-5-21-111-222-333-1001)(A;;FRFX;;;WD)(A;;FA;;;SY)',
+  ].join('\r\n')
+  /** The same tree once everyone is gone from both levels. */
+  const DUMP_CLEAN = [
+    'C:\\Users\\a\\data',
+    'D:(A;;FA;;;S-1-5-21-111-222-333-1001)(A;;FA;;;SY)(A;;FA;;;BA)',
   ].join('\r\n')
 
-  it('reads identities out of the ACL dump rather than the human-readable table', () => {
-    expect(sidsInTree(DUMP_ROOT)).toEqual([OWNER_SID, EVERYONE, 'S-1-5-18', 'S-1-5-32-544'])
-    // A localized display name never appears, so the answer does not depend on the
-    // machine's language.
-    expect(sidsInTree(DUMP_ROOT).join(' ')).not.toContain('Everyone')
+  it('decodes the saved file the way the platform wrote it', () => {
+    // The machine this was first observed on wrote UTF-16LE with no byte order
+    // mark. Read as UTF-8 it yields replacement characters between every
+    // character, and every scan for identifiers then finds none.
+    const body = DUMP_ALIASED.replace(/\r\n/gu, '\r\n')
+    const unmarked = Buffer.from(body, 'utf16le')
+    expect(unmarked[0]).not.toBe(0xff)
+    expect(sidsInTree(decodeAclDump(unmarked))).toContain(EVERYONE)
+    // A marked file has to decode the same way.
+    const marked = Buffer.concat([Buffer.from([0xff, 0xfe]), unmarked])
+    expect(sidsInTree(decodeAclDump(marked))).toContain(EVERYONE)
+    // And a plain UTF-8 file is not mangled.
+    expect(sidsInTree(decodeAclDump(Buffer.from(body, 'utf8')))).toContain(EVERYONE)
   })
 
-  it('removes an explicit grant left on the root itself', () => {
-    const root = 'C:/Users/a/.dsh/plugins/dsh-plugin-web-test'
-    const commands = restrictCommandsForWindows(root, sidsInTree(DUMP_ROOT), OWNER_SID)
-    expect(commands).toContainEqual(['icacls.exe', root, '/remove:g', `*${EVERYONE}`])
-    // SYSTEM and Administrators keep access, or the machine loses its own path.
-    expect(commands.join(' ')).not.toContain('S-1-5-18')
-    expect(commands.join(' ')).not.toContain('S-1-5-32-544')
+  it('reads the aliases a real descriptor uses, not only numeric identifiers', () => {
+    expect(sidsInTree(DUMP_ALIASED)).toEqual([OWNER, EVERYONE, 'S-1-5-18', 'S-1-5-32-544'])
+    expect(anySidsPresent(DUMP_ALIASED)).toContain('S-1-1-0')
+  })
+
+  it('refuses to read a dump it cannot understand instead of calling it empty', () => {
+    // The bytes were never decoded. Treating that as "nothing has access" is how
+    // the function reported success over a directory nobody had read.
+    expect(() => sidsInTree('���\u0000�\u0000')).toThrow('no entries')
+    expect(() => sidsInTree('')).toThrow('no entries')
+  })
+
+  it('names the owner by identifier, so a removal can never be aimed at it', () => {
+    const root = 'C:/data'
+    const commands = restrictCommandsForWindows(root, sidsInTree(DUMP_ALIASED), OWNER)
+    const removals = commands.filter(argv => argv.includes('/remove:g'))
+    expect(removals.map(argv => argv.at(-1))).toEqual([`*${EVERYONE}`])
+    expect(removals.join(' ')).not.toContain(OWNER)
   })
 
   it('removes an explicit grant left only on a file that already existed', () => {
     const root = 'C:/data'
-    // The root is clean here. Reading only the root is what missed this entry and
-    // left a world-readable file inside a directory reported as restricted.
-    const commands = restrictCommandsForWindows(root, sidsInTree(DUMP_CHILD), OWNER_SID)
-    expect(commands).toContainEqual(['icacls.exe', root, '/remove:g', `*${EVERYONE}`])
+    // Reading only the root is what missed this entry and left a world-readable
+    // file inside a directory reported as restricted.
+    expect(restrictCommandsForWindows(root, sidsInTree(DUMP_CHILD), OWNER)
+      .some(argv => argv.includes('/remove:g') && argv.at(-1) === `*${EVERYONE}`)).toBe(true)
+  })
+
+  it('keeps the machine system and administrators with an actual entry, not just in a list', () => {
+    // `/inheritance:r` drops inherited entries, and these two arrive inherited.
+    // Leaving them in the comparison only stops them being removed; something
+    // has to write them back.
+    const commands = restrictCommandsForWindows('C:/data', sidsInTree(DUMP_ALIASED), OWNER)
+    const grants = commands.filter(argv => argv.includes('/grant:r')).map(argv => argv.at(-1))
+    expect(grants).toContain('*S-1-5-18:(OI)(CI)F')
+    expect(grants).toContain('*S-1-5-32-544:(OI)(CI)F')
   })
 
   it('grants the owner before it takes anything away', () => {
-    const root = 'C:/data'
-    const commands = restrictCommandsForWindows(root, sidsInTree(DUMP_ROOT), OWNER)
+    const commands = restrictCommandsForWindows('C:/data', sidsInTree(DUMP_ALIASED), OWNER)
     // A removal that failed after /inheritance:r left the account unable to write.
-    // Granting first means its access is already in place before that can happen.
-    expect(commands[0]).toEqual(['icacls.exe', root, '/grant:r', `${OWNER}:(OI)(CI)F`])
-    expect(commands[1]).toEqual(['icacls.exe', root, '/inheritance:r'])
-    // One directory, named outright: no parent, no recursion into .dsh.
-    expect(commands[0]).not.toContain('/T')
+    expect(commands[0]).toEqual(['icacls.exe', 'C:/data', '/grant:r', `*${OWNER}:(OI)(CI)F`])
+    expect(commands[1]).toEqual(['icacls.exe', 'C:/data', '/inheritance:r'])
   })
 
-  it('takes the account name from the account query without reading its words', () => {
-    expect(sidOfAccount('\n\uC77C\uC5D0\r\n\r\nUSER INFORMATION\r\n----\r\n'
-      + 'User Name            S-1-5-21-111-222-333-1001\r\n')).toBe(OWNER_SID)
+  it('takes the account identifier from the account query without reading its words', () => {
+    expect(sidOfAccount('\\n\\uC77C\\uC5D0\r\n\r\nUSER INFORMATION\r\n----\r\n'
+      + `User Name            ${OWNER}\r\n`)).toBe(OWNER)
     expect(() => sidOfAccount('no identifier here')).toThrow('no security identifier')
   })
 
-  it('reads the whole tree through the platform dump, and nothing runs off Windows', async () => {
+  it('asks the platform which account it is rather than guessing a name', async () => {
     const root = await mkdtemp(join(tmpdir(), 'webtest-acl-'))
     try {
       const calls: string[][] = []
@@ -235,22 +261,22 @@ describe('restricting the data root on Windows', () => {
       const record = async (argv: string[]) => {
         calls.push(argv)
         const at = argv.indexOf('/save')
+        // Written the way the platform writes it: UTF-16LE with no byte order
+        // mark. Read back as UTF-8 it yields no identities at all, and the run
+        // would report a clean directory it never actually read.
         if (at !== -1) {
-          // The tree carries Everyone on a child at first and not after the
-          // removals, which is what a real restriction looks like.
-          await writeFile(argv[at + 1] as string, removed ? DUMP_CLEAN : DUMP_CHILD)
+          await writeFile(argv[at + 1] as string, Buffer.from(
+            (removed ? DUMP_CLEAN : DUMP_CHILD).replace(/\r\n/gu, '\r\n'), 'utf16le'))
         }
         if (argv.includes('/remove:g')) removed = true
-        return ''
+        return argv[0] === 'whoami.exe' ? `\\nUser Name  ${OWNER}\\n` : ''
       }
-      await restrictDataRootToOwner(root, 'win32', record, OWNER_SID)
-      // The dump covers the whole tree, which is the only thing that can see an
-      // entry written on a child.
+      await restrictDataRootToOwner(root, 'win32', record)
+      // The dump is written without a byte order mark on the machine this was
+      // observed on, so the bytes go in as UTF-16LE.
       expect(calls.some(argv => argv.includes('/save') && argv.includes('/t'))).toBe(true)
-      expect(calls.some(argv => argv.includes('/remove:g') && argv.some(one => one.endsWith('S-1-1-0')))).toBe(true)
-      const before = calls.length
-      await restrictDataRootToOwner(root, 'linux', record, OWNER_SID)
-      expect(calls.length).toBe(before)
+      expect(calls.some(argv => argv.includes('/remove:g') && argv.at(-1) === `*${EVERYONE}`))
+        .toBe(true)
     } finally {
       await rm(root, { recursive: true, force: true })
     }
@@ -263,16 +289,15 @@ describe('restricting the data root on Windows', () => {
       const record = async (argv: string[]) => {
         seen.push(argv)
         const at = argv.indexOf('/save')
-        if (at !== -1) await writeFile(argv[at + 1] as string, DUMP_ROOT)
+        if (at !== -1) await writeFile(argv[at + 1] as string, DUMP_ALIASED)
         if (argv.includes('/remove:g')) throw new Error('access is denied')
-        return ''
+        return argv[0] === 'whoami.exe' ? `\\nUser Name  ${OWNER}\\n` : ''
       }
-      await expect(restrictDataRootToOwner(root, 'win32', record, OWNER_SID))
+      await expect(restrictDataRootToOwner(root, 'win32', record))
         .rejects.toThrow('could not restrict')
-      const grants = seen.filter(argv => argv.includes('/grant:r'))
-      expect(grants.length).toBeGreaterThanOrEqual(2)
-      // The grant after the failure is the recovery, not the one before it.
       const failure = seen.findIndex(argv => argv.includes('/remove:g'))
+      // Recovery writes an entry for the account that has to be able to write
+      // there, after the failure rather than before it.
       expect(seen.findIndex((argv, at) => at > failure && argv.includes('/grant:r')))
         .toBeGreaterThan(failure)
     } finally {
@@ -280,23 +305,44 @@ describe('restricting the data root on Windows', () => {
     }
   })
 
+  it('reports a failed recovery rather than swallowing it', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'webtest-acl-'))
+    try {
+      const record = async (argv: string[]) => {
+        const at = argv.indexOf('/save')
+        if (at !== -1) await writeFile(argv[at + 1] as string, DUMP_ALIASED)
+        // Every grant as well as every removal fails: the directory is left with
+        // nothing for the account that has to write there.
+        if (argv.includes('/remove:g') || argv.includes('/grant:r')) {
+          throw new Error('access is denied')
+        }
+        return argv[0] === 'whoami.exe' ? `\\nUser Name  ${OWNER}\\n` : ''
+      }
+      await expect(restrictDataRootToOwner(root, 'win32', record))
+        .rejects.toThrow()
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('refuses to open the database when another identity still has access', async () => {
-    // Every call succeeds, but the tree still names Everyone afterwards: a call
+    // Every call succeeds, but the tree still names everyone afterwards: a call
     // that reports success is not proof that the directory is restricted.
     const root = await mkdtemp(join(tmpdir(), 'webtest-acl-'))
     try {
       const record = async (argv: string[]) => {
         const at = argv.indexOf('/save')
-        if (at !== -1) await writeFile(argv[at + 1] as string, DUMP_ROOT)
-        return ''
+        if (at !== -1) await writeFile(argv[at + 1] as string, DUMP_ALIASED)
+        return argv[0] === 'whoami.exe' ? `\\nUser Name  ${OWNER}\\n` : ''
       }
-      await expect(restrictDataRootToOwner(root, 'win32', record, OWNER_SID))
+      await expect(restrictDataRootToOwner(root, 'win32', record))
         .rejects.toThrow(`still grants access to ${EVERYONE}`)
     } finally {
       await rm(root, { recursive: true, force: true })
     }
   })
 })
+
 
 describe('which account the Windows grant names', () => {
   it('qualifies the name with its domain, because Windows resolves it otherwise', () => {

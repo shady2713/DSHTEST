@@ -106,6 +106,15 @@ export async function ensureDataRoot(): Promise<string> {
  */
 export const ICACLS = 'icacls.exe'
 
+/**
+ * Program that reports the account this process runs as, with its identifier.
+ *
+ * The identifier is what the access control dump speaks in. Resolving the name
+ * the operating system already knows this process by is what lets a grant and a
+ * removal be compared against the same spelling.
+ */
+export const WHOAMI = 'whoami.exe'
+
 /** Local system, which always keeps access. */
 export const SID_SYSTEM = 'S-1-5-18'
 /** The machine's built-in administrators group. */
@@ -113,55 +122,125 @@ export const SID_ADMINISTRATORS = 'S-1-5-32-544'
 /** Well-known principal that must never keep access to the data root. */
 export const SID_EVERYONE = 'S-1-1-0'
 
+/**
+ * Aliases a real SDDL string writes in place of a numeric identifier.
+ *
+ * `icacls /save` does not write `S-1-5-18` for the local system; it writes `SY`,
+ * and `BA` for the administrators group, `WD` for everyone. A parser that only
+ * looks for a numeric identifier reads a real dump as granting access to nobody,
+ * which is how a directory that still had everyone on it came back as
+ * restricted. Every alias is resolved to its numeric form so that comparison is
+ * against one representation rather than two.
+ */
+export const SDDL_ALIASES: Readonly<Record<string, string>> = {
+  WD: SID_EVERYONE,
+  SY: SID_SYSTEM,
+  BA: SID_ADMINISTRATORS,
+  BU: 'S-1-5-32-545',
+  BG: 'S-1-5-32-546',
+  IU: 'S-1-5-4',
+  IS: 'S-1-5-19',
+  RS: SID_SYSTEM,
+  SU: SID_ADMINISTRATORS,
+  CO: 'S-1-5-29',
+  AN: 'S-1-5-7',
+  AU: 'S-1-5-11',
+  BR: 'S-1-5-32-558',
+  PS: 'S-1-5-6',
+}
+
 /** Shape of a security identifier, which is a digit-led dash-separated token. */
 const SID_PATTERN = /\bS-1-\d+(?:-\d+)+\b/gu
+/**
+ * The identity field of an access control entry.
+ *
+ * In `(A;;FA;;;WD)` the fields are separated by semicolons and the identity is
+ * the last of them. It is not wrapped in parentheses of its own, which is why a
+ * reader looking for `(WD)` never finds it.
+ */
+const IDENTITY_FIELD = /;;;([^();]+)(?=[^()]*\))/gu
+/** One parenthesised entry of a descriptor, allowing nested flags in its middle. */
+const ENTRY_PATTERN = /\((?:[^()]|\([^()]*\))*\)/gu
+
+/**
+ * Decode an access control dump into text.
+ *
+ * `icacls /save` writes UTF-16LE, and on the machine this was first observed it
+ * wrote it without a byte order mark. Reading that as UTF-8 yields replacement
+ * characters between every character, so a scan for identifiers finds none and
+ * the caller concludes the tree grants access to nobody: the function reports
+ * success over a directory it never actually read. Deciding by byte pattern
+ * rather than by declared encoding is what makes a missing mark harmless.
+ * @param raw - The file's bytes exactly as read.
+ * @returns the dump as text.
+ */
+export function decodeAclDump(raw: Buffer): string {
+  // A marked document says what it is, so trust it and drop the mark.
+  if (raw.length >= 2 && raw[0] === 0xff && raw[1] === 0xfe) {
+    return raw.subarray(2).toString('utf16le')
+  }
+  // Otherwise decide by the bytes: a UTF-16LE ASCII document interleaves every
+  // ASCII byte with a NUL. That holds whether or not a mark said so, which is the
+  // case that matters — the machine this was first observed on wrote no mark.
+  if (raw.length >= 2 && raw[1] === 0x00) return raw.toString('utf16le')
+  return raw.toString('utf8')
+}
+
+/**
+ * Resolve every identity a descriptor names to a numeric identifier.
+ * @param descriptor - One parenthesised entry of an access control descriptor.
+ * @returns the identifiers it names, aliases resolved, duplicates dropped.
+ */
+export function sidsOfDescriptor(descriptor: string): string[] {
+  const found = [...descriptor.matchAll(IDENTITY_FIELD)]
+    .map(match => resolveIdentity(match[1] as string))
+  return [...new Set(found.filter((sid): sid is string => sid !== undefined))]
+}
+
+/**
+ * Turn one identity field into a numeric identifier.
+ * @param token - A field from an access control entry, as the platform wrote it.
+ * @returns the identifier, or `undefined` when the field names no known identity.
+ */
+export function resolveIdentity(token: string): string | undefined {
+  const trimmed = token.trim()
+  if (/^S-1-\d+(?:-\d+)+$/u.test(trimmed)) return trimmed
+  return SDDL_ALIASES[trimmed]
+}
+
+/**
+ * Security identifiers an access control dump grants access to.
+ *
+ * Only real entries are read. A file with no descriptor in it is not evidence
+ * that the tree grants access to nobody, and treating it that way is how an
+ * unreadable dump turned into a clean bill of health.
+ * @param dump - Decoded contents of an `icacls /save` file.
+ * @returns every distinct identifier the dump grants access to.
+ * @throws when the dump carries no descriptor at all, because that means the
+ * file was not the expected format and nothing about the tree is known.
+ */
+export function sidsOfAclDump(dump: string): string[] {
+  const entries = dump.match(ENTRY_PATTERN) ?? []
+  if (entries.length === 0) {
+    throw new Error('web-test: the access control dump carried no entries, so the directory'
+      + ' could not be read and nothing about its permissions is known')
+  }
+  return [...new Set(entries.flatMap(entry => sidsOfDescriptor(entry)))]
+}
 
 /**
  * Security identifiers the data root keeps access for.
  *
  * SYSTEM and the machine administrators keep it so there is still a recovery path
- * if the owning account's own entry is damaged. Both are identified by their
- * well-known SID rather than by their display name, because a display name is
- * localized: the same account reads `NT AUTHORITY\SYSTEM` on an English machine
- * and something else elsewhere, and comparing names is what let an explicit
- * `Everyone` entry survive a directory that was reported as restricted.
- * @param owner - Security identifier of the account the plugin runs as.
+ * if the owning account's own entry is damaged. All three are compared as numeric
+ * identifiers, never as display names: a display name is localized, and comparing
+ * names is what let an explicit everyone entry survive a directory reported as
+ * restricted.
+ * @param ownerSid - Numeric identifier of the account the plugin runs as.
  * @returns the identifiers allowed to remain.
  */
-export function sidsToKeep(owner: string): string[] {
-  return [owner, SID_SYSTEM, SID_ADMINISTRATORS]
-}
-
-/**
- * The security identifier an account has, read from the output of `whoami /user`.
- *
- * Only the identifier itself is used. The surrounding words are localized, so
- * finding the SID by its own syntax keeps this working on a machine whose
- * `whoami` output this code has never seen.
- * @param output - Standard output of `whoami /user`.
- * @returns the identifier named by the output.
- * @throws when the output names no identifier.
- */
-export function sidOfAccount(output: string): string {
-  const found = SID_PATTERN.exec(output)
-  if (found === null) {
-    throw new Error(`web-test: no security identifier in the account query output`)
-  }
-  return found[0]
-}
-
-/**
- * Security identifiers an ACL dump grants access to.
- *
- * `icacls /save` writes one line per path, each holding a descriptor in the form
- * `D:(A;;FA;;;S-1-5-18)`. That form is fixed by the platform rather than by the
- * machine's display settings, and it names every entry by identifier, so this
- * reads the whole tree the dump covered, not only the first path's line.
- * @param dump - Contents of an `icacls /save` file.
- * @returns every distinct identifier the dump grants access to.
- */
-export function sidsOfAclDump(dump: string): string[] {
-  return [...new Set(dump.match(SID_PATTERN) ?? [])]
+export function sidsToKeep(ownerSid: string): string[] {
+  return [ownerSid, SID_SYSTEM, SID_ADMINISTRATORS]
 }
 
 /**
@@ -170,8 +249,8 @@ export function sidsOfAclDump(dump: string): string[] {
  *
  * Reading only the root is not enough. An entry written on a file before its
  * parent was restricted keeps that file readable afterwards, which is exactly how
- * an explicit `Everyone` grant survives on a child while the root looks clean.
- * @param dump - Contents of an `icacls /save` file covering the whole tree.
+ * an explicit everyone grant survives on a child while the root looks clean.
+ * @param dump - Decoded contents of an `icacls /save` file covering the tree.
  * @returns the identifiers the dump names.
  */
 export function sidsInTree(dump: string): string[] {
@@ -181,17 +260,46 @@ export function sidsInTree(dump: string): string[] {
 /**
  * A deliberately lenient scan used only to check a result.
  *
- * This collects identities rather than enumerating them: any identifier at all
- * in the tree has to be one of the ones allowed to remain. The restriction itself
- * decides what to remove from {@link sidsToKeep}, so a defect in that enumeration
- * cannot also decide that the check passed.
- * @param dump - Contents of an `icacls /save` file.
- * @returns identifiers present in the dump.
+ * This asks whether any identity at all is left that must not keep access. It
+ * shares no enumeration with the code that decided what to remove, so a defect in
+ * that enumeration cannot also decide that the check passed.
+ * @param dump - Decoded contents of an `icacls /save` file.
+ * @returns every identity named, in either spelling, numeric or aliased.
  */
 export function anySidsPresent(dump: string): string[] {
-  return [...new Set(dump.replace(/[^A-Za-z0-9-]/gu, ' ').split(/\s+/u)
-    .filter(token => /^S-1-\d+(-\d+)+$/u.test(token)))]
+  // Deliberately a different reading of the same text: it takes the last field
+  // of every entry directly, where the restriction resolves identifiers through
+  // the alias table. A defect in one is not automatically a defect in the other.
+  const entries = dump.match(/\([^()]*\)/gu) ?? []
+  const found: string[] = []
+  for (const entry of entries) {
+    const fields = entry.replace(/^\(|\)$/gu, '').split(';')
+    const last = fields[fields.length - 1]?.trim() ?? ''
+    if (last === '') continue
+    const resolved = /^(?:S-1-\d+)(?:-\d+)+$/u.test(last) ? last : SDDL_ALIASES[last]
+    if (resolved !== undefined) found.push(resolved)
+  }
+  return [...new Set(found)]
 }
+
+/**
+ * The security identifier an account has, read from the output of `whoami /user`.
+ *
+ * Only the identifier itself is used. The surrounding words are localized, so
+ * finding the identifier by its own syntax keeps this working on a machine whose
+ * `whoami` output this code has never seen.
+ * @param output - Standard output of `whoami /user`.
+ * @returns the identifier named by the output.
+ * @throws when the output names no identifier.
+ */
+export function sidOfAccount(output: string): string {
+  const found = output.match(SID_PATTERN)
+  if (found === null || found[0] === undefined) {
+    throw new Error('web-test: no security identifier in the account query output')
+  }
+  return found[0]
+}
+
 
 /**
  * The call that drops every entry a directory inherits from its parent.
@@ -228,7 +336,11 @@ export function removalFor(root: string, sid: string): string[] {
  * @returns the argument vector to execute.
  */
 export function grantFor(root: string, owner: string): string[] {
-  return [ICACLS, root, '/grant:r', `${owner}:(OI)(CI)F`]
+  // The leading `*` is what tells the tool to read the rest as an identifier
+  // rather than look it up as an account name. Without it a numeric identifier
+  // is resolved as a name and the grant lands on nothing.
+  const named = /^S-1-\d+(?:-\d+)+$/u.test(owner) ? `*${owner}` : owner
+  return [ICACLS, root, '/grant:r', `${named}:(OI)(CI)F`]
 }
 
 /**
@@ -249,14 +361,21 @@ export function grantFor(root: string, owner: string): string[] {
 export function restrictCommandsForWindows(
   root: string,
   sids: string[],
-  owner: string,
+  ownerSid: string,
 ): string[][] {
-  const keep = sidsToKeep(owner)
+  const keep = sidsToKeep(ownerSid)
   const unwanted = [...new Set(sids.filter(sid => !keep.includes(sid)))]
   return [
-    grantFor(root, owner),
+    grantFor(root, ownerSid),
     inheritanceRemovalFor(root),
     ...unwanted.map(sid => removalFor(root, sid)),
+    // `/inheritance:r` drops the entries a directory inherited, and the machine's
+    // own system and administrators entries are among them. Keeping a principal
+    // in the comparison only stops it from being removed; it does not put an
+    // entry back. The grant below is what actually keeps them, which is the
+    // difference between a stated policy and an implemented one.
+    grantFor(root, SID_SYSTEM),
+    grantFor(root, SID_ADMINISTRATORS),
   ]
 }
 
@@ -338,7 +457,7 @@ async function readAclDump(
   const file = join(root, '.web-test-acl-dump')
   try {
     await exec([ICACLS, root, '/save', file, '/t'])
-    return await readFile(file, 'utf8')
+    return decodeAclDump(await readFile(file))
   } finally {
     await rm(file, { force: true }).catch(() => {})
   }
@@ -371,14 +490,26 @@ export async function restrictDataRootToOwner(
   platform: NodeJS.Platform = process.platform,
   exec: (argv: string[]) => Promise<string> = async (argv) =>
     (await execFile(argv[0] as string, argv.slice(1), { windowsHide: true })).stdout,
-  owner: string = grantedAccountFor(),
+  ownerSid?: string,
 ): Promise<void> {
   if (restrictsDirectoryToOwner(platform)) return
-  const keep = sidsToKeep(owner)
+  // The account has to be named the same way the dump names it. The dump speaks
+  // in numeric identifiers, so a caller that supplies a `DOMAIN\\USERNAME` name
+  // is asking to have that name compared against identifiers it can never equal:
+  // the result is a removal command aimed at the owner's own entry, issued
+  // because the two spellings never matched.
+  const account = ownerSid ?? sidOfAccount(await exec([WHOAMI, '/user']))
+  const keep = sidsToKeep(account)
   const recover = async (): Promise<void> => {
-    try {
-      await exec(restrictTreeCommandsForWindows([grantFor(root, owner)])[0] as string[])
-    } catch { /* the original failure is the one worth reporting */ }
+    // Recovery is not a best effort: a directory left without an entry for the
+    // account that has to write there is worse than the failure that caused it,
+    // and silently swallowing a failed recovery would report success over a
+    // directory nobody can use.
+    await exec(restrictTreeCommandsForWindows([
+      grantFor(root, account),
+      grantFor(root, SID_SYSTEM),
+      grantFor(root, SID_ADMINISTRATORS),
+    ])[0] as string[])
   }
   // A link inside the data root, or the root itself, would make /T rewrite a
   // target outside it. The walk happens before any recursive call, and it fails
@@ -404,7 +535,7 @@ export async function restrictDataRootToOwner(
   // entry by identifier and covers each existing child, which is what makes the
   // removal list complete rather than a guess at which identities are present.
   const before = await readAclDump(root, exec)
-  const commands = restrictCommandsForWindows(root, sidsInTree(before), owner)
+  const commands = restrictCommandsForWindows(root, sidsInTree(before), account)
   try {
     for (const argv of commands) await exec(argv)
     // Everything already under the root: the database, its write-ahead log and
@@ -427,7 +558,7 @@ export async function restrictDataRootToOwner(
     await recover()
     throw new Error(
       `web-test: could not read back the access control entries of ${root} to confirm that`
-      + ` only ${owner} keeps access. ${String(error)}`,
+      + ` only ${account} keeps access. ${String(error)}`,
       { cause: error },
     )
   }
@@ -438,7 +569,7 @@ export async function restrictDataRootToOwner(
   if (remaining.length > 0) {
     throw new Error(
       `web-test: ${root} still grants access to ${remaining.join(', ')} after restricting it`
-      + ` to ${owner}, so the plugin will not open its database there.`,
+      + ` to ${account}, so the plugin will not open its database there.`,
     )
   }
 }
