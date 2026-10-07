@@ -21,7 +21,7 @@
  */
 
 import { execFile as execFileCallback } from 'node:child_process'
-import { mkdir } from 'node:fs/promises'
+import { mkdir, readdir } from 'node:fs/promises'
 import { promisify } from 'node:util'
 
 import { restrictsDirectoryToOwner } from '../store-service.ts'
@@ -210,6 +210,30 @@ export function restrictTreeCommandsForWindows(commands: string[][]): string[][]
 }
 
 /**
+ * Reparse points under the data root, each as an absolute path.
+ *
+ * `/T` walks into whatever it finds, so a junction planted inside the data root
+ * would have its target rewritten even though the target is outside this
+ * plugin's directory. The walk stops descending at the first link it meets and
+ * reports it, so the caller can fail rather than reach outside.
+ * @param root - Absolute plugin data root to walk.
+ * @returns the paths of the reparse points found, in walk order.
+ */
+export async function findReparsePoints(root: string): Promise<string[]> {
+  const found: string[] = []
+  const walk = async (dir: string): Promise<void> => {
+    const entries = await readdir(dir, { withFileTypes: true }).catch(() => [])
+    for (const entry of entries) {
+      const full = join(dir, entry.name)
+      if (entry.isSymbolicLink()) found.push(full)
+      else if (entry.isDirectory()) await walk(full)
+    }
+  }
+  await walk(root)
+  return found
+}
+
+/**
  * Name the operating system recognises for the account running this process.
  * @returns the account name without a domain qualifier.
  */
@@ -259,6 +283,15 @@ export async function restrictDataRootToOwner(
     const current = await exec([ICACLS, root])
     const commands = restrictCommandsForWindows(root, current, owner)
     for (const argv of commands) await exec(argv)
+    // A link inside the data root would make /T rewrite a target outside it, so
+    // the walk happens before the recursive calls rather than after.
+    const links = await findReparsePoints(root)
+    if (links.length > 0) {
+      throw new Error(
+        `web-test: ${root} contains a reparse point (${links[0]}), so the plugin will not`
+        + ` rewrite access control entries through it. Remove the link and retry.`,
+      )
+    }
     // Everything already under the root: the database, its write-ahead log and
     // shared-memory file, and the evidence directories from earlier runs keep the
     // entries they were created with. Evidence created later inherits from the
