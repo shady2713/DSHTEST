@@ -1,4 +1,4 @@
-import { mkdir, rm, symlink } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 /**
  * A tool's declared output has to accept what its body returns.
@@ -31,6 +31,8 @@ import {
 import {
   grantedAccountFor,
   restrictCommandsForWindows,
+  sidOfAccount,
+  sidsInTree,
   restrictDataRootToOwner,
   restrictTreeCommandsForWindows,
 } from '../src/domain/store.ts'
@@ -163,56 +165,136 @@ describe('data root access control', () => {
 
 describe('restricting the data root on Windows', () => {
   const OWNER = 'CORP\\a'
-  const ACL = [
-    'C:\\Users\\a\\data                          CORP\\a:(OI)(CI)(F)',
-    '                              Everyone:(OI)(CI)(RX)',
-    '                              NT AUTHORITY\\SYSTEM:(OI)(CI)(F)',
-    '                              BUILTIN\\Administrators:(OI)(CI)(F)',
+  const OWNER_SID = 'S-1-5-21-111-222-333-1001'
+  const EVERYONE = 'S-1-1-0'
+  /** The owner on the root only, the shape Windows reported as left behind. */
+  const DUMP_ROOT = [
+    'C:\\Users\\a\\data',
+    `D:(A;;FA;;;${OWNER_SID})(A;;FRFX;;;${EVERYONE})(A;;FA;;;S-1-5-18)(A;;FA;;;S-1-5-32-544)`,
+  ].join('\r\n')
+  /** The same tree once the explicit grant is gone from both levels. */
+  const DUMP_CLEAN = [
+    'C:\\Users\\a\\data',
+    `D:(A;;FA;;;${OWNER_SID})(A;;FA;;;S-1-5-18)(A;;FA;;;S-1-5-32-544)`,
+  ].join('\r\n')
+  /** Nobody on the root, an explicit Everyone on a file that already existed. */
+  const DUMP_CHILD = [
+    'C:\\Users\\a\\data',
+    `D:(A;;FA;;;${OWNER_SID})(A;;FA;;;S-1-5-18)(A;;FA;;;S-1-5-32-544)`,
+    '',
+    'C:\\Users\\a\\data\\evidence',
+    `D:(A;;FA;;;${OWNER_SID})(A;;FRFX;;;${EVERYONE})(A;;FA;;;S-1-5-18)`,
   ].join('\r\n')
 
-  it('removes each unwanted principal, because dropping inheritance leaves explicit grants', () => {
+  it('reads identities out of the ACL dump rather than the human-readable table', () => {
+    expect(sidsInTree(DUMP_ROOT)).toEqual([OWNER_SID, EVERYONE, 'S-1-5-18', 'S-1-5-32-544'])
+    // A localized display name never appears, so the answer does not depend on the
+    // machine's language.
+    expect(sidsInTree(DUMP_ROOT).join(' ')).not.toContain('Everyone')
+  })
+
+  it('removes an explicit grant left on the root itself', () => {
     const root = 'C:/Users/a/.dsh/plugins/dsh-plugin-web-test'
-    const commands = restrictCommandsForWindows(root, ACL, OWNER)
-    expect(commands[0]).toEqual(['icacls.exe', root, '/inheritance:r'])
-    // `Everyone` had an explicit grant, which /inheritance:r does not touch.
-    expect(commands).toContainEqual(['icacls.exe', root, '/remove:g', 'Everyone'])
-    expect(commands[commands.length - 1]).toEqual(['icacls.exe', root, '/grant:r', `${OWNER}:(OI)(CI)F`])
+    const commands = restrictCommandsForWindows(root, sidsInTree(DUMP_ROOT), OWNER_SID)
+    expect(commands).toContainEqual(['icacls.exe', root, '/remove:g', `*${EVERYONE}`])
     // SYSTEM and Administrators keep access, or the machine loses its own path.
-    expect(commands.join(' ')).not.toContain('SYSTEM')
-    expect(commands.join(' ')).not.toContain('Administrators')
+    expect(commands.join(' ')).not.toContain('S-1-5-18')
+    expect(commands.join(' ')).not.toContain('S-1-5-32-544')
+  })
+
+  it('removes an explicit grant left only on a file that already existed', () => {
+    const root = 'C:/data'
+    // The root is clean here. Reading only the root is what missed this entry and
+    // left a world-readable file inside a directory reported as restricted.
+    const commands = restrictCommandsForWindows(root, sidsInTree(DUMP_CHILD), OWNER_SID)
+    expect(commands).toContainEqual(['icacls.exe', root, '/remove:g', `*${EVERYONE}`])
+  })
+
+  it('grants the owner before it takes anything away', () => {
+    const root = 'C:/data'
+    const commands = restrictCommandsForWindows(root, sidsInTree(DUMP_ROOT), OWNER)
+    // A removal that failed after /inheritance:r left the account unable to write.
+    // Granting first means its access is already in place before that can happen.
+    expect(commands[0]).toEqual(['icacls.exe', root, '/grant:r', `${OWNER}:(OI)(CI)F`])
+    expect(commands[1]).toEqual(['icacls.exe', root, '/inheritance:r'])
     // One directory, named outright: no parent, no recursion into .dsh.
     expect(commands[0]).not.toContain('/T')
   })
 
-  it('reads the current entries before restricting, and nothing runs off Windows', async () => {
-    const seen: string[][] = []
-    // The first call reads the directory and still sees `Everyone`; after the
-    // removals run, reading it back has to come back clean.
-    const record = (argv: string[]) => {
-      seen.push(argv)
-      return Promise.resolve(seen.length === 1 ? ACL : '')
+  it('takes the account name from the account query without reading its words', () => {
+    expect(sidOfAccount('\n\uC77C\uC5D0\r\n\r\nUSER INFORMATION\r\n----\r\n'
+      + 'User Name            S-1-5-21-111-222-333-1001\r\n')).toBe(OWNER_SID)
+    expect(() => sidOfAccount('no identifier here')).toThrow('no security identifier')
+  })
+
+  it('reads the whole tree through the platform dump, and nothing runs off Windows', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'webtest-acl-'))
+    try {
+      const calls: string[][] = []
+      let removed = false
+      const record = async (argv: string[]) => {
+        calls.push(argv)
+        const at = argv.indexOf('/save')
+        if (at !== -1) {
+          // The tree carries Everyone on a child at first and not after the
+          // removals, which is what a real restriction looks like.
+          await writeFile(argv[at + 1] as string, removed ? DUMP_CLEAN : DUMP_CHILD)
+        }
+        if (argv.includes('/remove:g')) removed = true
+        return ''
+      }
+      await restrictDataRootToOwner(root, 'win32', record, OWNER_SID)
+      // The dump covers the whole tree, which is the only thing that can see an
+      // entry written on a child.
+      expect(calls.some(argv => argv.includes('/save') && argv.includes('/t'))).toBe(true)
+      expect(calls.some(argv => argv.includes('/remove:g') && argv.some(one => one.endsWith('S-1-1-0')))).toBe(true)
+      const before = calls.length
+      await restrictDataRootToOwner(root, 'linux', record, OWNER_SID)
+      expect(calls.length).toBe(before)
+    } finally {
+      await rm(root, { recursive: true, force: true })
     }
-    await restrictDataRootToOwner('C:/data', 'win32', record, OWNER)
-    await restrictDataRootToOwner('/data', 'linux', record, OWNER)
-    expect(seen.length).toBeGreaterThan(0)
-    expect(seen[0]).toEqual(['icacls.exe', 'C:/data'])
-    expect(seen[1]).toEqual(['icacls.exe', 'C:/data', '/inheritance:r'])
-    expect(seen.every(argv => argv[0] === 'icacls.exe')).toBe(true)
-    expect(seen.some(argv => argv.includes('/T'))).toBe(true)
   })
 
-  it('refuses to continue when the platform rejects the restriction', async () => {
-    const refuse = () => Promise.reject(new Error('access is denied'))
-    await expect(restrictDataRootToOwner('C:/data', 'win32', refuse, OWNER))
-      .rejects.toThrow('could not restrict C:/data')
+  it('re-grants the owner when a removal fails, so the directory is never left unwritable', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'webtest-acl-'))
+    try {
+      const seen: string[][] = []
+      const record = async (argv: string[]) => {
+        seen.push(argv)
+        const at = argv.indexOf('/save')
+        if (at !== -1) await writeFile(argv[at + 1] as string, DUMP_ROOT)
+        if (argv.includes('/remove:g')) throw new Error('access is denied')
+        return ''
+      }
+      await expect(restrictDataRootToOwner(root, 'win32', record, OWNER_SID))
+        .rejects.toThrow('could not restrict')
+      const grants = seen.filter(argv => argv.includes('/grant:r'))
+      expect(grants.length).toBeGreaterThanOrEqual(2)
+      // The grant after the failure is the recovery, not the one before it.
+      const failure = seen.findIndex(argv => argv.includes('/remove:g'))
+      expect(seen.findIndex((argv, at) => at > failure && argv.includes('/grant:r')))
+        .toBeGreaterThan(failure)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
   })
 
-  it('refuses to open the database when another principal still has access', async () => {
-    // Every call succeeds, but `Everyone` is still there afterwards: a call that
-    // reports success is not proof that the directory is restricted.
-    const record = (argv: string[]) => Promise.resolve(argv.includes('/T') ? ACL : '')
-    await expect(restrictDataRootToOwner('C:/data', 'win32', record, OWNER))
-      .rejects.toThrow('still grants access to Everyone')
+  it('refuses to open the database when another identity still has access', async () => {
+    // Every call succeeds, but the tree still names Everyone afterwards: a call
+    // that reports success is not proof that the directory is restricted.
+    const root = await mkdtemp(join(tmpdir(), 'webtest-acl-'))
+    try {
+      const record = async (argv: string[]) => {
+        const at = argv.indexOf('/save')
+        if (at !== -1) await writeFile(argv[at + 1] as string, DUMP_ROOT)
+        return ''
+      }
+      await expect(restrictDataRootToOwner(root, 'win32', record, OWNER_SID))
+        .rejects.toThrow(`still grants access to ${EVERYONE}`)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
   })
 })
 

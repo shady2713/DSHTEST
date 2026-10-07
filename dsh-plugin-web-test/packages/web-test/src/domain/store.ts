@@ -21,7 +21,7 @@
  */
 
 import { execFile as execFileCallback } from 'node:child_process'
-import { mkdir, readdir } from 'node:fs/promises'
+import { lstat, mkdir, readdir, readFile, rm } from 'node:fs/promises'
 import { promisify } from 'node:util'
 
 import { restrictsDirectoryToOwner } from '../store-service.ts'
@@ -106,35 +106,91 @@ export async function ensureDataRoot(): Promise<string> {
  */
 export const ICACLS = 'icacls.exe'
 
+/** Local system, which always keeps access. */
+export const SID_SYSTEM = 'S-1-5-18'
+/** The machine's built-in administrators group. */
+export const SID_ADMINISTRATORS = 'S-1-5-32-544'
+/** Well-known principal that must never keep access to the data root. */
+export const SID_EVERYONE = 'S-1-1-0'
+
+/** Shape of a security identifier, which is a digit-led dash-separated token. */
+const SID_PATTERN = /\bS-1-\d+(?:-\d+)+\b/gu
+
 /**
- * Principals that keep access when the data root is restricted.
+ * Security identifiers the data root keeps access for.
  *
- * SYSTEM and the local Administrators group have to keep it, or the machine
- * loses its own recovery path and the plugin cannot open its own database.
- * @param owner - Account the plugin runs as.
- * @returns the principal names allowed to remain.
+ * SYSTEM and the machine administrators keep it so there is still a recovery path
+ * if the owning account's own entry is damaged. Both are identified by their
+ * well-known SID rather than by their display name, because a display name is
+ * localized: the same account reads `NT AUTHORITY\SYSTEM` on an English machine
+ * and something else elsewhere, and comparing names is what let an explicit
+ * `Everyone` entry survive a directory that was reported as restricted.
+ * @param owner - Security identifier of the account the plugin runs as.
+ * @returns the identifiers allowed to remain.
  */
-export function principalsToKeep(owner: string): string[] {
-  return [owner, 'NT AUTHORITY\\SYSTEM', 'BUILTIN\\Administrators']
+export function sidsToKeep(owner: string): string[] {
+  return [owner, SID_SYSTEM, SID_ADMINISTRATORS]
 }
 
 /**
- * Read the principals an access control entry list currently names.
+ * The security identifier an account has, read from the output of `whoami /user`.
  *
- * `icacls` prints one entry per line with the path in the first column and the
- * principal after it, separated by a run of spaces wide enough to align the
- * column; an entry continuing the previous path leaves that column blank. A
- * principal can contain a space (`NT AUTHORITY\\SYSTEM`), so the name is taken as
- * everything between the column separator and the rights, which open with a
- * parenthesis.
- * @param output - Standard output of `icacls` on a path.
- * @returns the principal names named by the output, in the order printed.
+ * Only the identifier itself is used. The surrounding words are localized, so
+ * finding the SID by its own syntax keeps this working on a machine whose
+ * `whoami` output this code has never seen.
+ * @param output - Standard output of `whoami /user`.
+ * @returns the identifier named by the output.
+ * @throws when the output names no identifier.
  */
-export function principalsOf(output: string): string[] {
-  return output.split('\n').flatMap((line) => {
-    const match = /^.*?\s{2,}([^:]+):\(/.exec(line)
-    return match === null ? [] : [(match[1] as string).trim()]
-  })
+export function sidOfAccount(output: string): string {
+  const found = SID_PATTERN.exec(output)
+  if (found === null) {
+    throw new Error(`web-test: no security identifier in the account query output`)
+  }
+  return found[0]
+}
+
+/**
+ * Security identifiers an ACL dump grants access to.
+ *
+ * `icacls /save` writes one line per path, each holding a descriptor in the form
+ * `D:(A;;FA;;;S-1-5-18)`. That form is fixed by the platform rather than by the
+ * machine's display settings, and it names every entry by identifier, so this
+ * reads the whole tree the dump covered, not only the first path's line.
+ * @param dump - Contents of an `icacls /save` file.
+ * @returns every distinct identifier the dump grants access to.
+ */
+export function sidsOfAclDump(dump: string): string[] {
+  return [...new Set(dump.match(SID_PATTERN) ?? [])]
+}
+
+/**
+ * Every security identifier a tree grants access to, including paths other than
+ * its root.
+ *
+ * Reading only the root is not enough. An entry written on a file before its
+ * parent was restricted keeps that file readable afterwards, which is exactly how
+ * an explicit `Everyone` grant survives on a child while the root looks clean.
+ * @param dump - Contents of an `icacls /save` file covering the whole tree.
+ * @returns the identifiers the dump names.
+ */
+export function sidsInTree(dump: string): string[] {
+  return sidsOfAclDump(dump)
+}
+
+/**
+ * A deliberately lenient scan used only to check a result.
+ *
+ * This collects identities rather than enumerating them: any identifier at all
+ * in the tree has to be one of the ones allowed to remain. The restriction itself
+ * decides what to remove from {@link sidsToKeep}, so a defect in that enumeration
+ * cannot also decide that the check passed.
+ * @param dump - Contents of an `icacls /save` file.
+ * @returns identifiers present in the dump.
+ */
+export function anySidsPresent(dump: string): string[] {
+  return [...new Set(dump.replace(/[^A-Za-z0-9-]/gu, ' ').split(/\s+/u)
+    .filter(token => /^S-1-\d+(-\d+)+$/u.test(token)))]
 }
 
 /**
@@ -147,24 +203,28 @@ export function inheritanceRemovalFor(root: string): string[] {
 }
 
 /**
- * The call that takes access away from one named principal.
+ * The call that takes access away from one identity.
  *
  * `/inheritance:r` drops inherited entries only. An explicit grant written by an
  * earlier run, or inherited into a file before its parent was changed, stays in
  * place: that is how an explicit `Everyone` read survives a "restricted"
- * directory. Each unwanted principal therefore has to be removed by name.
+ * directory. Each unwanted identity therefore has to be removed by name.
+ *
+ * The name is a SID with the leading `*` that tells `icacls` to read it as an
+ * identifier rather than look it up as an account name. That avoids depending on
+ * a localized display name; the `*` form has not been exercised on Windows.
  * @param root - Absolute plugin data root to restrict.
- * @param principal - Principal to take access from.
+ * @param sid - Security identifier to take access from.
  * @returns the argument vector to execute.
  */
-export function removalFor(root: string, principal: string): string[] {
-  return [ICACLS, root, '/remove:g', principal]
+export function removalFor(root: string, sid: string): string[] {
+  return [ICACLS, root, '/remove:g', `*${sid}`]
 }
 
 /**
  * The call that gives the owning account full control, replacing its own entry.
  * @param root - Absolute plugin data root to restrict.
- * @param owner - Account the plugin runs as.
+ * @param owner - Account name or security identifier the plugin runs as.
  * @returns the argument vector to execute.
  */
 export function grantFor(root: string, owner: string): string[] {
@@ -174,25 +234,29 @@ export function grantFor(root: string, owner: string): string[] {
 /**
  * The calls that restrict one directory, in the order they have to run.
  *
- * Read the current entries, drop the inherited ones, take access away from every
- * principal that is not the owning account, then write that account's own full
- * control. Reading first is what makes the removal complete rather than a guess.
+ * The owner is granted first, on purpose. A removal that fails partway through
+ * used to leave the directory with no entry for the account running the plugin:
+ * `/inheritance:r` had already run and the grant that came after the removals
+ * never did, so the plugin could not write to its own data root and the caller's
+ * account was worse off than before the call. Granting first means the owning
+ * account's access is established before anything is taken away, and stays
+ * established if a later step throws.
  * @param root - Absolute plugin data root to restrict.
- * @param current - Standard output of `icacls` on that directory.
+ * @param sids - Identifiers the tree currently grants access to.
  * @param owner - Account the plugin runs as.
  * @returns the argument vectors to execute in order.
  */
 export function restrictCommandsForWindows(
   root: string,
-  current: string,
+  sids: string[],
   owner: string,
 ): string[][] {
-  const keep = principalsToKeep(owner)
-  const unwanted = [...new Set(principalsOf(current).filter(name => !keep.includes(name)))]
+  const keep = sidsToKeep(owner)
+  const unwanted = [...new Set(sids.filter(sid => !keep.includes(sid)))]
   return [
-    inheritanceRemovalFor(root),
-    ...unwanted.map(name => removalFor(root, name)),
     grantFor(root, owner),
+    inheritanceRemovalFor(root),
+    ...unwanted.map(sid => removalFor(root, sid)),
   ]
 }
 
@@ -210,19 +274,24 @@ export function restrictTreeCommandsForWindows(commands: string[][]): string[][]
 }
 
 /**
- * Reparse points under the data root, each as an absolute path.
+ * Reparse points at or under the data root, each as an absolute path.
  *
  * `/T` walks into whatever it finds, so a junction planted inside the data root
  * would have its target rewritten even though the target is outside this
- * plugin's directory. The walk stops descending at the first link it meets and
- * reports it, so the caller can fail rather than reach outside.
+ * plugin's directory. The root itself is checked as well: a data root that is a
+ * link would send every call through it. An enumeration that fails stops the walk
+ * and is reported, because a walk that quietly returns fewer paths than there are
+ * would let the restriction proceed over a tree it never actually inspected.
  * @param root - Absolute plugin data root to walk.
  * @returns the paths of the reparse points found, in walk order.
+ * @throws when a directory under the root cannot be read.
  */
 export async function findReparsePoints(root: string): Promise<string[]> {
   const found: string[] = []
+  const rootStat = await lstat(root)
+  if (rootStat.isSymbolicLink()) found.push(root)
   const walk = async (dir: string): Promise<void> => {
-    const entries = await readdir(dir, { withFileTypes: true }).catch(() => [])
+    const entries = await readdir(dir, { withFileTypes: true })
     for (const entry of entries) {
       const full = join(dir, entry.name)
       if (entry.isSymbolicLink()) found.push(full)
@@ -249,6 +318,33 @@ export function grantedAccountFor(
 }
 
 /**
+ * Read a tree's access control entries through the platform's ACL dump.
+ *
+ * `icacls` in its default mode prints a table laid out for a human to read: the
+ * first entry on a path is separated from that path by a single space, not by the
+ * run of spaces the later columns use, so a parser that looks for a wide gap
+ * silently loses the first entry — and it loses it for the very path the caller
+ * asked about. `/save` writes the same entries as descriptors that name every
+ * principal by identifier, one line per path, in a form fixed by the platform
+ * rather than by the machine's display language.
+ * @param root - Absolute plugin data root to read.
+ * @param exec - Runs one argument vector and resolves with its standard output.
+ * @returns the contents of the ACL dump covering the root and everything under it.
+ */
+async function readAclDump(
+  root: string,
+  exec: (argv: string[]) => Promise<string>,
+): Promise<string> {
+  const file = join(root, '.web-test-acl-dump')
+  try {
+    await exec([ICACLS, root, '/save', file, '/t'])
+    return await readFile(file, 'utf8')
+  } finally {
+    await rm(file, { force: true }).catch(() => {})
+  }
+}
+
+/**
  * Restrict the data root to the account running this process.
  *
  * On Windows a mode passed to `mkdir` is ignored and `chmod` only toggles the
@@ -257,13 +353,17 @@ export function grantedAccountFor(
  * POSIX permission interface in Node for this platform, so the only public route
  * is the platform's own tool.
  *
+ * The owning account is granted full control before anything is taken away and
+ * is granted again if a later step fails, so an interrupted call never leaves the
+ * directory without an entry for the account that has to write there.
+ *
  * @param root - Absolute plugin data root to restrict.
  * @param platform - Platform the data root lives on.
  * @param exec - Runs one argument vector and resolves with its standard output.
  * @param owner - Account the plugin runs as.
  * @returns nothing.
  * @throws when the platform refuses the restriction, or when the result still names
- * a principal that must not keep access, so the store does not open over a
+ * an identity that must not keep access, so the store does not open over a
  * directory another local account can read.
  */
 export async function restrictDataRootToOwner(
@@ -274,30 +374,46 @@ export async function restrictDataRootToOwner(
   owner: string = grantedAccountFor(),
 ): Promise<void> {
   if (restrictsDirectoryToOwner(platform)) return
-  const keep = principalsToKeep(owner)
+  const keep = sidsToKeep(owner)
+  const recover = async (): Promise<void> => {
+    try {
+      await exec(restrictTreeCommandsForWindows([grantFor(root, owner)])[0] as string[])
+    } catch { /* the original failure is the one worth reporting */ }
+  }
+  // A link inside the data root, or the root itself, would make /T rewrite a
+  // target outside it. The walk happens before any recursive call, and it fails
+  // loudly: a walk that returned fewer paths than there are would let the
+  // restriction proceed over a tree it never inspected.
+  let links: string[]
   try {
-    // The root and everything already under it. Evidence directories are created
-    // later and inherit from the root, so they need no call of their own.
-    // Read first: that read is what makes the removal list complete instead of a
-    // guess at which principals are present.
-    const current = await exec([ICACLS, root])
-    const commands = restrictCommandsForWindows(root, current, owner)
+    links = await findReparsePoints(root)
+  } catch (error) {
+    throw new Error(
+      `web-test: could not inspect ${root} for reparse points, so the plugin will not`
+      + ` rewrite access control entries through it. ${String(error)}`,
+      { cause: error },
+    )
+  }
+  if (links.length > 0) {
+    throw new Error(
+      `web-test: ${root} contains a reparse point (${links[0]}), so the plugin will not`
+      + ' rewrite access control entries through it. Remove the link and retry.',
+    )
+  }
+  // Read the whole tree through the platform's own ACL dump. The dump names every
+  // entry by identifier and covers each existing child, which is what makes the
+  // removal list complete rather than a guess at which identities are present.
+  const before = await readAclDump(root, exec)
+  const commands = restrictCommandsForWindows(root, sidsInTree(before), owner)
+  try {
     for (const argv of commands) await exec(argv)
-    // A link inside the data root would make /T rewrite a target outside it, so
-    // the walk happens before the recursive calls rather than after.
-    const links = await findReparsePoints(root)
-    if (links.length > 0) {
-      throw new Error(
-        `web-test: ${root} contains a reparse point (${links[0]}), so the plugin will not`
-        + ` rewrite access control entries through it. Remove the link and retry.`,
-      )
-    }
     // Everything already under the root: the database, its write-ahead log and
     // shared-memory file, and the evidence directories from earlier runs keep the
     // entries they were created with. Evidence created later inherits from the
     // restricted root.
     for (const argv of restrictTreeCommandsForWindows(commands)) await exec(argv)
   } catch (error) {
+    await recover()
     throw new Error(
       `web-test: could not restrict ${root} to the current account, so the plugin will not`
       + ` open its database there. ${String(error)}`,
@@ -306,15 +422,19 @@ export async function restrictDataRootToOwner(
   }
   let after: string
   try {
-    after = await exec([ICACLS, root, '/T'])
+    after = await readAclDump(root, exec)
   } catch (error) {
+    await recover()
     throw new Error(
       `web-test: could not read back the access control entries of ${root} to confirm that`
       + ` only ${owner} keeps access. ${String(error)}`,
       { cause: error },
     )
   }
-  const remaining = [...new Set(principalsOf(after).filter(name => !keep.includes(name)))]
+  // The check deliberately does not reuse the enumeration that decided what to
+  // remove. It asks only whether any identifier at all is left that must not keep
+  // access, so a defect in that enumeration cannot also decide this passed.
+  const remaining = anySidsPresent(after).filter(sid => !keep.includes(sid))
   if (remaining.length > 0) {
     throw new Error(
       `web-test: ${root} still grants access to ${remaining.join(', ')} after restricting it`
