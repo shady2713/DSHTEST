@@ -1190,7 +1190,7 @@ export function apply(ctx: Context): void {
       schema: {
         type: 'object',
         additionalProperties: false,
-        required: ['runKey', 'operationKey', 'dispatch', 'authority', 'note'],
+        required: ['runKey', 'operationKey', 'dispatch', 'note'],
         properties: {
           runKey: { type: 'string' },
           operationKey: { type: 'string' },
@@ -1332,7 +1332,7 @@ export function apply(ctx: Context): void {
       schema: {
         type: 'object',
         additionalProperties: false,
-        required: ['runKey', 'operationKey', 'dispatch', 'authority', 'note'],
+        required: ['runKey', 'operationKey', 'dispatch', 'note'],
         properties: {
           runKey: { type: 'string' },
           operationKey: { type: 'string' },
@@ -1387,7 +1387,7 @@ export function apply(ctx: Context): void {
       schema: {
         type: 'object',
         additionalProperties: false,
-        required: ['runKey', 'operationKey', 'dispatch', 'authority', 'note'],
+        required: ['runKey', 'operationKey', 'dispatch', 'note'],
         properties: {
           runKey: { type: 'string' },
           operationKey: { type: 'string' },
