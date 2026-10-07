@@ -135,7 +135,7 @@ const FIELD_VALUES: Record<string, unknown> = {
   caseKey: 'c',
   caseId: 'c',
   operationKey: 'o',
-  outcome: 'passed',
+  outcome: 'observed-success',
   status: 'completed',
   action: 'pause',
   reason: 'settling',
@@ -158,7 +158,13 @@ const TOOL_VALUES: Record<string, Record<string, unknown>> = {
   // The planned step and the reported step are different records: a plan says
   // what a step will do, a result says what it did and whether it held.
   web_test_propose_cases: { steps: [{ index: 1, intent: 'buy the item' }] },
+  // An operation outcome and a case outcome are different enumerations: an
+  // operation reports what the site showed, a case reports whether the check
+  // held. One shared value cannot satisfy both, which is why a case was refused
+  // for an outcome the tool never accepts.
+  web_test_settle_operation: { outcome: 'observed-success' },
   web_test_report_case: {
+    outcome: 'passed',
     steps: [{ index: 1, intent: 'open the order page', observed: 'the order page', outcome: 'passed' }],
     assertions: [{ expected: 'the order exists', actual: 'the order exists', outcome: 'passed' }],
   },
@@ -211,6 +217,17 @@ describe('registered tools accept what they return', () => {
       const tool = tools.find(one => one.name === name)!
       // A wait that ends early only ends once its deadline has passed, so the
       // run has to be in that state rather than freshly running.
+      // An operation record has to exist before the tools that settle or abandon
+      // one can run. Writing it directly is legitimate: the state is the plugin's
+      // own persisted data, and the point of the test is the tool's own path.
+      if (name.endsWith('settle_operation') || name.endsWith('operation_unknown')) {
+        await store.putOperation({
+          schemaVersion: SCHEMA_VERSION, kind: 'operation' as const, label: 'o',
+          updatedAtMs: 0, key: 'run/o', runKey: 'run', operationKey: 'o',
+          intent: 'create order', role: 'buyer', requestDigest: 'digest',
+          generation: 0, dispatch: { kind: 'unobserved' as const, atMs: 1 },
+        })
+      }
       if (name.endsWith('resume_wait')) {
         await store.putRun({
           ...store.getRun('run')!,
@@ -255,15 +272,15 @@ describe('registered tools accept what they return', () => {
     // floor below is a count of bodies that really returned a value, not of
     // calls that were attempted.
     //
-    // Eight of the twelve reach a return here. The other four cannot without a
-    // real browser, because each needs a verified role and `assume_role` is what
-    // verifies it: `assume_role` itself, `begin_operation`, `settle_operation`
-    // and `operation_unknown`. Those are exercised as refusal paths rather than
+    // Ten of the twelve reach a return here. The other two cannot without a real
+    // browser, because each needs a verified role and `assume_role` is what
+    // verifies it: `assume_role` itself, and `begin_operation`, which mints the
+    // operation's authority. Those are exercised as refusal paths rather than
     // counted as successes; every refusal is named in the failure output.
     expect(
       succeeded.length,
       `只成功执行了 ${succeeded.length} 个: ${succeeded.join(', ')}\n拒绝的:\n${refused.join('\n')}`,
-    ).toBeGreaterThanOrEqual(8)
+    ).toBeGreaterThanOrEqual(10)
     if (succeeded.length === 0) throw new Error(`no tool produced a value; all refused:\n${refused.join('\n')}`)
     expect(problems).toEqual([])
     // Every tool has to be accounted for: none skipped, none silently unchecked.
